@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -21,7 +22,19 @@ settings = Settings.from_env()
 db = Database(settings.db_path)
 processor = PipelineProcessor(settings, db)
 
-app = FastAPI(title="Atlas Voice", docs_url="/api/docs", redoc_url=None)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    settings.ensure_directories()
+    db.initialize()
+    yield
+
+
+app = FastAPI(
+    title="Atlas Voice",
+    docs_url="/api/docs",
+    redoc_url=None,
+    lifespan=lifespan,
+)
 
 templates_dir = Path(__file__).parent / "templates"
 static_dir = Path(__file__).parent / "static"
@@ -31,18 +44,13 @@ templates.env.filters["timecode"] = format_seconds
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
-@app.on_event("startup")
-def startup() -> None:
-    settings.ensure_directories()
-    db.initialize()
-
-
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request) -> Response:
     recordings = [dict(row) for row in db.list_recordings()]
     return templates.TemplateResponse(
+        request,
         "index.html",
-        {"request": request, "recordings": recordings},
+        {"recordings": recordings},
     )
 
 
@@ -65,9 +73,9 @@ def recording_detail(request: Request, recording_id: str) -> Response:
     if recording is None:
         raise HTTPException(status_code=404, detail="Recording not found")
     return templates.TemplateResponse(
+        request,
         "recording.html",
         {
-            "request": request,
             "recording": recording,
             "jobs": [dict(row) for row in db.jobs_for_recording(recording_id)],
             "segments": db.get_segments(recording_id),
@@ -88,8 +96,9 @@ def retry_recording(recording_id: str) -> Response:
 def search(request: Request, q: str = "") -> Response:
     results = db.search(q) if q.strip() else []
     return templates.TemplateResponse(
+        request,
         "search.html",
-        {"request": request, "query": q, "results": results},
+        {"query": q, "results": results},
     )
 
 

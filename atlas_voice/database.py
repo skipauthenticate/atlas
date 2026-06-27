@@ -438,7 +438,7 @@ class Database:
                     f.recording_id,
                     f.kind,
                     f.speaker,
-                    snippet(search_fts, 3, '<mark>', '</mark>', '...', 20) AS snippet,
+                    snippet(search_fts, 3, '[', ']', '...', 20) AS snippet,
                     r.title,
                     r.status
                 FROM search_fts f
