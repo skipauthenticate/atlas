@@ -18,3 +18,5 @@ cache/
 dist/
 build/
 *.egg-info/
+.run/
+logs/

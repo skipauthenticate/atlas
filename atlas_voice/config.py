@@ -5,6 +5,21 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def load_dotenv(path: Path | None = None) -> None:
+    env_path = path or Path.cwd() / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            os.environ.setdefault(key, value)
+
+
 def _path_from_env(name: str, default: str) -> Path:
     return Path(os.environ.get(name, default)).expanduser().resolve()
 
@@ -33,9 +48,11 @@ class Settings:
     llm_temperature: float
     llm_max_tokens: int
     stub_mode: bool
+    allow_single_speaker_fallback: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
+        load_dotenv()
         return cls(
             host=os.environ.get("ATLAS_VOICE_HOST", "127.0.0.1"),
             port=int(os.environ.get("ATLAS_VOICE_PORT", "8787")),
@@ -56,6 +73,9 @@ class Settings:
             llm_temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2")),
             llm_max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "1200")),
             stub_mode=_bool_from_env("ATLAS_VOICE_STUB_MODE", False),
+            allow_single_speaker_fallback=_bool_from_env(
+                "ATLAS_VOICE_ALLOW_SINGLE_SPEAKER_FALLBACK", False
+            ),
         )
 
     @property

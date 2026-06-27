@@ -89,6 +89,46 @@ Setup first checks:
 If found, it creates a local symlink. Otherwise it prompts for a path or uses
 `LLM_MODEL_URL` from `.env` to download a model.
 
+## Jetson Host Mode
+
+This repository can run directly on this Jetson without the llama.cpp Docker
+service by using the existing native Qwen server.
+
+```bash
+/home/atlas/workspace/jetson-qwen/qwen-server start qwen35b-a3b-mxfp4
+python -m venv .venv
+.venv/bin/pip install -e ".[worker]"
+cp .env.example .env
+```
+
+For the current device, `.env` should point summaries at the native Qwen
+endpoint:
+
+```text
+LLM_BASE_URL=http://127.0.0.1:8080/v1/chat/completions
+WHISPERX_DEVICE=cpu
+WHISPERX_COMPUTE_TYPE=int8
+ATLAS_VOICE_ALLOW_SINGLE_SPEAKER_FALLBACK=true
+```
+
+The single-speaker fallback lets recordings process before `HF_TOKEN` is
+configured for pyannote. It labels all transcript segments as `SPEAKER_00`; set
+it back to `false` after adding a Hugging Face token with pyannote model access.
+
+Start and manage the local web/worker processes:
+
+```bash
+scripts/start-local.sh
+scripts/status-local.sh
+scripts/stop-local.sh
+```
+
+The UI remains bound to localhost by default:
+
+```text
+http://127.0.0.1:8787
+```
+
 ## Development
 
 ```bash
