@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ recording.title }} - Atlas Voice{% endblock %}
+{% block head_extra %}
+  {% if recording.status not in ["done", "failed"] %}
+    <meta http-equiv="refresh" content="5">
+  {% endif %}
+{% endblock %}
 {% block content %}
   <section class="panel">
     <div class="panel-heading">
@@ -22,6 +27,63 @@
     {% if recording.normalized_path %}
       <audio class="player" controls src="/media/recordings/{{ recording.id }}/normalized.wav"></audio>
     {% endif %}
+
+    {% set pipeline_steps = [
+      ("ingest", "Ingest"),
+      ("normalize", "Normalize"),
+      ("transcribe", "Transcribe"),
+      ("diarize", "Diarize"),
+      ("merge", "Merge"),
+      ("summarize", "Summarize"),
+    ] %}
+    {% set progress = namespace(points=0) %}
+    {% for step_id, label in pipeline_steps %}
+      {% set state = namespace(job=None) %}
+      {% for job in jobs %}
+        {% if job.step == step_id %}
+          {% set state.job = job %}
+        {% endif %}
+      {% endfor %}
+      {% if state.job and state.job.status == "done" %}
+        {% set progress.points = progress.points + 2 %}
+      {% elif state.job and state.job.status == "running" %}
+        {% set progress.points = progress.points + 1 %}
+      {% endif %}
+    {% endfor %}
+    {% set progress_percent = ((progress.points * 100) / (pipeline_steps | length * 2)) | round(0, "floor") | int %}
+    <section class="progress-overview" aria-label="Overall progress">
+      <div class="progress-heading">
+        <strong>{{ progress_percent }}%</strong>
+        <span>{{ recording.status }}</span>
+      </div>
+      <div class="progress-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ progress_percent }}">
+        <span style="width: {{ progress_percent }}%"></span>
+      </div>
+    </section>
+    <section class="stage-progress" aria-label="Processing progress">
+      {% for step_id, label in pipeline_steps %}
+        {% set state = namespace(job=None) %}
+        {% for job in jobs %}
+          {% if job.step == step_id %}
+            {% set state.job = job %}
+          {% endif %}
+        {% endfor %}
+        {% set stage_status = state.job.status if state.job else "waiting" %}
+        <div class="stage stage-{{ stage_status }}">
+          <span class="stage-dot" aria-hidden="true"></span>
+          <span class="stage-copy">
+            <strong>{{ label }}</strong>
+            <small>
+              {% if state.job %}
+                {{ state.job.status }}{% if state.job.attempts is not none %} · attempt {{ state.job.attempts }}/{{ state.job.max_attempts }}{% endif %}
+              {% else %}
+                waiting
+              {% endif %}
+            </small>
+          </span>
+        </div>
+      {% endfor %}
+    </section>
 
     <div class="grid">
       <section>

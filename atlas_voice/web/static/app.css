@@ -201,6 +201,131 @@ small {
   margin: 8px 0 22px;
 }
 
+.progress-overview {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 14px;
+}
+
+.progress-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-heading strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.progress-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.progress-meter {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7ecf3;
+}
+
+.progress-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.stage-progress {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 24px;
+}
+
+.stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.stage-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border: 2px solid #98a2b3;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.stage-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stage-copy strong,
+.stage-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage-copy strong {
+  font-size: 13px;
+}
+
+.stage-copy small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stage-done {
+  border-color: #b7e4c7;
+  background: #f0fbf5;
+}
+
+.stage-done .stage-dot {
+  border-color: var(--done);
+  background: var(--done);
+}
+
+.stage-running {
+  border-color: #ffd38a;
+  background: #fff8ea;
+}
+
+.stage-running .stage-dot {
+  border-color: var(--warn);
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(160, 90, 0, 0.12);
+}
+
+.stage-failed {
+  border-color: #f2b8b5;
+  background: #fff1f1;
+}
+
+.stage-failed .stage-dot {
+  border-color: var(--fail);
+  background: var(--fail);
+}
+
+.stage-queued,
+.stage-waiting {
+  background: #f8fafc;
+}
+
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.7fr);
@@ -272,7 +397,8 @@ code {
   .section-heading,
   .recording-row,
   .grid,
-  .segment {
+  .segment,
+  .stage-progress {
     grid-template-columns: 1fr;
   }
 

@@ -23,7 +23,12 @@ def diarize_audio(audio_path: Path, settings: Settings) -> list[dict[str, Any]]:
             "pyannote.audio is not installed. Install the worker extras or run through Docker."
         ) from exc
 
-    pipeline = Pipeline.from_pretrained(settings.pyannote_model, use_auth_token=settings.hf_token)
+    try:
+        pipeline = Pipeline.from_pretrained(settings.pyannote_model, token=settings.hf_token)
+    except TypeError:
+        pipeline = Pipeline.from_pretrained(
+            settings.pyannote_model, use_auth_token=settings.hf_token
+        )
     try:
         import torch
 
@@ -32,7 +37,7 @@ def diarize_audio(audio_path: Path, settings: Settings) -> list[dict[str, Any]]:
     except Exception:
         pass
 
-    diarization = pipeline(str(audio_path))
+    diarization = _diarization_annotation(pipeline(_pipeline_audio_input(audio_path)))
     turns: list[dict[str, Any]] = []
     for turn, _, speaker in diarization.itertracks(yield_label=True):
         turns.append(
@@ -43,3 +48,30 @@ def diarize_audio(audio_path: Path, settings: Settings) -> list[dict[str, Any]]:
             }
         )
     return turns
+
+
+def _diarization_annotation(diarization: Any) -> Any:
+    return (
+        getattr(diarization, "exclusive_speaker_diarization", None)
+        or getattr(diarization, "speaker_diarization", None)
+        or diarization
+    )
+
+
+def _pipeline_audio_input(audio_path: Path) -> str | dict[str, Any]:
+    try:
+        import torchaudio
+        waveform, sample_rate = torchaudio.load(str(audio_path))
+        return {"waveform": waveform, "sample_rate": sample_rate}
+    except Exception:
+        pass
+
+    try:
+        import soundfile as sf
+        import torch
+
+        audio, sample_rate = sf.read(str(audio_path), always_2d=True, dtype="float32")
+        waveform = torch.from_numpy(audio.T)
+        return {"waveform": waveform, "sample_rate": sample_rate}
+    except Exception:
+        return str(audio_path)
