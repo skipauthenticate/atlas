@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Recordings - Atlas Voice{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h1>Recordings</h1>
+        <p>{{ recordings | length }} local audio files</p>
+      </div>
+      <form class="upload" action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="audio/*" required>
+        <button type="submit">Upload</button>
+      </form>
+    </div>
+    {% if recordings %}
+      <div class="recording-list">
+        {% for recording in recordings %}
+          <a class="recording-row" href="/recordings/{{ recording.id }}">
+            <span>
+              <strong>{{ recording.title }}</strong>
+              <small>{{ recording.created_at }}</small>
+            </span>
+            <span class="status status-{{ recording.status }}">{{ recording.status }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty">
+        Drop audio into <code>data/inbox/</code> or upload a file to begin.
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

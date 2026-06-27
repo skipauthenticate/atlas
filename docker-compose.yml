@@ -1,0 +1,81 @@
+services:
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        APP_BASE_IMAGE: ${APP_BASE_IMAGE:-python:3.11-slim}
+    command: uvicorn atlas_voice.web.app:app --host 0.0.0.0 --port 8787
+    env_file: .env
+    environment:
+      ATLAS_VOICE_DATA_DIR: /app/data
+      ATLAS_VOICE_MODELS_DIR: /app/models
+      ATLAS_VOICE_HF_CACHE: /root/.cache/huggingface
+      HF_HOME: /root/.cache/huggingface
+      LLM_BASE_URL: http://llm:8080/v1/chat/completions
+    ports:
+      - "127.0.0.1:${ATLAS_VOICE_PORT:-8787}:8787"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./cache/huggingface:/root/.cache/huggingface
+    depends_on:
+      - llm
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      target: worker
+      args:
+        APP_BASE_IMAGE: ${APP_BASE_IMAGE:-python:3.11-slim}
+    command: atlas-voice worker
+    env_file: .env
+    environment:
+      ATLAS_VOICE_DATA_DIR: /app/data
+      ATLAS_VOICE_MODELS_DIR: /app/models
+      ATLAS_VOICE_HF_CACHE: /root/.cache/huggingface
+      HF_HOME: /root/.cache/huggingface
+      LLM_BASE_URL: http://llm:8080/v1/chat/completions
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./cache/huggingface:/root/.cache/huggingface
+    depends_on:
+      - llm
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  llm:
+    image: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda}
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --model
+      - /models/llm/model.gguf
+      - --ctx-size
+      - "32768"
+      - --n-gpu-layers
+      - "999"
+    env_file: .env
+    volumes:
+      - ./models:/models
+      - ${LLM_MODEL_PATH:-./models/llm/model.gguf}:/models/llm/model.gguf:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

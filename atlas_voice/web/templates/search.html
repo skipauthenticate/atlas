@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Search - Atlas Voice{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h1>Search</h1>
+        <p>{{ results | length }} results</p>
+      </div>
+    </div>
+    {% if query and results %}
+      <div class="recording-list">
+        {% for result in results %}
+          <a class="recording-row" href="/recordings/{{ result.recording_id }}">
+            <span>
+              <strong>{{ result.title }}</strong>
+              <small>{{ result.kind }} {{ result.speaker }}</small>
+              <span class="snippet">{{ result.snippet }}</span>
+            </span>
+            <span class="status status-{{ result.status }}">{{ result.status }}</span>
+          </a>
+        {% endfor %}
+      </div>
+    {% elif query %}
+      <div class="empty">No matches.</div>
+    {% else %}
+      <div class="empty">Enter a search term.</div>
+    {% endif %}
+  </section>
+{% endblock %}

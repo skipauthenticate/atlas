@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Atlas Voice{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Atlas Voice</a>
+      <form class="search" action="/search" method="get">
+        <input name="q" type="search" value="{{ query | default('') }}" placeholder="Search transcripts">
+        <button type="submit">Search</button>
+      </form>
+    </header>
+    <main class="shell">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

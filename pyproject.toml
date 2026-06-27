@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas-voice"
+version = "0.1.0"
+description = "Local-first audio transcription, diarization, summarization, and search."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Atlas Voice Contributors" }]
+dependencies = [
+  "fastapi>=0.111",
+  "httpx>=0.27",
+  "jinja2>=3.1",
+  "python-multipart>=0.0.9",
+  "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+worker = [
+  "whisperx>=3.3",
+  "pyannote.audio>=3.3",
+]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.5",
+]
+
+[project.scripts]
+atlas-voice = "atlas_voice.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["atlas_voice*"]
+
+[tool.setuptools.package-data]
+atlas_voice = ["web/templates/*.html", "web/static/*.css"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

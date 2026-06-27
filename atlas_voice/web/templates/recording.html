@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ recording.title }} - Atlas Voice{% endblock %}
+{% block content %}
+  <section class="panel">
+    <div class="panel-heading">
+      <div>
+        <h1>{{ recording.title }}</h1>
+        <p><code>{{ recording.id }}</code></p>
+      </div>
+      <div class="actions">
+        <span class="status status-{{ recording.status }}">{{ recording.status }}</span>
+        <form action="/recordings/{{ recording.id }}/retry" method="post">
+          <button type="submit">Retry</button>
+        </form>
+      </div>
+    </div>
+
+    {% if recording.error %}
+      <pre class="error">{{ recording.error }}</pre>
+    {% endif %}
+
+    {% if recording.normalized_path %}
+      <audio class="player" controls src="/media/recordings/{{ recording.id }}/normalized.wav"></audio>
+    {% endif %}
+
+    <div class="grid">
+      <section>
+        <h2>Summary</h2>
+        {% if summary %}
+          <div class="summary">{{ summary.text }}</div>
+        {% else %}
+          <p class="muted">No summary yet.</p>
+        {% endif %}
+      </section>
+      <section>
+        <h2>Jobs</h2>
+        <table>
+          <thead>
+            <tr><th>Step</th><th>Status</th><th>Attempts</th></tr>
+          </thead>
+          <tbody>
+            {% for job in jobs %}
+              <tr>
+                <td>{{ job.step }}</td>
+                <td>{{ job.status }}</td>
+                <td>{{ job.attempts }}/{{ job.max_attempts }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <section>
+      <div class="section-heading">
+        <h2>Transcript</h2>
+        <div class="exports">
+          <a href="/api/recordings/{{ recording.id }}/export?format=json">JSON</a>
+          <a href="/api/recordings/{{ recording.id }}/export?format=md">Markdown</a>
+          <a href="/api/recordings/{{ recording.id }}/export?format=txt">Text</a>
+        </div>
+      </div>
+      {% if segments %}
+        <div class="transcript">
+          {% for segment in segments %}
+            <article class="segment">
+              <div class="segment-meta">
+                <strong>{{ segment.speaker }}</strong>
+                <span>{{ segment.start | timecode }} - {{ segment.end | timecode }}</span>
+              </div>
+              <p>{{ segment.text }}</p>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No transcript yet.</p>
+      {% endif %}
+    </section>
+  </section>
+{% endblock %}
