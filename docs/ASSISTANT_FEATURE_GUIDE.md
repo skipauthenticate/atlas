@@ -45,8 +45,8 @@ directories, then write a local `privacy.purge` audit event.
 The assistant health payload includes:
 
 - `status`: `ok`, `degraded`, or `error`.
-- `components`: database, web, LLM, ASR, TTS, assistant profiles, ambient, and privacy.
-- `realtime`: the websocket path and audio settings.
+- `components`: database, web, assistant runtime, LLM, ASR, TTS, assistant profiles, ambient, and privacy.
+- `realtime`: enabled state, websocket path, and audio settings.
 - `issues`: user-facing component problems that need action.
 
 A TTS sidecar connection failure degrades assistant health instead of crashing the
@@ -63,6 +63,7 @@ http://127.0.0.1:8008/v1/audio/speech
 Recommended environment for the primary local TTS path:
 
 ```bash
+export ATLAS_ASSISTANT_ENABLED=true
 export ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts
 export ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech
 export ATLAS_TTS_HEALTH_URL=http://127.0.0.1:8008/health
@@ -89,6 +90,12 @@ export ATLAS_VOICE_PIPER_VOICE=/path/to/voice.onnx
 ```
 
 ## Phase 2: Realtime Direct Voice
+
+Realtime voice is opt-in. Enable it before connecting:
+
+```bash
+export ATLAS_ASSISTANT_ENABLED=true
+```
 
 Run the web app, then connect to the websocket:
 

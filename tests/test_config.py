@@ -9,6 +9,31 @@ from atlas_voice.config import Settings
 
 
 class ConfigTests(unittest.TestCase):
+    def test_assistant_enabled_defaults_off_and_reads_exact_flag(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+
+        self.assertFalse(settings.assistant_enabled)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"ATLAS_ASSISTANT_ENABLED": "true"}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+
+        self.assertTrue(settings.assistant_enabled)
+
     def test_from_env_loads_dotenv_without_overriding_environment(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

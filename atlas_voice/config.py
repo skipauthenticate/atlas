@@ -71,6 +71,7 @@ class Settings:
     anythingllm_timeout: float = 60.0
     anythingllm_auto_sync: bool = False
     assistant_config_path: Path = Path("config/atlas.assistant.yaml")
+    assistant_enabled: bool = False
     tts_provider: str = "none"
     tts_base_url: str = "http://127.0.0.1:8008/v1/audio/speech"
     tts_health_url: str = "http://127.0.0.1:8008/health"
@@ -140,6 +141,10 @@ class Settings:
             anythingllm_auto_sync=_bool_from_env("ANYTHINGLLM_AUTO_SYNC", False),
             assistant_config_path=_path_from_env(
                 "ATLAS_VOICE_ASSISTANT_CONFIG", "./config/atlas.assistant.yaml"
+            ),
+            assistant_enabled=_bool_from_env(
+                "ATLAS_ASSISTANT_ENABLED",
+                _bool_from_env("ATLAS_VOICE_ASSISTANT_ENABLED", False),
             ),
             tts_provider=os.environ.get("ATLAS_VOICE_TTS_PROVIDER", "none").strip().lower(),
             tts_base_url=os.environ.get(

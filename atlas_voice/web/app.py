@@ -482,6 +482,13 @@ def normalized_audio(recording_id: str) -> FileResponse:
 @app.websocket("/v1/realtime")
 async def realtime_websocket(websocket: WebSocket) -> None:
     await websocket.accept()
+    if not settings.assistant_enabled:
+        await _send_realtime_error(
+            websocket,
+            "Realtime assistant is disabled; set ATLAS_ASSISTANT_ENABLED=true to enable /v1/realtime",
+        )
+        await websocket.close(code=1008)
+        return
     settings.ensure_directories()
     db.initialize()
     session_id = db.create_ambient_session(

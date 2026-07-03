@@ -27,7 +27,7 @@ def runtime_status(
         "services": service_health(settings, db, assistant_config),
         "privacy": privacy_summary(settings, assistant_config),
         "active_models": active_models(settings, assistant_config),
-        "active_listeners": active_listeners(assistant_config, db),
+        "active_listeners": active_listeners(settings, assistant_config, db),
     }
 
 
@@ -56,6 +56,7 @@ def assistant_health(
         "active_listeners": status["active_listeners"],
         "active_models": status["active_models"],
         "realtime": {
+            "enabled": settings.assistant_enabled,
             "websocket_path": "/v1/realtime",
             "transport": "websocket",
             "host": settings.host,
@@ -112,6 +113,7 @@ def service_health(
             "detail": f"{settings.host}:{settings.port}",
         }
     )
+    services.append(assistant_runtime_health(settings))
     services.append(
         {
             "name": "llm",
@@ -127,12 +129,20 @@ def service_health(
         }
     )
     services.append(tts_service_health(settings, assistant_config))
-    enabled_profiles = assistant_config.enabled_profiles()
+    enabled_profiles = assistant_config.enabled_profiles() if settings.assistant_enabled else []
     services.append(
         {
             "name": "assistant_profiles",
             "status": "configured" if enabled_profiles else "idle",
-            "detail": ", ".join(enabled_profiles) if enabled_profiles else "no active listeners",
+            "detail": (
+                ", ".join(enabled_profiles)
+                if enabled_profiles
+                else (
+                    "assistant disabled"
+                    if not settings.assistant_enabled
+                    else "no active listeners"
+                )
+            ),
         }
     )
     active_ambient = db.count_ambient_sessions(status="active")
@@ -146,11 +156,27 @@ def service_health(
     return services
 
 
+def assistant_runtime_health(settings: Settings) -> dict[str, Any]:
+    if settings.assistant_enabled:
+        return {
+            "name": "assistant_runtime",
+            "status": "enabled",
+            "detail": "ATLAS_ASSISTANT_ENABLED=true",
+        }
+    return {
+        "name": "assistant_runtime",
+        "status": "disabled",
+        "detail": "Set ATLAS_ASSISTANT_ENABLED=true to enable /v1/realtime",
+    }
+
+
 def tts_service_health(
     settings: Settings,
     assistant_config: AssistantConfig,
 ) -> dict[str, Any]:
     provider = _effective_tts_provider(settings, assistant_config)
+    if not settings.assistant_enabled:
+        return {"name": "tts", "status": "idle", "detail": "assistant disabled"}
     if provider == "none":
         return {"name": "tts", "status": "idle", "detail": "disabled"}
     if provider == "piper":
@@ -183,7 +209,7 @@ def active_models(
         {"role": "LLM", "provider": "openai-compatible", "model": settings.llm_model},
     ]
     tts_provider = _effective_tts_provider(settings, assistant_config)
-    if tts_provider != "none":
+    if settings.assistant_enabled and tts_provider != "none":
         models.append(
             {"role": "TTS", "provider": tts_provider, "model": _effective_tts_model(settings, tts_provider)}
         )
@@ -222,20 +248,22 @@ def _effective_tts_model(settings: Settings, provider: str) -> str:
 
 
 def active_listeners(
+    settings: Settings,
     assistant_config: AssistantConfig,
     db: Database,
 ) -> list[dict[str, str]]:
     listeners: list[dict[str, str]] = []
-    for name, profile in assistant_config.profiles.items():
-        if not _truthy(profile.get("enabled", False)):
-            continue
-        listeners.append(
-            {
-                "profile": name,
-                "backend": str(profile.get("realtime_backend") or profile.get("stt_provider") or "-"),
-                "tts": str(profile.get("tts_provider") or "none"),
-            }
-        )
+    if settings.assistant_enabled:
+        for name, profile in assistant_config.profiles.items():
+            if not _truthy(profile.get("enabled", False)):
+                continue
+            listeners.append(
+                {
+                    "profile": name,
+                    "backend": str(profile.get("realtime_backend") or profile.get("stt_provider") or "-"),
+                    "tts": str(profile.get("tts_provider") or "none"),
+                }
+            )
     for session in db.list_ambient_sessions(status="active"):
         listeners.append(
             {

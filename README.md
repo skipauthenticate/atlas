@@ -93,6 +93,10 @@ show local-only validation, RAM/swap/GPU status, active models, active listeners
 and service health. Audit tables for `model_runs` and `privacy_events` are stored
 in the existing SQLite database.
 
+Enable direct realtime sessions explicitly with `ATLAS_ASSISTANT_ENABLED=true`.
+When disabled, `/v1/realtime` returns a clear policy error and does not create a
+session or probe optional TTS services.
+
 The realtime endpoint accepts `input_text`, `conversation.item.create` plus
 `response.create`, and `input_audio_buffer.append` / `commit` JSON events. Audio
 commits are written under `data/artifacts/realtime/` and use the configured local
