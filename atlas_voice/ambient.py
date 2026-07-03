@@ -386,6 +386,7 @@ def _asr_model(settings: Settings) -> str:
     if settings.asr_provider == "vibevoice":
         return settings.vibevoice_model
     defaults = {
+        "faster-whisper": "large-v3-turbo",
         "hyprwhspr": "hyprwhspr-local",
         "parakeet": "nvidia/parakeet-tdt-0.6b-v3",
         "canary": "nvidia/canary-1b-v2",

@@ -221,23 +221,26 @@ started.
 Experimental ASR providers can be installed and benchmarked separately:
 
 ```bash
-scripts/install-experimental-asr.sh nemo vibevoice
+scripts/install-experimental-asr.sh nemo vibevoice faster-whisper
 scripts/smoke-benchmark-asr.sh
 ```
 
 Provider switches are controlled through `.env`:
 
 ```text
-ATLAS_VOICE_ASR_PROVIDER=whisperx        # whisperx, hyprwhspr, parakeet, canary, vibevoice
+ATLAS_VOICE_ASR_PROVIDER=whisperx        # whisperx, faster-whisper, hyprwhspr, parakeet, canary, vibevoice
 ATLAS_VOICE_ASR_MODEL=                  # optional provider-specific model id
 ATLAS_VOICE_DIARIZATION_PROVIDER=pyannote # pyannote, transcript, none
 ATLAS_VOICE_REALTIME_ASR_PREFER_HYPRWHSPR=true
+ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER=faster-whisper
+ATLAS_VOICE_FASTER_WHISPER_MODEL=large-v3-turbo
 ATLAS_VOICE_HYPRWHSPR_ENDPOINT=         # optional local HTTP transcription endpoint
 ATLAS_VOICE_HYPRWHSPR_CLI=hyprwhspr     # optional local CLI fallback
 ```
 
 Realtime audio tries Hyprwhspr first when `ATLAS_VOICE_REALTIME_ASR_PREFER_HYPRWHSPR=true`
-and a local endpoint or executable CLI is configured; failures fall back to the configured
+and a local endpoint or executable CLI is configured; failures fall back through
+`ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER` and then the configured
 `ATLAS_VOICE_ASR_PROVIDER`. Use `ATLAS_VOICE_DIARIZATION_PROVIDER=transcript` with
 `vibevoice` because VibeVoice-ASR emits speaker/timestamp segments directly. Parakeet
 and Canary are ASR-only in this app and should normally keep pyannote diarization enabled.

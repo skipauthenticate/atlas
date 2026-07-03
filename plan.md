@@ -501,11 +501,11 @@ Implemented event paths:
 
 ### Phase 5: Microphone Voice Mode
 
-Status: not complete as browser realtime voice mode. Browser mic capture and optional Hyprwhspr-first realtime ASR routing exist; realtime VAD/end-of-turn remains open.
+Status: not complete as browser realtime voice mode. Browser mic capture, optional Hyprwhspr-first routing, and local faster-whisper fallback exist; realtime VAD/end-of-turn remains open.
 
 - [x] Stream browser mic audio to the realtime endpoint.
 - [x] Use Hyprwhspr first if its local socket/CLI is reliable.
-- [ ] Fallback to local Whisper/faster-whisper.
+- [x] Fallback to local Whisper/faster-whisper.
 - [x] Add VAD for ambient file/mic chunks.
 - [ ] Add realtime VAD/end-of-turn detection.
 - [ ] Add interruption.
@@ -861,7 +861,7 @@ Suggested controls:
 - [x] LLM: existing local llama.cpp/OpenAI-compatible Qwen server.
 - [ ] STT primary target: Hyprwhspr.
 - [x] STT fallback/current: WhisperX/provider abstraction.
-- [ ] STT fallback: faster-whisper.
+- [x] STT fallback: faster-whisper.
 - [x] TTS primary target: faster-qwen3-tts.
 - [x] TTS fallback/current optional path: Piper.
 

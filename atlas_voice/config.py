@@ -69,6 +69,8 @@ class Settings:
     hyprwhspr_cli: str = "hyprwhspr"
     hyprwhspr_timeout: float = 10.0
     realtime_asr_prefer_hyprwhspr: bool = True
+    realtime_asr_fallback_provider: str = "faster-whisper"
+    faster_whisper_model: str = "large-v3-turbo"
     anythingllm_base_url: str = "http://127.0.0.1:3001/api"
     anythingllm_api_key: str | None = None
     anythingllm_workspace_slug: str | None = None
@@ -144,6 +146,13 @@ class Settings:
             hyprwhspr_timeout=float(os.environ.get("ATLAS_VOICE_HYPRWHSPR_TIMEOUT", "10")),
             realtime_asr_prefer_hyprwhspr=_bool_from_env(
                 "ATLAS_VOICE_REALTIME_ASR_PREFER_HYPRWHSPR", True
+            ),
+            realtime_asr_fallback_provider=os.environ.get(
+                "ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER", "faster-whisper"
+            ).strip().lower(),
+            faster_whisper_model=os.environ.get(
+                "ATLAS_VOICE_FASTER_WHISPER_MODEL",
+                os.environ.get("WHISPERX_MODEL", "large-v3-turbo"),
             ),
             anythingllm_base_url=os.environ.get(
                 "ANYTHINGLLM_BASE_URL", "http://127.0.0.1:3001/api"

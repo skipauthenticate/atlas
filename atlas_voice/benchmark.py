@@ -121,6 +121,8 @@ def _model_for_provider(settings: Settings, provider: str) -> str:
         return settings.asr_model
     if provider == "whisperx":
         return settings.whisperx_model
+    if provider == "faster-whisper":
+        return settings.faster_whisper_model
     if provider == "parakeet":
         return "nvidia/parakeet-tdt-0.6b-v3"
     if provider == "canary":

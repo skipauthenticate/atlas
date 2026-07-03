@@ -11,7 +11,7 @@ if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
 fi
 
 if [[ $# -eq 0 ]]; then
-  set -- nemo vibevoice
+  set -- nemo vibevoice faster-whisper
 fi
 
 for target in "$@"; do
@@ -22,8 +22,11 @@ for target in "$@"; do
     vibevoice)
       "${VENV_DIR}/bin/python" -m pip install -U git+https://github.com/microsoft/VibeVoice.git
       ;;
+    faster-whisper|fast-whisper)
+      "${VENV_DIR}/bin/python" -m pip install -U faster-whisper
+      ;;
     *)
-      echo "Unknown target: ${target}. Use nemo, parakeet, canary, or vibevoice." >&2
+      echo "Unknown target: ${target}. Use nemo, parakeet, canary, vibevoice, or faster-whisper." >&2
       exit 2
       ;;
   esac

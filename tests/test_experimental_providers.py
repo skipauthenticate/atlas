@@ -9,8 +9,13 @@ from unittest import mock
 
 from atlas_voice.benchmark import run_asr_benchmark, word_error_rate
 from atlas_voice.config import Settings
-from atlas_voice.providers.asr import select_realtime_asr_provider
+from atlas_voice.providers.asr import (
+    realtime_asr_provider_chain,
+    select_realtime_asr_provider,
+    transcribe_audio,
+)
 from atlas_voice.providers.diarization import diarize_audio
+from atlas_voice.providers.faster_whisper_provider import transcribe_faster_whisper
 from atlas_voice.providers.hyprwhspr_provider import (
     hyprwhspr_available,
     transcribe_hyprwhspr,
@@ -75,7 +80,7 @@ class ExperimentalProviderTests(unittest.TestCase):
             )
 
             self.assertFalse(hyprwhspr_available(provider_settings))
-            self.assertEqual(select_realtime_asr_provider(provider_settings), "whisperx")
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "faster-whisper")
 
     def test_hyprwhspr_cli_transcription_parses_json_stdout(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -101,6 +106,110 @@ class ExperimentalProviderTests(unittest.TestCase):
         self.assertEqual(transcript["provider"], "hyprwhspr")
         self.assertEqual(transcript["text"], "hello local")
         self.assertEqual(transcript["segments"][0]["text"], "hello local")
+
+
+    def test_realtime_asr_chain_uses_faster_whisper_before_configured_provider(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(root / "missing-hyprwhspr"),
+                hyprwhspr_endpoint=None,
+                realtime_asr_prefer_hyprwhspr=True,
+                realtime_asr_fallback_provider="faster-whisper",
+            )
+
+            self.assertEqual(
+                realtime_asr_provider_chain(provider_settings),
+                ["faster-whisper", "whisperx"],
+            )
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "faster-whisper")
+
+    def test_realtime_asr_chain_deduplicates_configured_fallback_provider(self) -> None:
+        provider_settings = replace(
+            settings(Path("/tmp/atlas-test"), asr_provider="faster-whisper"),
+            hyprwhspr_cli="/tmp/missing-hyprwhspr",
+            hyprwhspr_endpoint=None,
+            realtime_asr_fallback_provider="faster-whisper",
+        )
+
+        self.assertEqual(realtime_asr_provider_chain(provider_settings), ["faster-whisper"])
+
+
+    def test_realtime_transcription_falls_back_to_configured_provider(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(root / "missing-hyprwhspr"),
+                hyprwhspr_endpoint=None,
+                realtime_asr_fallback_provider="faster-whisper",
+            )
+            with (
+                mock.patch(
+                    "atlas_voice.providers.asr.transcribe_faster_whisper",
+                    side_effect=RuntimeError("faster-whisper busy"),
+                ) as faster_mock,
+                mock.patch(
+                    "atlas_voice.providers.asr.transcribe_whisperx",
+                    return_value={"text": "whisperx fallback", "segments": []},
+                ) as whisperx_mock,
+            ):
+                transcript = transcribe_audio(Path("audio.wav"), provider_settings, realtime=True)
+
+        self.assertEqual(transcript["text"], "whisperx fallback")
+        faster_mock.assert_called_once()
+        whisperx_mock.assert_called_once()
+
+    def test_faster_whisper_provider_normalizes_segments_and_words(self) -> None:
+        class Word:
+            start = 0.0
+            end = 0.4
+            word = "hello"
+            probability = 0.9
+
+        class Segment:
+            start = 0.0
+            end = 1.0
+            text = "hello local"
+            words = [Word()]
+
+        class Info:
+            language = "en"
+            language_probability = 0.99
+
+        class WhisperModel:
+            requested = None
+            kwargs = None
+
+            def __init__(self, model_name, **kwargs):
+                self.__class__.requested = model_name
+                self.__class__.kwargs = kwargs
+
+            def transcribe(self, path, **kwargs):
+                self.path = path
+                self.transcribe_kwargs = kwargs
+                return [Segment()], Info()
+
+        fake_module = types.ModuleType("faster_whisper")
+        fake_module.WhisperModel = WhisperModel
+        provider_settings = replace(
+            settings(Path("/tmp/atlas-test")),
+            faster_whisper_model="distil-large-v3",
+            whisperx_device="cpu",
+            whisperx_compute_type="int8",
+        )
+
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake_module}):
+            transcript = transcribe_faster_whisper(Path("audio.wav"), provider_settings)
+
+        self.assertEqual(WhisperModel.requested, "distil-large-v3")
+        self.assertEqual(WhisperModel.kwargs["device"], "cpu")
+        self.assertEqual(WhisperModel.kwargs["compute_type"], "int8")
+        self.assertEqual(transcript["provider"], "faster-whisper")
+        self.assertEqual(transcript["language"], "en")
+        self.assertEqual(transcript["text"], "hello local")
+        self.assertEqual(transcript["segments"][0]["words"][0]["word"], "hello")
 
     def test_word_error_rate_counts_word_edits(self) -> None:
         self.assertEqual(word_error_rate("alpha beta", "alpha beta"), 0.0)

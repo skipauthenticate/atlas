@@ -145,6 +145,17 @@ For development without local models, set:
 export ATLAS_VOICE_STUB_MODE=true
 ```
 
+Realtime speech-to-text uses a local fallback chain. With defaults, Atlas first tries Hyprwhspr when a local endpoint or CLI is available, then tries `faster-whisper`, then the configured `ATLAS_VOICE_ASR_PROVIDER`. To make fallback behavior explicit:
+
+```bash
+export ATLAS_VOICE_REALTIME_ASR_PREFER_HYPRWHSPR=true
+export ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER=faster-whisper
+export ATLAS_VOICE_FASTER_WHISPER_MODEL=large-v3-turbo
+```
+
+Use `ATLAS_VOICE_ASR_PROVIDER=faster-whisper` to make faster-whisper the direct batch and playground ASR provider too. On Jetson, benchmark `large-v3-turbo` and `distil-large-v3` with `scripts/smoke-benchmark-asr.sh` before making the model permanent.
+
+
 ## Phase 3: Voice Workbench Console
 
 Open the assistant console at:

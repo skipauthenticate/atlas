@@ -11,6 +11,7 @@ from .realtime import check_tts_sidecar_health, is_tts_sidecar_provider, normali
 
 PROVIDER_DEFAULT_MODELS = {
     "whisperx": "large-v3-turbo",
+    "faster-whisper": "large-v3-turbo",
     "hyprwhspr": "hyprwhspr-local",
     "parakeet": "nvidia/parakeet-tdt-0.6b-v3",
     "canary": "nvidia/canary-1b-v2",
