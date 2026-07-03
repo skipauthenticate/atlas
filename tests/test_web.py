@@ -444,6 +444,84 @@ class WebTests(unittest.TestCase):
             self.assertIn("Conversation Signals - Coaching progress session", voice_response.text)
             self.assertIn("Writing Signals - Launch note", voice_response.text)
 
+    def test_voice_console_coaching_goals_dashboard_can_create_and_complete_goals(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            goal_id = web_app.db.create_coaching_goal(
+                title="Ask better follow-up questions",
+                description="Practice one reflective question per conversation.",
+                target_date="2026-08-01",
+                metric="question_ratio",
+                metadata={"next_action": "Review the next daily summary"},
+            )
+            web_app.db.create_coaching_goal(title="Finished goal", status="completed")
+            web_app.db.log_feedback_event(
+                event_type="coaching.conversation_signals",
+                category="conversation_signals",
+                goal_id=goal_id,
+                message="Conversation Signals - Practice",
+                score=0.6,
+                metadata={"signals": {"question_ratio": 0.6, "clarity": 0.8}},
+            )
+            client = TestClient(web_app.app)
+
+            api_response = client.get("/api/coaching/goals", params={"status": "all"})
+            voice_response = client.get("/voice")
+            created = client.post(
+                "/coaching/goals",
+                data={
+                    "title": "Reduce hedging",
+                    "description": "Use direct asks in launch notes.",
+                    "target_date": "2026-09-01",
+                    "metric": "hedging_count",
+                    "next_action": "Review writing signals weekly",
+                },
+                follow_redirects=False,
+            )
+            completed = client.post(
+                f"/coaching/goals/{goal_id}/status",
+                data={"status": "completed"},
+                follow_redirects=False,
+            )
+
+            self.assertEqual(api_response.status_code, 200)
+            payload = api_response.json()
+            self.assertEqual(payload["active_count"], 1)
+            self.assertEqual(payload["completed_count"], 1)
+            self.assertEqual(payload["goals"][0]["title"], "Ask better follow-up questions")
+            self.assertEqual(payload["goals"][0]["latest_score_display"], "60%")
+            self.assertEqual(payload["goals"][0]["feedback_count"], 1)
+            self.assertEqual(voice_response.status_code, 200)
+            self.assertIn('data-coaching-goals', voice_response.text)
+            self.assertIn("Coaching Goals", voice_response.text)
+            self.assertIn("Ask better follow-up questions", voice_response.text)
+            self.assertIn("Review the next daily summary", voice_response.text)
+            self.assertIn("question_ratio", voice_response.text)
+            self.assertIn("60%", voice_response.text)
+            self.assertEqual(created.status_code, 303)
+            created_goal = web_app.db.list_coaching_goals(status="active")[0]
+            self.assertEqual(created_goal["title"], "Reduce hedging")
+            self.assertEqual(created_goal["metadata"], {"next_action": "Review writing signals weekly"})
+            self.assertEqual(completed.status_code, 303)
+            self.assertEqual(web_app.db.get_coaching_goal(goal_id)["status"], "completed")
+
     def test_voice_console_memory_ui_can_edit_and_delete_items(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

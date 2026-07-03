@@ -326,9 +326,59 @@ def voice_console(request: Request) -> Response:
             "ambient_timeline": ambient_timeline,
             "voice_settings": _voice_settings_view(),
             "memory_items": _memory_item_views(db.list_memory_items(limit=8)),
+            "coaching_goals": _coaching_goals_view(status="active"),
             "coaching_progress": _coaching_progress_view(),
         },
     )
+
+
+def _coaching_goals_view(status: str | None = "active", limit: int = 50) -> dict[str, Any]:
+    normalized_status = None if status in {None, "", "all"} else str(status)
+    goals = db.list_coaching_goals(status=normalized_status, limit=limit)
+    active_count = len(db.list_coaching_goals(status="active", limit=500))
+    completed_count = len(db.list_coaching_goals(status="completed", limit=500))
+    archived_count = len(db.list_coaching_goals(status="archived", limit=500))
+    goal_views = [_coaching_goal_view(goal) for goal in goals]
+    goal_views.sort(key=lambda item: _goal_status_rank(str(item.get("status") or "")))
+    return {
+        "status": "ok",
+        "filter": status or "active",
+        "active_count": active_count,
+        "completed_count": completed_count,
+        "archived_count": archived_count,
+        "goals": goal_views,
+    }
+
+
+def _goal_status_rank(status: str) -> int:
+    return {"active": 0, "completed": 1, "archived": 2}.get(status, 3)
+
+
+def _coaching_goal_view(goal: dict[str, Any]) -> dict[str, Any]:
+    events = db.list_feedback_events(goal_id=int(goal["id"]), limit=25)
+    latest_event = events[0] if events else None
+    latest_score = latest_event.get("score") if latest_event else None
+    next_action = str((goal.get("metadata") or {}).get("next_action") or "")
+    return {
+        **goal,
+        "created_at_display": _timestamp_label(_parse_timestamp(goal.get("created_at"))),
+        "updated_at_display": _timestamp_label(_parse_timestamp(goal.get("updated_at"))),
+        "completed_at_display": _timestamp_label(_parse_timestamp(goal.get("completed_at"))),
+        "target_date_display": goal.get("target_date") or "No target date",
+        "next_action": next_action,
+        "feedback_count": len(events),
+        "latest_score": latest_score,
+        "latest_score_display": _percent_label(_coerce_score(latest_score)),
+        "latest_event_title": str(latest_event.get("message") or "").splitlines()[0] if latest_event else "",
+    }
+
+
+def _coerce_score(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0.0 <= number <= 1.0 else None
 
 
 def _coaching_progress_view(limit: int = 100) -> dict[str, Any]:
@@ -783,6 +833,44 @@ def retry_recording(recording_id: str) -> Response:
         raise HTTPException(status_code=404, detail="Recording not found")
     db.retry_recording(recording_id)
     return RedirectResponse(f"/recordings/{recording_id}", status_code=303)
+
+
+@app.get("/api/coaching/goals")
+def api_coaching_goals(status: str = "active", limit: int = 50) -> JSONResponse:
+    return JSONResponse(_coaching_goals_view(status=status, limit=max(min(limit, 500), 1)))
+
+
+@app.post("/coaching/goals")
+def create_coaching_goal(
+    title: str = Form(...),
+    description: str = Form(""),
+    target_date: str = Form(""),
+    metric: str = Form(""),
+    next_action: str = Form(""),
+) -> Response:
+    clean_title = title.strip()
+    if not clean_title:
+        raise HTTPException(status_code=400, detail="Goal title is required")
+    clean_next_action = next_action.strip()
+    metadata = {"next_action": clean_next_action} if clean_next_action else None
+    db.create_coaching_goal(
+        title=clean_title,
+        description=description.strip() or None,
+        target_date=target_date.strip() or None,
+        metric=metric.strip() or None,
+        metadata=metadata,
+    )
+    return RedirectResponse("/voice#voice-goals", status_code=303)
+
+
+@app.post("/coaching/goals/{goal_id}/status")
+def update_coaching_goal_status(goal_id: int, status: str = Form(...)) -> Response:
+    clean_status = status.strip().lower()
+    if clean_status not in {"active", "completed", "archived"}:
+        raise HTTPException(status_code=400, detail="Unsupported goal status")
+    if not db.update_coaching_goal(goal_id, status=clean_status):
+        raise HTTPException(status_code=404, detail="Coaching goal not found")
+    return RedirectResponse("/voice#voice-goals", status_code=303)
 
 
 @app.post("/memory/{memory_id}/edit")

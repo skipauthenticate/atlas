@@ -1074,6 +1074,95 @@ code {
   background: #912018;
 }
 
+.voice-goal-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.voice-goal-summary span {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcfe;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.voice-goal-form,
+.voice-goal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-goal-form input,
+.voice-goal-form textarea {
+  min-width: 0;
+}
+
+.voice-goal-form button {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.voice-goal-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.voice-goal-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.voice-goal-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.voice-goal-copy small,
+.voice-goal-copy em {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.voice-goal-copy p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.voice-goal-actions {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-goal-actions span {
+  font-weight: 800;
+}
+
+.voice-goal-actions form {
+  margin: 0;
+}
+
+.voice-goal-actions button {
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
 .voice-progress-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

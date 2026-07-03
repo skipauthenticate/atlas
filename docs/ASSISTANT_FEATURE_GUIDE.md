@@ -345,6 +345,17 @@ clarity, concision, question ratio, ask/action clarity, and recent coaching
 events derived from stored feedback events. The API is bounded to recent events
 and does not trigger model work.
 
+Manage coaching goals in the Voice inspector or as JSON:
+
+```bash
+curl http://127.0.0.1:8787/api/coaching/goals
+curl 'http://127.0.0.1:8787/api/coaching/goals?status=all'
+```
+
+The `/voice` Coaching Goals panel lists active goals, target dates, tracked
+metrics, next actions, latest feedback scores, and feedback counts. The panel can
+create goals and mark them completed or archived without starting model work.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,

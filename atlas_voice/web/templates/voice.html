@@ -226,6 +226,47 @@
         </div>
       </section>
 
+      <section id="voice-goals" data-coaching-goals>
+        <h2>Coaching Goals</h2>
+        <div class="voice-goal-summary">
+          <span>{{ coaching_goals.active_count }} active</span>
+          <span>{{ coaching_goals.completed_count }} completed</span>
+        </div>
+        <form action="/coaching/goals" method="post" class="voice-goal-form">
+          <input type="text" name="title" placeholder="New coaching goal" required>
+          <input type="text" name="metric" placeholder="Metric">
+          <input type="text" name="target_date" placeholder="Target date">
+          <textarea name="description" rows="2" placeholder="Description"></textarea>
+          <input type="text" name="next_action" placeholder="Next action">
+          <button type="submit">Add Goal</button>
+        </form>
+        <div class="voice-goal-list">
+          {% for goal in coaching_goals.goals %}
+            <article class="voice-goal-item">
+              <div class="voice-goal-copy">
+                <strong>{{ goal.title }}</strong>
+                <small>{{ goal.metric or 'no metric' }} · {{ goal.target_date_display }} · {{ goal.feedback_count }} feedback event{{ '' if goal.feedback_count == 1 else 's' }}</small>
+                {% if goal.description %}<p>{{ goal.description }}</p>{% endif %}
+                {% if goal.next_action %}<em>{{ goal.next_action }}</em>{% endif %}
+              </div>
+              <div class="voice-goal-actions">
+                <span>{{ goal.latest_score_display }}</span>
+                <form action="/coaching/goals/{{ goal.id }}/status" method="post">
+                  <input type="hidden" name="status" value="completed">
+                  <button type="submit">Complete</button>
+                </form>
+                <form action="/coaching/goals/{{ goal.id }}/status" method="post">
+                  <input type="hidden" name="status" value="archived">
+                  <button type="submit">Archive</button>
+                </form>
+              </div>
+            </article>
+          {% else %}
+            <div class="empty tight">No active coaching goals.</div>
+          {% endfor %}
+        </div>
+      </section>
+
       <section id="voice-coaching" data-coaching-progress>
         <h2>Progress Dashboard</h2>
         {% if coaching_progress.event_count %}
