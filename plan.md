@@ -572,9 +572,9 @@ Status: CLI/API MVP complete; speaker-aware ambient utterance storage exists; UI
 
 ### Phase 7: Coaching, Memory, And Observability
 
-Status: remaining, except basic observability and durable memory item storage exist.
+Status: remaining, except basic observability, durable memory item storage, and SQLite FTS memory retrieval exist.
 
-- [ ] Use SQLite FTS first for memory retrieval.
+- [x] Use SQLite FTS first for memory retrieval.
 - [ ] Add `sqlite-vec` later for semantic memory if needed.
 - [x] Add `memory_items` table.
 - [ ] Add memory extraction from ambient sessions.
@@ -666,7 +666,7 @@ Database status:
 Vector retrieval plan:
 
 - [ ] Add local vector search with `sqlite-vec`.
-- [ ] Keep SQLite as the default memory/search store because Atlas already uses SQLite and FTS5.
+- [x] Keep SQLite as the default memory/search store because Atlas already uses SQLite and FTS5.
 - [ ] Avoid Qdrant/Chroma unless memory scale outgrows SQLite.
 
 Reference:

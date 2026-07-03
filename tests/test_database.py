@@ -228,6 +228,40 @@ class DatabaseTests(unittest.TestCase):
             self.assertIsNone(memory["valid_until"])
             self.assertEqual([item["id"] for item in memories], [memory_id])
 
+    def test_search_memory_items_uses_fts_and_ignores_expired_items(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            matching_id = db.create_memory_item(
+                kind="preference",
+                title="Summary preference",
+                text="The user prefers concise launch summaries with clear action items.",
+                source_type="manual",
+                source_id="seed",
+                importance=0.8,
+                confidence=0.9,
+            )
+            db.create_memory_item(
+                kind="hardware",
+                title="BRIO note",
+                text="The Logitech BRIO uses ALSA device plughw:2,0.",
+                source_type="manual",
+            )
+            db.create_memory_item(
+                kind="preference",
+                title="Expired preference",
+                text="Expired memory about concise summaries should not be returned.",
+                source_type="manual",
+                valid_until="2020-01-01T00:00:00+00:00",
+            )
+
+            results = db.search_memory_items("concise summary", limit=5)
+
+            self.assertEqual([item["id"] for item in results], [matching_id])
+            self.assertEqual(results[0]["kind"], "preference")
+            self.assertEqual(results[0]["title"], "Summary preference")
+            self.assertIn("[concise]", results[0]["snippet"].lower())
+
     def test_coaching_goals_can_be_created_listed_and_completed(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

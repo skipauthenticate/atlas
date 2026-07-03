@@ -272,8 +272,11 @@ timestamps in the local database. Memory items keep kind, title, text, source
 type/id, importance, confidence, validity timestamps, and local audit timestamps.
 
 Programmatic memory storage is available through `Database.create_memory_item`,
-`Database.get_memory_item`, and `Database.list_memory_items`. Search and UI
-workflows are intentionally still separate follow-up items.
+`Database.get_memory_item`, and `Database.list_memory_items`. Local retrieval uses
+SQLite FTS5 through `Database.search_memory_items`, filtering out memories outside
+their validity window and ranking matches locally without an external vector
+service. Extraction, vector search, and UI workflows are intentionally still
+separate follow-up items.
 
 ## Jetson Operating Notes
 

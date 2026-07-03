@@ -270,6 +270,13 @@ class Database:
                     ON memory_items(source_type, source_id);
                 CREATE INDEX IF NOT EXISTS idx_memory_items_valid_until
                     ON memory_items(valid_until);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                    memory_id UNINDEXED,
+                    kind UNINDEXED,
+                    title,
+                    text
+                );
                 """
             )
 
@@ -305,6 +312,17 @@ class Database:
                     conn.execute(
                         "ALTER TABLE summaries ADD COLUMN template_id TEXT"
                     )
+
+            conn.execute(
+                """
+                INSERT INTO memory_fts (memory_id, kind, title, text)
+                SELECT m.id, m.kind, m.title, m.text
+                FROM memory_items m
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM memory_fts f WHERE f.memory_id = m.id
+                )
+                """
+            )
 
     def create_recording(self, source_path: Path | str, title: str | None = None) -> str:
         recording_id = uuid.uuid4().hex
@@ -1036,7 +1054,15 @@ class Database:
                     now,
                 ),
             )
-            return int(cursor.lastrowid)
+            memory_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO memory_fts (memory_id, kind, title, text)
+                VALUES (?, ?, ?, ?)
+                """,
+                (memory_id, kind, title, text),
+            )
+            return memory_id
 
     def get_memory_item(self, memory_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
@@ -1068,6 +1094,29 @@ class Database:
         params.append(max(min(limit, 500), 1))
         with self.connect() as conn:
             rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def search_memory_items(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
+        match = self._fts_query(query)
+        if not match:
+            return []
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    m.*,
+                    snippet(memory_fts, 3, '[', ']', '...', 20) AS snippet
+                FROM memory_fts f
+                JOIN memory_items m ON m.id = f.memory_id
+                WHERE memory_fts MATCH ?
+                    AND (m.valid_from IS NULL OR m.valid_from <= ?)
+                    AND (m.valid_until IS NULL OR m.valid_until >= ?)
+                ORDER BY rank, m.importance DESC, m.updated_at DESC
+                LIMIT ?
+                """,
+                (match, now, now, max(min(limit, 100), 1)),
+            ).fetchall()
         return [dict(row) for row in rows]
 
 
