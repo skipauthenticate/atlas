@@ -451,7 +451,7 @@ Status: partial.
 - [x] Add Voice Playground for testing STT.
 - [x] Add Voice Playground for testing model response.
 - [x] Add Voice Playground latency display.
-- [ ] Use restrained cards only for repeated items like sessions, memories, goals, and model runs.
+- [x] Use restrained cards only for repeated items like sessions, memories, goals, and model runs.
 - [x] Add ambient session timeline UI.
 - [x] Add browser realtime console UI for `/v1/realtime`.
 - [ ] Add desktop and mobile layout QA.

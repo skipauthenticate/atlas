@@ -147,9 +147,11 @@ calls `POST /api/voice/playground/model`. These paths log latency in `model_runs
 with tasks `voice_playground_tts`, `voice_playground_stt`, and
 `voice_playground_model`, and the workbench displays the returned latency next to
 each playground result. The Ambient Timeline on `/voice` surfaces recent ambient,
-meeting, private, and paused sessions with their latest utterance preview. Browser
-mic audio streaming and backend response cancellation are still tracked
-separately in `plan.md`.
+meeting, private, and paused sessions with their latest utterance preview. The
+workbench keeps card framing restrained to repeated row items such as sessions,
+models, and timeline entries; playground sections remain unframed inside the main
+work surface. Browser mic audio streaming and backend response cancellation are
+still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 
