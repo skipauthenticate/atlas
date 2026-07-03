@@ -4,14 +4,20 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from .anythingllm import AnythingLLMError, sync_recording_to_anythingllm
 from .audio import normalize_audio
 from .config import Settings
 from .database import Database
 from .merge import merge_transcript_with_diarization
-from .providers.pyannote_provider import diarize_audio
-from .providers.whisperx_provider import transcribe_audio
+from .providers.asr import transcribe_audio
+from .providers.diarization import diarize_audio
 from .storage import FileStorage
-from .summarizer import chunk_transcript, summarize_with_llm
+from .summarizer import (
+    chunk_transcript,
+    detect_template,
+    get_template,
+    summarize_with_llm,
+)
 
 
 PIPELINE_STEPS = ["ingest", "normalize", "transcribe", "diarize", "merge", "summarize"]
@@ -54,6 +60,8 @@ class PipelineProcessor:
                     self.db.update_recording(recording_id, status="queued", error=None)
                 else:
                     self.db.update_recording(recording_id, status="done", error=None)
+                    if step == "summarize":
+                        self._sync_anythingllm_after_summary(recording_id)
         except Exception as exc:
             error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
             failed_job = self.db.fail_job(job["id"], error)
@@ -124,7 +132,10 @@ class PipelineProcessor:
         normalized_path = recording.get("normalized_path")
         if not normalized_path:
             raise RuntimeError("Recording has no normalized audio path")
-        diarization = diarize_audio(Path(normalized_path), self.settings)
+        transcript = None
+        if self.settings.diarization_provider == "transcript":
+            transcript = self.storage.read_json(recording_id, "transcript.json")
+        diarization = diarize_audio(Path(normalized_path), self.settings, transcript=transcript)
         self.storage.write_json(recording_id, "diarization.json", diarization)
         self.db.update_recording(recording_id, status="diarized", error=None)
 
@@ -138,16 +149,52 @@ class PipelineProcessor:
 
     def _summarize(self, recording_id: str) -> None:
         segments = self.db.get_segments(recording_id)
+        # Determine template: explicit user preference > auto-detect
+        preferred_id = self.db.get_recording_template(recording_id)
         if self.settings.stub_mode:
-            text = "Overview\nAtlas Voice processed a local test recording.\n\nKey Points\n- Stub mode is enabled.\n\nAction Items\nNone\n\nOpen Questions\nNone"
+            text = (
+                "Overview\n"
+                "Atlas Voice processed a local test recording.\n\n"
+                "Key Points\n"
+                "- Stub mode is enabled.\n\n"
+                "Action Items\n"
+                "None\n\n"
+                "Open Questions\n"
+                "None"
+            )
             chunks_payload = [{"chunk_index": 1, "text": text}]
+            tpl_id = preferred_id or "meeting"
         else:
             chunks = chunk_transcript(segments)
-            text, chunks_payload = summarize_with_llm(chunks, self.settings)
+            # Build a mini transcript for auto-detection (first 2000 chars)
+            mini_transcript = "\n".join(
+                s.get("text", "") for s in segments[:100]
+            )[:2000]
+            tpl = None
+            if preferred_id:
+                tpl = get_template(preferred_id)
+            if tpl is None and mini_transcript.strip():
+                tpl = detect_template(mini_transcript)
+            tpl_id = tpl.id if tpl else "meeting"
+            text, chunks_payload = summarize_with_llm(
+                chunks, self.settings, template=tpl, template_id=preferred_id
+            )
         self.db.save_summary(
             recording_id,
             text,
             model=self.settings.llm_model,
+            template_id=tpl_id,
             chunks=chunks_payload,
         )
         self.db.update_recording(recording_id, status="done", error=None)
+
+    def _sync_anythingllm_after_summary(self, recording_id: str) -> None:
+        if not self.settings.anythingllm_auto_sync:
+            return
+        try:
+            sync_recording_to_anythingllm(self.db, recording_id, self.settings)
+        except (AnythingLLMError, ValueError) as exc:
+            self.db.update_recording(
+                recording_id,
+                error=f"AnythingLLM auto-sync failed: {str(exc)[:500]}",
+            )

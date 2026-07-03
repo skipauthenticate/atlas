@@ -19,9 +19,29 @@
         </form>
       </div>
     </div>
+    <section class="runtime-summary" aria-label="Worker runtime">
+      <div>
+        <span>Compute</span>
+        <strong>{{ runtime.accelerator }}</strong>
+        <small>{{ runtime.device }}</small>
+      </div>
+      <div>
+        <span>WhisperX</span>
+        <strong>{{ runtime.whisperx_model }}</strong>
+        <small>{{ runtime.compute_type }}</small>
+      </div>
+      <div>
+        <span>Diarization</span>
+        <strong>{{ runtime.pyannote_model }}</strong>
+      </div>
+    </section>
 
     {% if recording.error %}
       <pre class="error">{{ recording.error }}</pre>
+    {% endif %}
+
+    {% if anythingllm_message %}
+      <p class="notice{% if anythingllm_message.kind == 'error' %} notice-error{% endif %}">{{ anythingllm_message.text }}</p>
     {% endif %}
 
     {% if recording.normalized_path %}
@@ -75,7 +95,7 @@
             <strong>{{ label }}</strong>
             <small>
               {% if state.job %}
-                {{ state.job.status }}{% if state.job.attempts is not none %} · attempt {{ state.job.attempts }}/{{ state.job.max_attempts }}{% endif %}
+                {{ state.job.status }}{% if state.job.attempts is not none %} · attempt {{ state.job.attempts }}/{{ state.job.max_attempts }}{% endif %} · {{ state.job.duration_label }}
               {% else %}
                 waiting
               {% endif %}
@@ -87,9 +107,75 @@
 
     <div class="grid">
       <section>
-        <h2>Summary</h2>
-        {% if summary %}
-          <div class="summary">{{ summary.text }}</div>
+        <div class="section-heading">
+          <h2>Summary</h2>
+          <div class="template-selector">
+            <label for="template-select">Template:</label>
+            <select id="template-select" onchange="changeTemplate(this.value)">
+              {% for tpl_id, tpl in all_templates.items() %}
+              <option value="{{ tpl_id }}"{% if tpl_id == preferred_template_id %} selected{% endif %}>
+                {{ tpl.name }}
+              </option>
+              {% endfor %}
+            </select>
+            {% if preferred_template %}
+            <small class="template-desc">{{ preferred_template.description }}</small>
+            {% endif %}
+          </div>
+        </div>
+        {% if is_resummarizing %}
+          <p class="muted resummarizing-banner">⟳ Switching to "{{ preferred_template.name }}" — your current "{{ cached_summary.template_id }}" summary is cached and will be replaced shortly.</p>
+          <div class="summary summary-readable summary-cached">
+            {% for section in cached_summary_sections %}
+              <details class="summary-section summary-section-{{ section.slug }}" open>
+                <summary>
+                  <span>{{ section.title }}</span>
+                  {% if section.item_count %}<small>{{ section.item_count }} items</small>{% endif %}
+                </summary>
+                <div class="summary-section-body">
+                  {% for paragraph in section.paragraphs %}
+                    <p>{{ paragraph }}</p>
+                  {% endfor %}
+                  {% if section["items"] %}
+                    <ul class="summary-list{% if section["items"] | length > 8 %} summary-list-dense{% endif %}">
+                      {% for item in section["items"] %}
+                        <li class="summary-depth-{{ item.depth }}{% if item.is_none %} summary-none{% endif %}">
+                          {% if item.label %}<strong>{{ item.label }}</strong>{% endif %}
+                          {% if item.text %}<span>{{ item.text }}</span>{% endif %}
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  {% endif %}
+                </div>
+              </details>
+            {% endfor %}
+          </div>
+        {% elif summary_sections %}
+          <div class="summary summary-readable">
+            {% for section in summary_sections %}
+              <details class="summary-section summary-section-{{ section.slug }}" open>
+                <summary>
+                  <span>{{ section.title }}</span>
+                  {% if section.item_count %}<small>{{ section.item_count }} items</small>{% endif %}
+                </summary>
+                <div class="summary-section-body">
+                  {% for paragraph in section.paragraphs %}
+                    <p>{{ paragraph }}</p>
+                  {% endfor %}
+                  {% if section["items"] %}
+                    <ul class="summary-list{% if section["items"] | length > 8 %} summary-list-dense{% endif %}">
+                      {% for item in section["items"] %}
+                        <li class="summary-depth-{{ item.depth }}{% if item.is_none %} summary-none{% endif %}">
+                          {% if item.label %}<strong>{{ item.label }}</strong>{% endif %}
+                          {% if item.text %}<span>{{ item.text }}</span>{% endif %}
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  {% endif %}
+                </div>
+              </details>
+            {% endfor %}
+          </div>
         {% else %}
           <p class="muted">No summary yet.</p>
         {% endif %}
@@ -98,7 +184,7 @@
         <h2>Jobs</h2>
         <table>
           <thead>
-            <tr><th>Step</th><th>Status</th><th>Attempts</th></tr>
+            <tr><th>Step</th><th>Status</th><th>Attempts</th><th>Started</th><th>Finished</th><th>Duration</th></tr>
           </thead>
           <tbody>
             {% for job in jobs %}
@@ -106,6 +192,9 @@
                 <td>{{ job.step }}</td>
                 <td>{{ job.status }}</td>
                 <td>{{ job.attempts }}/{{ job.max_attempts }}</td>
+                <td>{{ job.started_at_display }}</td>
+                <td>{{ job.finished_at_display }}</td>
+                <td>{{ job.duration_label }}</td>
               </tr>
             {% endfor %}
           </tbody>
@@ -120,6 +209,9 @@
           <a href="/api/recordings/{{ recording.id }}/export?format=json">JSON</a>
           <a href="/api/recordings/{{ recording.id }}/export?format=md">Markdown</a>
           <a href="/api/recordings/{{ recording.id }}/export?format=txt">Text</a>
+          <form action="/recordings/{{ recording.id }}/sync-anythingllm" method="post">
+            <button type="submit"{% if not (segments or summary) %} disabled{% endif %}>Sync to AnythingLLM</button>
+          </form>
         </div>
       </div>
       {% if segments %}
@@ -139,4 +231,27 @@
       {% endif %}
     </section>
   </section>
+
+  <script>
+    function changeTemplate(templateId) {
+      if (!templateId) return;
+      fetch('/recordings/{{ recording.id }}/template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ template_id: templateId })
+      })
+      .then(function(resp) { return resp.json(); })
+      .then(function(data) {
+        if (data.error) {
+          alert('Error: ' + data.error);
+        } else {
+          // Reload the page to show the re-summarized content
+          location.reload();
+        }
+      })
+      .catch(function(err) {
+        alert('Failed to change template: ' + err);
+      });
+    }
+  </script>
 {% endblock %}

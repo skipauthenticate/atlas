@@ -10,6 +10,18 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Atlas Voice Contributors" }]
+keywords = ["audio", "transcription", "diarization", "summarization", "local-first"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
 dependencies = [
   "fastapi>=0.111",
   "httpx>=0.27",
@@ -31,6 +43,11 @@ dev = [
 
 [project.scripts]
 atlas-voice = "atlas_voice.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/skipauthenticate/atlas-voice"
+Repository = "https://github.com/skipauthenticate/atlas-voice"
+Issues = "https://github.com/skipauthenticate/atlas-voice/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

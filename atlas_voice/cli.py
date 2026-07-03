@@ -6,10 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .anythingllm import AnythingLLMError, sync_recording_to_anythingllm
 from .config import Settings
 from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
+from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
 from .worker import Worker
 
 
@@ -44,6 +46,28 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("recording_id")
     export.add_argument("--format", choices=("json", "md", "txt"), default="json")
     export.set_defaults(func=cmd_export)
+
+    sync_anythingllm = subparsers.add_parser(
+        "sync-anythingllm", help="Sync a recording into an AnythingLLM workspace"
+    )
+    sync_anythingllm.add_argument("recording_id")
+    sync_anythingllm.set_defaults(func=cmd_sync_anythingllm)
+
+    benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
+    benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
+    benchmark.add_argument(
+        "--providers",
+        default="whisperx,parakeet,canary,vibevoice",
+        help="Comma-separated providers: whisperx, parakeet, canary, vibevoice",
+    )
+    benchmark.add_argument("--reference", type=Path, help="Optional reference transcript text")
+    benchmark.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    benchmark.add_argument(
+        "--include-diarization",
+        action="store_true",
+        help="Also run the configured diarization provider after ASR",
+    )
+    benchmark.set_defaults(func=cmd_benchmark_asr)
 
     worker = subparsers.add_parser("worker", help=argparse.SUPPRESS)
     worker.set_defaults(func=cmd_worker)
@@ -102,6 +126,42 @@ def cmd_export(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     return 0
+
+
+def cmd_sync_anythingllm(args: argparse.Namespace) -> int:
+    settings, db = settings_and_db()
+    try:
+        result = sync_recording_to_anythingllm(db, args.recording_id, settings)
+    except (ValueError, AnythingLLMError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    documents = result.get("documents") or []
+    if documents and documents[0].get("location"):
+        print(f"synced to AnythingLLM: {documents[0]['location']}")
+    else:
+        print("synced to AnythingLLM")
+    return 0
+
+
+def cmd_benchmark_asr(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    audio_path = args.audio
+    reference_text = args.reference.read_text().strip() if args.reference else None
+    if audio_path is None:
+        audio_path = Path("/tmp/atlas-voice-asr-smoke.wav")
+        reference_text = make_smoke_audio(audio_path)
+        print(f"generated smoke audio: {audio_path}")
+    providers = [item.strip() for item in args.providers.split(",") if item.strip()]
+    results = run_asr_benchmark(
+        audio_path,
+        settings,
+        providers=providers,
+        reference_text=reference_text,
+        include_diarization=args.include_diarization,
+    )
+    print_benchmark_results(results, json_output=args.json)
+    return 1 if any(result.get("error") for result in results) else 0
 
 
 def cmd_worker(_args: argparse.Namespace) -> int:

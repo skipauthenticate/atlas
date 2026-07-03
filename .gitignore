@@ -1,5 +1,8 @@
 .env
+.env.*
+!.env.example
 .venv/
+.venv-gpu/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -14,9 +17,20 @@ cache/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.wav
+*.mp3
+*.m4a
+*.flac
 
 dist/
 build/
 *.egg-info/
 .run/
 logs/
+*.log

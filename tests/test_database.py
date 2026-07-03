@@ -52,6 +52,37 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(transcript_results[0]["kind"], "transcript")
             self.assertEqual(summary_results[0]["kind"], "summary")
 
+    def test_reset_summary_job_preserves_cached_summary_and_search(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            recording_id = db.create_recording(Path(tmp) / "a.wav")
+            db.enqueue_job(recording_id, "summarize")
+            job = db.claim_next_job()
+            self.assertIsNotNone(job)
+            db.complete_job(job["id"])
+            db.update_recording(recording_id, status="done")
+            db.save_summary(
+                recording_id,
+                "Cached launch summary.",
+                model="test",
+                template_id="meeting",
+            )
+
+            self.assertTrue(db.reset_summary_job(recording_id))
+
+            summary = db.get_summary(recording_id)
+            self.assertIsNotNone(summary)
+            self.assertEqual(summary["text"], "Cached launch summary.")
+            self.assertEqual(db.search("launch")[0]["kind"], "summary")
+            self.assertEqual(db.get_recording(recording_id)["status"], "queued")
+
+            summarize_job = dict(db.jobs_for_recording(recording_id)[0])
+            self.assertEqual(summarize_job["status"], "queued")
+            self.assertEqual(summarize_job["attempts"], 0)
+            self.assertIsNone(summarize_job["started_at"])
+            self.assertIsNone(summarize_job["finished_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,9 @@ def transcribe_audio(audio_path: Path, settings: Settings) -> dict[str, Any]:
             "WhisperX is not installed. Install the worker extras or run through Docker."
         ) from exc
 
+    if settings.whisperx_device != "cpu":
+        _ensure_ctranslate2_cuda(settings.whisperx_device)
+
     model = whisperx.load_model(
         settings.whisperx_model,
         settings.whisperx_device,
@@ -65,3 +68,16 @@ def stub_transcript() -> dict[str, Any]:
             }
         ],
     }
+
+
+def _ensure_ctranslate2_cuda(device: str) -> None:
+    try:
+        import ctranslate2
+    except ImportError as exc:
+        raise RuntimeError("CTranslate2 is required for WhisperX GPU transcription.") from exc
+
+    if ctranslate2.get_cuda_device_count() < 1:
+        raise RuntimeError(
+            f"CTranslate2 CUDA is not available, but WHISPERX_DEVICE={device!r}. "
+            "Install or build CTranslate2 with CUDA support for this host."
+        )

@@ -5,8 +5,17 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def dotenv_path(path: Path | None = None) -> Path:
+    if path is not None:
+        return path.expanduser().resolve()
+    configured = os.environ.get("ATLAS_VOICE_ENV_FILE")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.cwd() / ".env"
+
+
 def load_dotenv(path: Path | None = None) -> None:
-    env_path = path or Path.cwd() / ".env"
+    env_path = dotenv_path(path)
     if not env_path.exists():
         return
     for raw in env_path.read_text().splitlines():
@@ -49,6 +58,18 @@ class Settings:
     llm_max_tokens: int
     stub_mode: bool
     allow_single_speaker_fallback: bool = False
+    asr_provider: str = "whisperx"
+    asr_model: str | None = None
+    diarization_provider: str = "pyannote"
+    nemo_source_lang: str = "en"
+    nemo_target_lang: str = "en"
+    vibevoice_model: str = "microsoft/VibeVoice-ASR"
+    vibevoice_max_new_tokens: int = 32768
+    anythingllm_base_url: str = "http://127.0.0.1:3001/api"
+    anythingllm_api_key: str | None = None
+    anythingllm_workspace_slug: str | None = None
+    anythingllm_timeout: float = 60.0
+    anythingllm_auto_sync: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -76,6 +97,26 @@ class Settings:
             allow_single_speaker_fallback=_bool_from_env(
                 "ATLAS_VOICE_ALLOW_SINGLE_SPEAKER_FALLBACK", False
             ),
+            asr_provider=os.environ.get("ATLAS_VOICE_ASR_PROVIDER", "whisperx").strip().lower(),
+            asr_model=os.environ.get("ATLAS_VOICE_ASR_MODEL") or None,
+            diarization_provider=os.environ.get(
+                "ATLAS_VOICE_DIARIZATION_PROVIDER", "pyannote"
+            ).strip().lower(),
+            nemo_source_lang=os.environ.get("ATLAS_VOICE_NEMO_SOURCE_LANG", "en"),
+            nemo_target_lang=os.environ.get("ATLAS_VOICE_NEMO_TARGET_LANG", "en"),
+            vibevoice_model=os.environ.get(
+                "ATLAS_VOICE_VIBEVOICE_MODEL", "microsoft/VibeVoice-ASR"
+            ),
+            vibevoice_max_new_tokens=int(
+                os.environ.get("ATLAS_VOICE_VIBEVOICE_MAX_NEW_TOKENS", "32768")
+            ),
+            anythingllm_base_url=os.environ.get(
+                "ANYTHINGLLM_BASE_URL", "http://127.0.0.1:3001/api"
+            ).rstrip("/"),
+            anythingllm_api_key=os.environ.get("ANYTHINGLLM_API_KEY") or None,
+            anythingllm_workspace_slug=os.environ.get("ANYTHINGLLM_WORKSPACE_SLUG") or None,
+            anythingllm_timeout=float(os.environ.get("ANYTHINGLLM_TIMEOUT", "60")),
+            anythingllm_auto_sync=_bool_from_env("ANYTHINGLLM_AUTO_SYNC", False),
         )
 
     @property

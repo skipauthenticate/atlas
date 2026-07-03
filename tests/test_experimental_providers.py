@@ -1,0 +1,188 @@
+from pathlib import Path
+import sys
+import types
+import unittest
+from unittest import mock
+
+from atlas_voice.benchmark import run_asr_benchmark, word_error_rate
+from atlas_voice.config import Settings
+from atlas_voice.providers.diarization import diarize_audio
+from atlas_voice.providers.nemo_provider import transcribe_parakeet
+from atlas_voice.providers.transcript_utils import (
+    diarization_from_transcript,
+    transcript_from_vibevoice_result,
+)
+
+
+def settings(
+    root: Path, *, asr_provider: str = "whisperx", diarization_provider: str = "pyannote"
+) -> Settings:
+    return Settings(
+        host="127.0.0.1",
+        port=8787,
+        data_dir=root / "data",
+        models_dir=root / "models",
+        hf_cache_dir=root / "cache" / "huggingface",
+        whisperx_model="tiny.en",
+        whisperx_device="cpu",
+        whisperx_compute_type="int8",
+        pyannote_model="pyannote/speaker-diarization-community-1",
+        hf_token="hf_test",
+        llm_base_url="http://127.0.0.1:8080/v1/chat/completions",
+        llm_model="qwen-local",
+        llm_temperature=0.2,
+        llm_max_tokens=100,
+        stub_mode=False,
+        asr_provider=asr_provider,
+        diarization_provider=diarization_provider,
+    )
+
+
+class ExperimentalProviderTests(unittest.TestCase):
+    def test_word_error_rate_counts_word_edits(self) -> None:
+        self.assertEqual(word_error_rate("alpha beta", "alpha beta"), 0.0)
+        self.assertAlmostEqual(word_error_rate("one two three", "one four three"), 1 / 3)
+
+    def test_benchmark_uses_transcript_diarization_for_vibevoice(self) -> None:
+        captured = {}
+
+        def fake_transcribe(_audio_path, provider_settings):
+            captured["asr_provider"] = provider_settings.asr_provider
+            return {
+                "segments": [
+                    {
+                        "start": 0.0,
+                        "end": 1.0,
+                        "speaker": "SPEAKER_00",
+                        "text": "hello world",
+                    }
+                ],
+                "diarization": [
+                    {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+                ],
+            }
+
+        def fake_diarize(_audio_path, provider_settings, *, transcript):
+            captured["diarization_provider"] = provider_settings.diarization_provider
+            return transcript["diarization"]
+
+        with (
+            mock.patch("atlas_voice.benchmark.audio_duration_seconds", return_value=1.0),
+            mock.patch("atlas_voice.benchmark.transcribe_audio", side_effect=fake_transcribe),
+            mock.patch("atlas_voice.benchmark.diarize_audio", side_effect=fake_diarize),
+        ):
+            results = run_asr_benchmark(
+                Path("audio.wav"),
+                settings(Path("/tmp/atlas-test"), diarization_provider="pyannote"),
+                providers=["vibevoice"],
+                reference_text="hello world",
+                include_diarization=True,
+            )
+
+        self.assertEqual(captured["asr_provider"], "vibevoice")
+        self.assertEqual(captured["diarization_provider"], "transcript")
+        self.assertEqual(results[0]["diarization_turn_count"], 1)
+        self.assertEqual(results[0]["wer"], 0.0)
+
+    def test_diarization_from_transcript_uses_embedded_turns(self) -> None:
+        transcript = {
+            "diarization": [
+                {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"},
+            ]
+        }
+
+        turns = diarization_from_transcript(transcript)
+
+        self.assertEqual(turns, transcript["diarization"])
+
+    def test_transcript_diarization_provider_requires_speaker_turns(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "does not contain speaker turns"):
+            diarize_audio(
+                Path("audio.wav"),
+                settings(Path("/tmp/atlas-test"), diarization_provider="transcript"),
+                transcript={"segments": []},
+            )
+
+    def test_vibevoice_result_converts_segments_and_speaker_turns(self) -> None:
+        result = {
+            "raw_text": "hello",
+            "segments": [
+                {
+                    "start_time": "00:00:01.000",
+                    "end_time": "00:00:02.500",
+                    "speaker_id": "1",
+                    "text": "hello there",
+                }
+            ],
+        }
+
+        transcript = transcript_from_vibevoice_result(
+            result, Path("audio.wav"), provider="vibevoice", model="test"
+        )
+
+        self.assertEqual(transcript["segments"][0]["speaker"], "SPEAKER_01")
+        self.assertEqual(transcript["segments"][0]["start"], 1.0)
+        self.assertEqual(transcript["segments"][0]["end"], 2.5)
+        self.assertEqual(transcript["diarization"][0]["speaker"], "SPEAKER_01")
+
+    def test_parakeet_provider_uses_nemo_output(self) -> None:
+        class Output:
+            text = "hello world"
+            timestamp = {
+                "segment": [{"start": 0.0, "end": 1.0, "segment": "hello world"}],
+                "word": [
+                    {"start": 0.0, "end": 0.4, "word": "hello"},
+                    {"start": 0.5, "end": 1.0, "word": "world"},
+                ],
+            }
+
+        class ASRModel:
+            instance = None
+            requested_model = None
+
+            def __init__(self):
+                self.cfg = types.SimpleNamespace(decoding={"greedy": {}})
+                self.changed_decoding_cfg = None
+
+            @classmethod
+            def from_pretrained(cls, model_name):
+                cls.requested_model = model_name
+                cls.instance = cls()
+                return cls.instance
+
+            def change_decoding_strategy(self, decoding_cfg, verbose=True):
+                self.changed_decoding_cfg = decoding_cfg
+
+            def transcribe(self, paths, **kwargs):
+                self.paths = paths
+                self.kwargs = kwargs
+                return [Output()]
+
+        fake_nemo = types.ModuleType("nemo")
+        fake_collections = types.ModuleType("nemo.collections")
+        fake_asr = types.ModuleType("nemo.collections.asr")
+        fake_models = types.ModuleType("nemo.collections.asr.models")
+        fake_models.ASRModel = ASRModel
+        modules = {
+            "nemo": fake_nemo,
+            "nemo.collections": fake_collections,
+            "nemo.collections.asr": fake_asr,
+            "nemo.collections.asr.models": fake_models,
+        }
+        with mock.patch.dict(sys.modules, modules):
+            transcript = transcribe_parakeet(
+                Path("audio.wav"), settings(Path("/tmp/atlas-test"), asr_provider="parakeet")
+            )
+
+        self.assertEqual(ASRModel.requested_model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertIsNotNone(ASRModel.instance)
+        self.assertFalse(
+            ASRModel.instance.cfg.decoding["greedy"]["use_cuda_graph_decoder"]
+        )
+        self.assertIs(ASRModel.instance.changed_decoding_cfg, ASRModel.instance.cfg.decoding)
+        self.assertEqual(transcript["provider"], "parakeet")
+        self.assertEqual(transcript["segments"][0]["words"][0]["word"], "hello")
+
+
+if __name__ == "__main__":
+    unittest.main()

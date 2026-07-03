@@ -9,15 +9,26 @@ if [[ -f .env ]]; then
   set +a
 fi
 mkdir -p .run logs
+VENV_DIR="${ATLAS_VOICE_VENV:-.venv}"
+CT2_LIB_DIR="${VENV_DIR}/ctranslate2-cuda/lib"
+if [[ -d "$CT2_LIB_DIR" ]]; then
+  CT2_LIB_DIR="$(cd "$CT2_LIB_DIR" && pwd)"
+  export LD_LIBRARY_PATH="${CT2_LIB_DIR}:${LD_LIBRARY_PATH:-}"
+fi
 
-if [[ ! -x .venv/bin/uvicorn || ! -x .venv/bin/atlas-voice ]]; then
-  echo "Missing .venv dependencies. Run: python -m venv .venv && .venv/bin/pip install -e '.[worker]'" >&2
+if [[ ! -x "${VENV_DIR}/bin/uvicorn" || ! -x "${VENV_DIR}/bin/atlas-voice" ]]; then
+  echo "Missing ${VENV_DIR} dependencies. Run: python -m venv ${VENV_DIR} && ${VENV_DIR}/bin/pip install -e '.[worker]'" >&2
   exit 1
 fi
 
 start_service() {
   local name="$1"
   shift
+  local service_name="atlas-voice-${name}.service"
+  if systemctl --user is-active --quiet "$service_name" 2>/dev/null; then
+    echo "$name already running via systemd service ${service_name}"
+    return
+  fi
   local pid_file=".run/${name}.pid"
   if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
     echo "$name already running pid=$(cat "$pid_file")"
@@ -44,6 +55,6 @@ print(f'{name} pid={proc.pid}')
 PY
 }
 
-start_service web .venv/bin/uvicorn atlas_voice.web.app:app --host 127.0.0.1 --port "${ATLAS_VOICE_PORT:-8787}"
-start_service worker .venv/bin/atlas-voice worker
+start_service web "${ROOT_DIR}/scripts/run-local-service.sh" web
+start_service worker "${ROOT_DIR}/scripts/run-local-service.sh" worker
 echo "Atlas Voice: http://127.0.0.1:${ATLAS_VOICE_PORT:-8787}"
