@@ -120,6 +120,7 @@ Useful commands:
 ```bash
 atlas-voice privacy status
 atlas-voice privacy audit-egress
+atlas-voice privacy purge --session <session_id> --yes
 ```
 
 See `docs/ASSISTANT_FEATURE_GUIDE.md` for feature usage and validation steps.

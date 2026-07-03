@@ -27,6 +27,21 @@ Focused privacy status is also available at:
 curl -fsS http://127.0.0.1:8787/api/assistant/privacy | python -m json.tool
 ```
 
+Purge private assistant or ambient sessions with an explicit filter. Purge is a
+dry run unless `--yes` is present:
+
+```bash
+atlas-voice privacy purge --session <session_id>
+atlas-voice privacy purge --session <session_id> --yes
+atlas-voice privacy purge --keyword "launch date" --yes
+atlas-voice privacy purge --person Alice --date 2026-07-03 --yes
+```
+
+Supported purge filters are `--session`, `--keyword`, `--person`, `--date`,
+`--before`, `--after`, and `--mode`. Confirmed purges delete matching sessions,
+cascaded utterances, assistant turns, and per-session realtime artifact
+directories, then write a local `privacy.purge` audit event.
+
 The assistant health payload includes:
 
 - `status`: `ok`, `degraded`, or `error`.

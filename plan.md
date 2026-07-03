@@ -536,7 +536,7 @@ Status: CLI/API MVP complete; UI and richer privacy controls remain.
 - [x] Store utterances with timestamps.
 - [ ] Store optional speaker labels from diarization or speaker-aware ASR.
 - [x] Add privacy controls for pause/private mode at CLI level.
-- [ ] Add privacy purge command.
+- [x] Add privacy purge command.
 - [x] Add retention policy for raw-audio disablement.
 - [x] Default to transcript-only retention.
 - [ ] Add configurable retention windows.
@@ -812,7 +812,7 @@ Hard requirements:
 - [x] Bind services to `127.0.0.1` unless local LAN satellite is explicitly enabled.
 - [x] Add an egress audit command.
 - [x] Raw audio retention is explicit and short/transcript-only by default.
-- [ ] Provide session/person/date/keyword deletion.
+- [x] Provide session/person/date/keyword deletion.
 - [x] Log model runs locally.
 - [ ] Tool calls that mutate files, tasks, or system state require confirmation.
 - [x] Dashboard shows privacy status and active listeners.
@@ -821,7 +821,7 @@ Suggested controls:
 
 - [x] `atlas-voice privacy status`
 - [x] `atlas-voice privacy audit-egress`
-- [ ] `atlas-voice privacy purge --session ...`
+- [x] `atlas-voice privacy purge --session ...`
 - [ ] Dashboard pause/private-mode toggle.
 - [ ] Physical mute support when using a satellite.
 
@@ -848,7 +848,7 @@ Suggested controls:
 - [x] `atlas-voice ambient`
 - [x] `atlas-voice privacy status`
 - [x] `atlas-voice privacy audit-egress`
-- [ ] `atlas-voice privacy purge`
+- [x] `atlas-voice privacy purge`
 
 ### Providers
 
@@ -871,7 +871,7 @@ Suggested controls:
 - [x] Unit tests for ambient VAD.
 - [x] Unit tests for ambient session processing.
 - [x] Unit tests for faster-qwen3-tts sidecar client.
-- [ ] Unit tests for privacy purge.
+- [x] Unit tests for privacy purge.
 - [ ] Unit tests for memory extraction and retrieval.
 
 ### Integration Tests
@@ -881,7 +881,7 @@ Suggested controls:
 - [x] WebSocket session flow.
 - [x] Ambient insert/list.
 - [ ] Ambient search/delete.
-- [ ] Privacy purge.
+- [x] Privacy purge.
 - [ ] Browser mic streaming.
 - [ ] Voice UI transport controls.
 

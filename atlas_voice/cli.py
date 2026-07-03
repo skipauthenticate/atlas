@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import subprocess
 import sys
 import time
@@ -70,6 +71,20 @@ def build_parser() -> argparse.ArgumentParser:
     privacy_status.set_defaults(func=cmd_privacy_status)
     privacy_audit = privacy_subparsers.add_parser("audit-egress", help="Audit configured egress URLs")
     privacy_audit.set_defaults(func=cmd_privacy_audit_egress)
+    privacy_purge = privacy_subparsers.add_parser(
+        "purge",
+        help="Dry-run or delete assistant/ambient sessions matching privacy filters",
+    )
+    privacy_purge.add_argument("--session", dest="session_id", help="Exact session id to purge")
+    privacy_purge.add_argument("--keyword", help="Match session title, utterance text, or reply text")
+    privacy_purge.add_argument("--person", help="Match speaker, title, or utterance text")
+    privacy_purge.add_argument("--date", dest="started_on", help="Match session start date YYYY-MM-DD")
+    privacy_purge.add_argument("--before", help="Match sessions before YYYY-MM-DD")
+    privacy_purge.add_argument("--after", help="Match sessions on or after YYYY-MM-DD")
+    privacy_purge.add_argument("--mode", help="Optional session mode filter, such as ambient")
+    privacy_purge.add_argument("--limit", type=int, default=100, help="Maximum matching sessions")
+    privacy_purge.add_argument("--yes", action="store_true", help="Actually delete matching sessions")
+    privacy_purge.set_defaults(func=cmd_privacy_purge)
 
     ambient = subparsers.add_parser("ambient", help="Run the ambient listener MVP")
     ambient.add_argument(
@@ -225,6 +240,95 @@ def cmd_privacy_audit_egress(_args: argparse.Namespace) -> int:
     else:
         print("No configured external egress found.")
     return 1 if report["status"] == "error" else 0
+
+
+def cmd_privacy_purge(args: argparse.Namespace) -> int:
+    if not _privacy_purge_has_filter(args):
+        print("privacy purge requires at least one purge filter", file=sys.stderr)
+        return 1
+    settings, db = settings_and_db()
+    matches = db.find_privacy_purge_sessions(
+        session_id=args.session_id,
+        keyword=args.keyword,
+        person=args.person,
+        started_on=args.started_on,
+        before=args.before,
+        after=args.after,
+        mode=args.mode,
+        limit=args.limit,
+    )
+    if not matches:
+        print("No matching sessions found.")
+        return 0
+
+    _print_privacy_purge_matches(matches, dry_run=not args.yes)
+    if not args.yes:
+        print("dry run only; rerun with --yes to delete matching sessions")
+        return 0
+
+    session_ids = [str(session["id"]) for session in matches]
+    result = db.purge_privacy_sessions(session_ids)
+    artifact_count = _purge_realtime_artifacts(settings, session_ids)
+    db.log_privacy_event(
+        "privacy.purge",
+        f"Purged {result['session_count']} privacy session(s).",
+        severity="info",
+        metadata={
+            "filters": _privacy_purge_filter_metadata(args),
+            "session_ids": session_ids,
+            "session_count": result["session_count"],
+            "utterance_count": result["utterance_count"],
+            "assistant_turn_count": result["assistant_turn_count"],
+            "artifact_count": artifact_count,
+        },
+    )
+    print(
+        f"purged {result['session_count']} session(s), "
+        f"{result['utterance_count']} utterance(s), "
+        f"{result['assistant_turn_count']} assistant turn(s), "
+        f"{artifact_count} artifact dir(s)"
+    )
+    return 0
+
+
+def _privacy_purge_has_filter(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, name, None)
+        for name in ("session_id", "keyword", "person", "started_on", "before", "after", "mode")
+    )
+
+
+def _privacy_purge_filter_metadata(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        name: value
+        for name in ("session_id", "keyword", "person", "started_on", "before", "after", "mode")
+        if (value := getattr(args, name, None))
+    }
+
+
+def _print_privacy_purge_matches(sessions: list[dict[str, object]], *, dry_run: bool) -> None:
+    prefix = "privacy purge dry run" if dry_run else "privacy purge confirmed"
+    print(f"{prefix}: {len(sessions)} matching session(s)")
+    for session in sessions:
+        title = session.get("title") or "untitled"
+        print(
+            f"- {session['id']} {session.get('mode')} {session.get('status')} "
+            f"{session.get('started_at')} {title} "
+            f"({session.get('utterance_count', 0)} utterance(s), "
+            f"{session.get('assistant_turn_count', 0)} turn(s))"
+        )
+
+
+def _purge_realtime_artifacts(settings: Settings, session_ids: list[str]) -> int:
+    count = 0
+    realtime_dir = settings.artifacts_dir / "realtime"
+    for session_id in session_ids:
+        artifact_dir = realtime_dir / session_id
+        if not artifact_dir.exists():
+            continue
+        shutil.rmtree(artifact_dir)
+        count += 1
+    return count
 
 
 def _privacy_report(event_type: str) -> tuple[Settings, Database, dict[str, object]]:

@@ -681,6 +681,110 @@ class Database:
             row = conn.execute(query, params).fetchone()
         return int(row["count"] if row else 0)
 
+    def find_privacy_purge_sessions(
+        self,
+        *,
+        session_id: str | None = None,
+        keyword: str | None = None,
+        person: str | None = None,
+        started_on: str | None = None,
+        before: str | None = None,
+        after: str | None = None,
+        mode: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT
+                s.*,
+                (SELECT COUNT(*) FROM utterances u WHERE u.session_id = s.id) AS utterance_count,
+                (SELECT COUNT(*) FROM assistant_turns t WHERE t.session_id = s.id)
+                    AS assistant_turn_count
+            FROM ambient_sessions s
+        """
+        filters: list[str] = []
+        params: list[Any] = []
+        if session_id:
+            filters.append("s.id = ?")
+            params.append(session_id)
+        if mode:
+            filters.append("s.mode = ?")
+            params.append(mode)
+        if started_on:
+            filters.append("substr(s.started_at, 1, 10) = ?")
+            params.append(started_on)
+        if before:
+            filters.append("substr(s.started_at, 1, 10) < ?")
+            params.append(before)
+        if after:
+            filters.append("substr(s.started_at, 1, 10) >= ?")
+            params.append(after)
+        if keyword:
+            pattern = f"%{keyword.strip().lower()}%"
+            filters.append(
+                "("
+                "lower(COALESCE(s.title, '')) LIKE ? OR "
+                "EXISTS (SELECT 1 FROM utterances u "
+                "WHERE u.session_id = s.id AND lower(u.text) LIKE ?) OR "
+                "EXISTS (SELECT 1 FROM assistant_turns t "
+                "WHERE t.session_id = s.id AND lower(t.text) LIKE ?)"
+                ")"
+            )
+            params.extend([pattern, pattern, pattern])
+        if person:
+            pattern = f"%{person.strip().lower()}%"
+            filters.append(
+                "("
+                "lower(COALESCE(s.title, '')) LIKE ? OR "
+                "EXISTS (SELECT 1 FROM utterances u WHERE u.session_id = s.id "
+                "AND (lower(u.speaker) LIKE ? OR lower(u.text) LIKE ?))"
+                ")"
+            )
+            params.extend([pattern, pattern, pattern])
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY s.started_at DESC LIMIT ?"
+        params.append(max(min(limit, 1000), 1))
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def purge_privacy_sessions(self, session_ids: list[str]) -> dict[str, Any]:
+        unique_ids = list(dict.fromkeys(session_ids))
+        if not unique_ids:
+            return {
+                "session_count": 0,
+                "utterance_count": 0,
+                "assistant_turn_count": 0,
+                "session_ids": [],
+            }
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self.connect() as conn:
+            session_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS count FROM ambient_sessions WHERE id IN ({placeholders})",
+                    unique_ids,
+                ).fetchone()["count"]
+            )
+            utterance_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS count FROM utterances WHERE session_id IN ({placeholders})",
+                    unique_ids,
+                ).fetchone()["count"]
+            )
+            assistant_turn_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS count FROM assistant_turns WHERE session_id IN ({placeholders})",
+                    unique_ids,
+                ).fetchone()["count"]
+            )
+            conn.execute(f"DELETE FROM ambient_sessions WHERE id IN ({placeholders})", unique_ids)
+        return {
+            "session_count": session_count,
+            "utterance_count": utterance_count,
+            "assistant_turn_count": assistant_turn_count,
+            "session_ids": unique_ids,
+        }
+
     def create_ambient_session(
         self,
         *,

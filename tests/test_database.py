@@ -151,6 +151,55 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(direct_sessions[0]["utterance_count"], 1)
         self.assertEqual({session["id"] for session in all_sessions}, {ambient_id, direct_id})
 
+    def test_privacy_purge_finds_and_deletes_matching_sessions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            alice_id = db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Call with Alice",
+            )
+            bob_id = db.create_ambient_session(
+                mode="ambient",
+                source="file",
+                title="Project standup",
+            )
+            alice_utterance_id = db.add_utterance(
+                session_id=alice_id,
+                speaker="Alice",
+                text="We discussed the secret launch date.",
+                source_provider="text",
+            )
+            db.add_assistant_turn(
+                session_id=alice_id,
+                user_utterance_id=alice_utterance_id,
+                text="Noted privately.",
+                model="qwen-local",
+            )
+            db.add_utterance(
+                session_id=bob_id,
+                speaker="Bob",
+                text="General planning update.",
+                source_provider="text",
+            )
+            db.end_ambient_session(alice_id)
+            db.end_ambient_session(bob_id)
+
+            keyword_matches = db.find_privacy_purge_sessions(keyword="secret")
+            person_matches = db.find_privacy_purge_sessions(person="Alice")
+            date_matches = db.find_privacy_purge_sessions(started_on=keyword_matches[0]["started_at"][:10])
+            result = db.purge_privacy_sessions([alice_id])
+
+            self.assertEqual([session["id"] for session in keyword_matches], [alice_id])
+            self.assertEqual([session["id"] for session in person_matches], [alice_id])
+            self.assertIn(alice_id, {session["id"] for session in date_matches})
+            self.assertEqual(result["session_count"], 1)
+            self.assertEqual(result["utterance_count"], 1)
+            self.assertEqual(result["assistant_turn_count"], 1)
+            self.assertIsNone(db.get_ambient_session(alice_id))
+            self.assertIsNotNone(db.get_ambient_session(bob_id))
+
     def test_audit_tables_store_model_runs_and_privacy_events(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")
