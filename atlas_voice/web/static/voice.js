@@ -112,5 +112,33 @@
         pending.push(message);
       }
     });
+
+    const playground = root.querySelector('[data-tts-playground]');
+    if (playground) {
+      const playgroundForm = playground.querySelector('form');
+      const playgroundInput = playground.querySelector('input[name="tts_text"]');
+      const playgroundResult = playground.querySelector('[data-tts-playground-result]');
+      const endpoint = playground.dataset.endpoint || '/api/voice/playground/tts';
+
+      playgroundForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const text = playgroundInput?.value.trim();
+        if (!text || !playgroundResult) return;
+        playgroundResult.textContent = 'running';
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || 'TTS failed');
+          const latency = payload.latency_ms == null ? 'latency unknown' : `${payload.latency_ms} ms`;
+          playgroundResult.textContent = `${payload.provider} ${latency}`;
+        } catch (error) {
+          playgroundResult.textContent = error.message || 'TTS failed';
+        }
+      });
+    }
   });
 })();

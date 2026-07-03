@@ -447,7 +447,7 @@ Status: remaining.
 - [x] Add center workbench: live conversation, transcript, waveform/call surface, typed prompt box.
 - [x] Add right inspector: voice/model settings, session history, privacy state, memory toggles.
 - [ ] Add bottom transport: mic, pause/private mode, interrupt, playback, volume, session timer.
-- [ ] Add Voice Playground for testing text-to-speech.
+- [x] Add Voice Playground for testing text-to-speech.
 - [ ] Add Voice Playground for testing STT.
 - [ ] Add Voice Playground for testing model response.
 - [ ] Add Voice Playground latency display.

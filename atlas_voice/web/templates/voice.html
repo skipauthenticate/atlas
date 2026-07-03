@@ -65,6 +65,18 @@
         <input id="voice-prompt-input" type="text" name="prompt" placeholder="Message Atlas" {% if not assistant_enabled %}disabled{% endif %}>
         <button id="voice-prompt-submit" type="submit" {% if not assistant_enabled %}disabled{% endif %}>Send</button>
       </form>
+
+      <section class="voice-playground" data-tts-playground data-endpoint="/api/voice/playground/tts">
+        <div class="section-heading compact">
+          <h2>Voice Playground</h2>
+          <small>Text to Speech</small>
+        </div>
+        <form class="voice-playground-form">
+          <input type="text" name="tts_text" placeholder="Text to synthesize" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>
+          <button type="submit" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>Test</button>
+        </form>
+        <output data-tts-playground-result>{{ voice_settings.tts_provider }}</output>
+      </section>
     </section>
 
     <aside class="voice-inspector" aria-label="Voice inspector">

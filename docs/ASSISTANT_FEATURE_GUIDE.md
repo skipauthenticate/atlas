@@ -139,8 +139,10 @@ http://127.0.0.1:8787/voice
 The workbench includes the voice rail, realtime call surface, browser text
 console for `/v1/realtime`, transcript streaming, right inspector with voice
 settings, privacy, local model state, session history, memory/coaching toggles,
-and a bottom transport surface. Browser mic streaming and live transport actions
-are still tracked separately in `plan.md`.
+and a bottom transport surface. The Voice Playground text-to-speech control calls
+`POST /api/voice/playground/tts` and logs latency in `model_runs` with task
+`voice_playground_tts`. Browser mic streaming and live transport actions are
+still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 

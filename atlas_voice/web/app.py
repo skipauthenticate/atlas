@@ -351,6 +351,57 @@ def _voice_session_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]
     return views
 
 
+@app.post("/api/voice/playground/tts")
+def api_voice_playground_tts(payload: dict[str, Any]) -> JSONResponse:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    if not settings.assistant_enabled:
+        raise HTTPException(status_code=403, detail="Assistant runtime is disabled")
+
+    tts_provider = _realtime_tts_provider()
+    if not _tts_outputs_audio(tts_provider):
+        raise HTTPException(status_code=400, detail="TTS provider is disabled")
+
+    output_dir = settings.artifacts_dir / "voice-playground"
+    settings.ensure_directories()
+    db.initialize()
+    model = _realtime_tts_model(tts_provider)
+    try:
+        if tts_provider == "piper":
+            audio = synthesize_with_piper(text, settings, output_dir)
+        else:
+            audio = synthesize_with_tts_sidecar(text, settings, output_dir)
+    except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
+        db.log_model_run(
+            provider=tts_provider,
+            model=model,
+            task="voice_playground_tts",
+            input_ref="voice_playground:text",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise HTTPException(status_code=502, detail=_safe_realtime_error(exc)) from exc
+
+    db.log_model_run(
+        provider=tts_provider,
+        model=model,
+        task="voice_playground_tts",
+        input_ref="voice_playground:text",
+        output_ref=str(audio.path),
+        latency_ms=audio.latency_ms,
+    )
+    return JSONResponse(
+        {
+            "status": "ok",
+            "provider": tts_provider,
+            "model": model,
+            "audio_path": str(audio.path),
+            "media_type": audio.media_type,
+            "latency_ms": audio.latency_ms,
+        }
+    )
+
+
 @app.post("/settings/runtime")
 def update_runtime_settings(
     asr_provider: str = Form(...),

@@ -1100,3 +1100,33 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+
+.voice-playground {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.voice-playground-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.voice-playground output {
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .voice-playground-form {
+    grid-template-columns: 1fr;
+  }
+}

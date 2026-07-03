@@ -369,6 +369,89 @@ class WebTests(unittest.TestCase):
             self.assertNotIn('id="voice-prompt-input" disabled', response.text)
             self.assertIn('/static/voice.js', response.text)
 
+    def test_voice_console_exposes_tts_playground(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
+            os.environ["ATLAS_VOICE_PIPER_VOICE"] = "/models/voice.onnx"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("Voice Playground", response.text)
+            self.assertIn("Text to Speech", response.text)
+            self.assertIn('data-tts-playground', response.text)
+            self.assertIn('/api/voice/playground/tts', response.text)
+
+    def test_voice_tts_playground_api_synthesizes_and_logs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
+            os.environ["ATLAS_VOICE_PIPER_VOICE"] = "/models/voice.onnx"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            audio_path = root / "tts.wav"
+
+            with patch.object(
+                web_app,
+                "synthesize_with_piper",
+                return_value=RealtimeAudio(
+                    path=audio_path,
+                    payload=b"RIFFtest",
+                    media_type="audio/wav",
+                    latency_ms=5,
+                ),
+            ) as synth_mock:
+                response = client.post(
+                    "/api/voice/playground/tts",
+                    json={"text": "Hello from the playground"},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["provider"], "piper")
+            self.assertEqual(payload["model"], "/models/voice.onnx")
+            self.assertEqual(payload["latency_ms"], 5)
+            self.assertEqual(payload["media_type"], "audio/wav")
+            synth_mock.assert_called_once()
+            tts_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_tts"]
+            self.assertEqual(len(tts_runs), 1)
+            self.assertEqual(tts_runs[0]["provider"], "piper")
+            self.assertEqual(tts_runs[0]["latency_ms"], 5)
+
     def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
