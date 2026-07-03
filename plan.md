@@ -424,7 +424,7 @@ Status: partially complete.
 - [x] Add local LLM call path for realtime turns.
 - [x] Add TTS call path for Piper.
 - [x] Add TTS call path for faster-qwen3-tts sidecar.
-- [ ] Add full turn state module.
+- [x] Add full turn state module.
 - [x] Add privacy checks.
 - [x] Add model-run logging.
 - [x] Add config flags or equivalents for local assistant runtime.

@@ -111,8 +111,10 @@ ws://127.0.0.1:8787/v1/realtime
 Supported event paths include `input_text`, `conversation.item.create` plus
 `response.create`, and `input_audio_buffer.append` / `input_audio_buffer.commit`.
 When TTS is configured, assistant audio is returned as `response.audio.delta` and
-stored under `data/artifacts/realtime/`. Every assistant text turn and TTS run is
-logged in SQLite `model_runs` for latency review.
+stored under `data/artifacts/realtime/`. Realtime sessions use an internal turn
+state module to track buffered audio, pending text, audio format, and active
+responses. Every assistant text turn and TTS run is logged in SQLite `model_runs`
+for latency review.
 
 A minimal text event looks like:
 

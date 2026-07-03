@@ -45,6 +45,7 @@ from atlas_voice.status import assistant_health as collect_assistant_health
 from atlas_voice.status import runtime_status as collect_runtime_status
 from atlas_voice.storage import safe_filename
 from atlas_voice.summarizer import get_template, list_templates, summary_to_sections
+from atlas_voice.turn_state import RealtimeTurnState
 
 
 settings = Settings.from_env()
@@ -498,10 +499,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
     )
     instructions = _realtime_instructions()
     tts_provider = _realtime_tts_provider()
-    audio_buffer = bytearray()
-    pending_text: str | None = None
-    audio_sample_rate = settings.realtime_audio_sample_rate
-    audio_channels = settings.realtime_audio_channels
+    state = RealtimeTurnState(
+        sample_rate=settings.realtime_audio_sample_rate,
+        channels=settings.realtime_audio_channels,
+    )
 
     await _send_realtime_event(
         websocket,
@@ -522,12 +523,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
             event_type = str(event.get("type") or "")
             if event_type == "session.update":
                 instructions = _updated_realtime_instructions(event, instructions)
-                audio_sample_rate = int(
-                    event.get("input_audio_sample_rate")
-                    or event.get("sample_rate")
-                    or audio_sample_rate
-                )
-                audio_channels = int(event.get("channels") or audio_channels)
+                state.update_audio_format(event)
                 await _send_realtime_event(
                     websocket,
                     "session.updated",
@@ -537,25 +533,24 @@ async def realtime_websocket(websocket: WebSocket) -> None:
 
             if event_type == "input_audio_buffer.append":
                 try:
-                    audio_buffer.extend(decode_audio_delta(event))
+                    buffered_bytes = state.append_audio(decode_audio_delta(event))
                 except ValueError as exc:
                     await _send_realtime_error(websocket, str(exc), event_type=event_type)
                     continue
                 await _send_realtime_event(
                     websocket,
                     "input_audio_buffer.appended",
-                    byte_count=len(audio_buffer),
+                    byte_count=buffered_bytes,
                 )
                 continue
 
             if event_type == "input_audio_buffer.clear":
-                audio_buffer.clear()
+                state.clear_audio()
                 await _send_realtime_event(websocket, "input_audio_buffer.cleared")
                 continue
 
             if event_type == "input_audio_buffer.commit":
-                committed = bytes(audio_buffer)
-                audio_buffer.clear()
+                committed = state.commit_audio()
                 await _send_realtime_event(
                     websocket,
                     "input_audio_buffer.committed",
@@ -569,8 +564,8 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                             committed,
                             settings,
                             _realtime_artifact_dir(session_id),
-                            sample_rate=audio_sample_rate,
-                            channels=audio_channels,
+                            sample_rate=state.sample_rate,
+                            channels=state.channels,
                         )
                     except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
                         await _send_realtime_error(
@@ -594,6 +589,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     transcript_prefix="conversation.item.input_audio_transcription",
                     instructions=instructions,
                     tts_provider=tts_provider,
+                    state=state,
                 )
                 continue
 
@@ -614,11 +610,12 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     transcript_prefix="conversation.item.input_text",
                     instructions=instructions,
                     tts_provider=tts_provider,
+                    state=state,
                 )
                 continue
 
             if event_type == "conversation.item.create":
-                pending_text = extract_text_input(event)
+                state.set_pending_text(extract_text_input(event))
                 await _send_realtime_event(
                     websocket,
                     "conversation.item.created",
@@ -627,15 +624,14 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 continue
 
             if event_type == "response.create":
-                if not pending_text:
+                text = state.pop_pending_text()
+                if not text:
                     await _send_realtime_error(
                         websocket,
                         "response.create has no pending user text",
                         event_type=event_type,
                     )
                     continue
-                text = pending_text
-                pending_text = None
                 await _handle_realtime_user_text(
                     websocket,
                     session_id=session_id,
@@ -644,6 +640,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     transcript_prefix="conversation.item.input_text",
                     instructions=instructions,
                     tts_provider=tts_provider,
+                    state=state,
                 )
                 continue
 
@@ -667,6 +664,7 @@ async def _handle_realtime_user_text(
     transcript_prefix: str,
     instructions: str,
     tts_provider: str,
+    state: RealtimeTurnState,
 ) -> None:
     utterance_id = db.add_utterance(
         session_id=session_id,
@@ -688,6 +686,7 @@ async def _handle_realtime_user_text(
     )
 
     response_id = f"resp_{uuid.uuid4().hex}"
+    state.begin_response(response_id)
     await _send_realtime_event(
         websocket,
         "response.created",
@@ -716,6 +715,7 @@ async def _handle_realtime_user_text(
             response={"id": response_id, "status": "failed"},
             error={"message": _safe_realtime_error(exc)},
         )
+        state.complete_response()
         return
 
     for delta in chunk_text(reply.text):
@@ -821,6 +821,7 @@ async def _handle_realtime_user_text(
             "turn_id": turn_id,
         },
     )
+    state.complete_response()
 
 
 async def _send_realtime_event(websocket: WebSocket, event_type: str, **payload: Any) -> None:
