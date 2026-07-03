@@ -4,7 +4,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from atlas_voice.coaching import generate_daily_coaching_summary, generate_weekly_coaching_summary
+from atlas_voice.coaching import (
+    generate_daily_coaching_summary,
+    generate_weekly_coaching_summary,
+    track_conversation_signals,
+)
 from atlas_voice.database import Database
 
 
@@ -130,6 +134,67 @@ class CoachingSummaryTests(unittest.TestCase):
             second = generate_weekly_coaching_summary(db, "2026-07-06", dry_run=False)
 
             events = db.list_feedback_events(category="weekly_summary")
+            self.assertEqual(first.event_id, second.event_id)
+            self.assertEqual(second.status, "existing")
+            self.assertEqual(len(events), 1)
+
+    def test_tracks_conversation_signals_dry_run_then_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            session_id = _session(db, "direct_voice", "Coaching signal session", "2026-07-08T10:00:00+00:00")
+            db.add_utterance(
+                session_id=session_id,
+                text="What is the clearest next step for launch?",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="I will send Alice the launch checklist tomorrow.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="Need owner for demo.",
+                source_provider="text",
+            )
+
+            dry_run = track_conversation_signals(db, session_id, dry_run=True)
+
+            self.assertEqual(dry_run.status, "ok")
+            self.assertIsNone(dry_run.event_id)
+            self.assertEqual(dry_run.metrics["utterance_count"], 3)
+            self.assertEqual(dry_run.metrics["question_count"], 1)
+            self.assertEqual(dry_run.metrics["commitment_count"], 1)
+            self.assertGreater(dry_run.metrics["clarity"], 0)
+            self.assertGreater(dry_run.metrics["concision"], 0)
+            self.assertGreater(dry_run.metrics["actionable_next_steps"], 0)
+            self.assertEqual(db.list_feedback_events(category="conversation_signals"), [])
+
+            stored = track_conversation_signals(db, session_id, dry_run=False)
+
+            events = db.list_feedback_events(category="conversation_signals")
+            self.assertEqual(stored.event_id, events[0]["id"])
+            self.assertEqual(events[0]["event_type"], "coaching.conversation_signals")
+            self.assertEqual(events[0]["session_id"], session_id)
+            self.assertEqual(events[0]["metadata"]["signals"]["question_ratio"], stored.metrics["question_ratio"])
+            self.assertIn("Conversation Signals", events[0]["message"])
+
+    def test_conversation_signals_are_idempotent_per_session(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            session_id = _session(db, "meeting", "Planning", "2026-07-08T10:00:00+00:00")
+            db.add_utterance(
+                session_id=session_id,
+                text="We should clarify the launch owner.",
+                source_provider="text",
+            )
+
+            first = track_conversation_signals(db, session_id, dry_run=False)
+            second = track_conversation_signals(db, session_id, dry_run=False)
+
+            events = db.list_feedback_events(category="conversation_signals")
             self.assertEqual(first.event_id, second.event_id)
             self.assertEqual(second.status, "existing")
             self.assertEqual(len(events), 1)

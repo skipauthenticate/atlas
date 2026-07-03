@@ -9,6 +9,16 @@ from .database import Database
 
 
 @dataclass(frozen=True)
+class ConversationSignalResult:
+    session_id: str
+    status: str
+    dry_run: bool
+    message: str
+    metrics: dict[str, float | int | None]
+    event_id: int | None = None
+
+
+@dataclass(frozen=True)
 class WeeklyCoachingSummaryResult:
     week_start: str
     week_end: str
@@ -35,6 +45,51 @@ class DailyCoachingSummaryResult:
     question_count: int
     commitment_count: int
     event_id: int | None = None
+
+
+def track_conversation_signals(
+    db: Database,
+    session_id: str,
+    *,
+    dry_run: bool = True,
+) -> ConversationSignalResult:
+    session = db.get_ambient_session(session_id)
+    if session is None:
+        raise ValueError(f"Unknown ambient session: {session_id}")
+    existing = _existing_conversation_signals(db, session_id)
+    if existing is not None:
+        return ConversationSignalResult(
+            session_id=session_id,
+            status="existing",
+            dry_run=dry_run,
+            message=str(existing["message"]),
+            metrics=dict(existing["metadata"].get("signals") or {}),
+            event_id=int(existing["id"]),
+        )
+
+    utterances = db.list_utterances(session_id)
+    turns = db.list_assistant_turns(session_id)
+    metrics = _conversation_signal_metrics(utterances, turns)
+    message = _conversation_signal_message(session, metrics)
+    event_id: int | None = None
+    if not dry_run:
+        event_id = db.log_feedback_event(
+            event_type="coaching.conversation_signals",
+            category="conversation_signals",
+            session_id=session_id,
+            message=message,
+            score=float(metrics.get("clarity") or 0.0),
+            metadata={"signals": metrics},
+        )
+
+    return ConversationSignalResult(
+        session_id=session_id,
+        status="ok",
+        dry_run=dry_run,
+        message=message,
+        metrics=metrics,
+        event_id=event_id,
+    )
 
 
 def generate_daily_coaching_summary(
@@ -182,6 +237,13 @@ def generate_weekly_coaching_summary(
     )
 
 
+def _existing_conversation_signals(db: Database, session_id: str) -> dict[str, Any] | None:
+    for event in db.list_feedback_events(session_id=session_id, category="conversation_signals", limit=100):
+        if event.get("event_type") == "coaching.conversation_signals":
+            return event
+    return None
+
+
 def _existing_daily_summary(db: Database, day: str) -> dict[str, Any] | None:
     for event in db.list_feedback_events(category="daily_summary", limit=500):
         if event.get("event_type") == "coaching.daily_summary" and event.get("metadata", {}).get("day") == day:
@@ -206,6 +268,56 @@ def _session_detail(db: Database, session: dict[str, Any]) -> dict[str, Any]:
         "utterances": db.list_utterances(session_id),
         "turns": db.list_assistant_turns(session_id),
     }
+
+
+def _conversation_signal_metrics(
+    utterances: list[dict[str, Any]],
+    turns: list[dict[str, Any]],
+) -> dict[str, float | int | None]:
+    utterance_count = len(utterances)
+    question_count = _question_count(utterances)
+    commitment_count = _commitment_count(utterances)
+    actionable_count = _actionable_next_step_count(utterances)
+    interruption_count = _interruption_count(utterances)
+    word_counts = [_word_count(str(item.get("text") or "")) for item in utterances]
+    avg_words = sum(word_counts) / utterance_count if utterance_count else 0.0
+    concise_utterances = sum(1 for count in word_counts if 0 < count <= 24)
+    clear_utterances = sum(1 for item in utterances if _is_clear_text(str(item.get("text") or "")))
+    return {
+        "utterance_count": utterance_count,
+        "assistant_turn_count": len(turns),
+        "question_count": question_count,
+        "question_ratio": round(question_count / utterance_count, 3) if utterance_count else 0.0,
+        "commitment_count": commitment_count,
+        "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
+        "actionable_next_steps": actionable_count,
+        "interruption_count": interruption_count if interruption_count else None,
+        "concision": round(concise_utterances / utterance_count, 3) if utterance_count else 0.0,
+        "clarity": round(clear_utterances / utterance_count, 3) if utterance_count else 0.0,
+        "average_words": round(avg_words, 1),
+    }
+
+
+def _conversation_signal_message(
+    session: dict[str, Any],
+    metrics: dict[str, float | int | None],
+) -> str:
+    title = session.get("title") or session.get("id")
+    lines = [
+        f"Conversation Signals - {title}",
+        "",
+        f"Clarity: {metrics['clarity']}",
+        f"Concision: {metrics['concision']}",
+        f"Question ratio: {metrics['question_ratio']}",
+        f"Follow-through: {metrics['follow_through']}",
+        f"Commitments: {metrics['commitment_count']}",
+        f"Actionable next steps: {metrics['actionable_next_steps']}",
+    ]
+    if metrics.get("interruption_count") is not None:
+        lines.append(f"Interruptions: {metrics['interruption_count']}")
+    else:
+        lines.append("Interruptions: unavailable")
+    return "\n".join(lines)
 
 
 def _summary_message(
@@ -297,6 +409,32 @@ def _question_count(utterances: list[dict[str, Any]]) -> int:
 def _commitment_count(utterances: list[dict[str, Any]]) -> int:
     pattern = re.compile(r"\b(i|we)('ll| will| need to| should)\b", re.I)
     return sum(1 for item in utterances if pattern.search(str(item.get("text") or "")))
+
+
+def _actionable_next_step_count(utterances: list[dict[str, Any]]) -> int:
+    pattern = re.compile(r"\b(next step|follow up|send|schedule|document|owner|tomorrow|by \w+)\b", re.I)
+    return sum(1 for item in utterances if pattern.search(str(item.get("text") or "")))
+
+
+def _interruption_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for item in utterances
+        if "interrupt" in str(item.get("text") or "").lower()
+        or str(item.get("source_provider") or "").lower() == "interruption"
+    )
+
+
+def _is_clear_text(text: str) -> bool:
+    words = _word_count(text)
+    if words == 0:
+        return False
+    has_specific_signal = bool(re.search(r"\b(who|what|when|where|why|how|owner|by|will|should|need)\b", text, re.I))
+    return words <= 32 and (has_specific_signal or text.strip().endswith("?"))
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9']+", text))
 
 
 def _week_start_date(value: str | date | None) -> date:

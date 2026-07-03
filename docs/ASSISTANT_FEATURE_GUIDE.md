@@ -307,6 +307,19 @@ idempotent `coaching.weekly_summary` feedback event per week start date. Both
 include session counts, question ratio, commitment count, local notes, and a
 suggested focus without calling an external service.
 
+Track local conversation signals for a captured ambient, meeting, or direct voice
+session with:
+
+```bash
+atlas-voice coaching signals --session <session_id>
+atlas-voice coaching signals --session <session_id> --yes
+```
+
+Confirmed runs store one idempotent `coaching.conversation_signals` feedback event
+per session with clarity, concision, question ratio, follow-through, commitment,
+interruption, and actionable-next-step metrics derived locally from utterance
+text.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,

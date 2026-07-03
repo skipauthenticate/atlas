@@ -18,7 +18,11 @@ from .ambient import (
 )
 from .anythingllm import AnythingLLMError, sync_recording_to_anythingllm
 from .assistant_config import AssistantConfigError, load_assistant_config
-from .coaching import generate_daily_coaching_summary, generate_weekly_coaching_summary
+from .coaching import (
+    generate_daily_coaching_summary,
+    generate_weekly_coaching_summary,
+    track_conversation_signals,
+)
 from .config import Settings
 from .database import Database
 from .exporter import export_recording
@@ -120,6 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     coaching_weekly.add_argument("--yes", action="store_true", help="Actually store the summary")
     coaching_weekly.set_defaults(func=cmd_coaching_weekly)
+    coaching_signals = coaching_subparsers.add_parser(
+        "signals",
+        help="Dry-run or store local conversation signal metrics for a session",
+    )
+    coaching_signals.add_argument("--session", required=True, help="Ambient or direct voice session id")
+    coaching_signals.add_argument("--yes", action="store_true", help="Actually store the signals")
+    coaching_signals.set_defaults(func=cmd_coaching_signals)
 
     memory = subparsers.add_parser("memory", help="Local memory extraction and retrieval")
     memory_subparsers = memory.add_subparsers(dest="memory_command", required=True)
@@ -499,6 +510,28 @@ def cmd_coaching_weekly(args: argparse.Namespace) -> int:
         print("dry run only; rerun with --yes to store the summary")
     else:
         print(f"coaching weekly stored: event {result.event_id} for {result.week_start}")
+    print(result.message)
+    return 0
+
+
+def cmd_coaching_signals(args: argparse.Namespace) -> int:
+    _settings, db = settings_and_db()
+    try:
+        result = track_conversation_signals(
+            db,
+            args.session,
+            dry_run=not args.yes,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if result.status == "existing":
+        print(f"coaching signals existing: event {result.event_id} for {result.session_id}")
+    elif result.dry_run:
+        print(f"coaching signals dry run: {result.metrics['utterance_count']} utterance(s)")
+        print("dry run only; rerun with --yes to store the signals")
+    else:
+        print(f"coaching signals stored: event {result.event_id} for {result.session_id}")
     print(result.message)
     return 0
 
