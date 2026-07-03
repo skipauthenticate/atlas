@@ -837,7 +837,7 @@ Suggested controls:
 ### API
 
 - [x] `/v1/realtime`
-- [ ] `/api/assistant/health`
+- [x] `/api/assistant/health`
 - [ ] `/api/assistant/sessions`
 - [ ] `/api/assistant/privacy`
 - [x] `/api/status`

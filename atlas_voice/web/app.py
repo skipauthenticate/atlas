@@ -40,6 +40,7 @@ from atlas_voice.realtime import (
     synthesize_with_tts_sidecar,
     transcribe_realtime_audio,
 )
+from atlas_voice.status import assistant_health as collect_assistant_health
 from atlas_voice.status import runtime_status as collect_runtime_status
 from atlas_voice.storage import safe_filename
 from atlas_voice.summarizer import get_template, list_templates, summary_to_sections
@@ -883,6 +884,11 @@ def health() -> dict[str, str]:
 @app.get("/api/status")
 def api_status() -> JSONResponse:
     return JSONResponse(collect_runtime_status(settings, db, assistant_config))
+
+
+@app.get("/api/assistant/health")
+def api_assistant_health() -> JSONResponse:
+    return JSONResponse(collect_assistant_health(settings, db, assistant_config))
 
 
 @app.get("/api/ambient/sessions")

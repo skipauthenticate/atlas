@@ -107,6 +107,80 @@ class WebTests(unittest.TestCase):
             self.assertIn("[Atlas]", search.text)
             self.assertNotIn("&lt;mark&gt;", search.text)
 
+
+    def test_assistant_health_api_reports_local_components(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/api/assistant/health")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["local_only"])
+            self.assertEqual(payload["realtime"]["websocket_path"], "/v1/realtime")
+            self.assertEqual(payload["components"]["database"]["status"], "ok")
+            self.assertEqual(payload["components"]["privacy"]["status"], "ok")
+            self.assertEqual(payload["components"]["tts"]["status"], "idle")
+            self.assertEqual(payload["active_listener_count"], 0)
+
+    def test_assistant_health_api_reports_tts_sidecar_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "faster-qwen3-tts"
+            os.environ["ATLAS_TTS_MODEL"] = "faster-qwen3-tts-0.6b"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.status as status_module
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            with patch.object(
+                status_module,
+                "check_tts_sidecar_health",
+                return_value={
+                    "status": "error",
+                    "detail": "ConnectError: refused",
+                    "url": "http://127.0.0.1:8008/health",
+                    "latency_ms": 3,
+                },
+            ):
+                response = client.get("/api/assistant/health")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "degraded")
+            self.assertEqual(payload["components"]["tts"]["status"], "error")
+            self.assertIn("faster-qwen3-tts-0.6b", payload["components"]["tts"]["detail"])
+            self.assertIn("tts", payload["issues"][0]["component"])
+
     def test_realtime_websocket_handles_text_and_persists_turn(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

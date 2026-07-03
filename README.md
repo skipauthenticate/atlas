@@ -72,6 +72,7 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
 - `GET /search?q=...`: full-text transcript and summary search.
 - `GET /api/recordings/{id}`: structured JSON export.
 - `GET /api/status`: local system, model, service, listener, and privacy status.
+- `GET /api/assistant/health`: focused assistant readiness and component health.
 - `WebSocket /v1/realtime`: OpenAI-style local realtime session events.
 
 ## Assistant Foundation
@@ -118,6 +119,8 @@ Useful commands:
 atlas-voice privacy status
 atlas-voice privacy audit-egress
 ```
+
+See `docs/ASSISTANT_FEATURE_GUIDE.md` for feature usage and validation steps.
 
 ## AnythingLLM Integration
 

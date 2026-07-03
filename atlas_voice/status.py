@@ -31,6 +31,41 @@ def runtime_status(
     }
 
 
+def assistant_health(
+    settings: Settings,
+    db: Database,
+    assistant_config: AssistantConfig,
+) -> dict[str, Any]:
+    status = runtime_status(settings, db, assistant_config)
+    components = {str(item["name"]): dict(item) for item in status["services"]}
+    privacy = dict(status["privacy"])
+    components["privacy"] = {
+        "name": "privacy",
+        "status": privacy["status"],
+        "detail": f"{privacy['issue_count']} local-only issues",
+    }
+
+    issues = _assistant_health_issues(components, privacy)
+    return {
+        "status": _assistant_health_status(components),
+        "local_only": privacy["status"] == "ok",
+        "components": components,
+        "issues": issues,
+        "privacy": privacy,
+        "active_listener_count": len(status["active_listeners"]),
+        "active_listeners": status["active_listeners"],
+        "active_models": status["active_models"],
+        "realtime": {
+            "websocket_path": "/v1/realtime",
+            "transport": "websocket",
+            "host": settings.host,
+            "port": settings.port,
+            "audio_sample_rate": settings.realtime_audio_sample_rate,
+            "audio_channels": settings.realtime_audio_channels,
+        },
+    }
+
+
 def system_status() -> dict[str, Any]:
     meminfo = _read_meminfo()
     memory_total = meminfo.get("MemTotal")
@@ -210,6 +245,47 @@ def active_listeners(
             }
         )
     return listeners
+
+
+def _assistant_health_status(components: dict[str, dict[str, Any]]) -> str:
+    critical = {"database", "privacy"}
+    for name in critical:
+        if components.get(name, {}).get("status") == "error":
+            return "error"
+    if any(_component_problem(component) for component in components.values()):
+        return "degraded"
+    return "ok"
+
+
+def _assistant_health_issues(
+    components: dict[str, dict[str, Any]],
+    privacy: dict[str, Any],
+) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for name, component in components.items():
+        if not _component_problem(component):
+            continue
+        issues.append(
+            {
+                "component": name,
+                "status": str(component.get("status") or "unknown"),
+                "message": str(component.get("detail") or name),
+            }
+        )
+    for issue in privacy.get("issues") or []:
+        if isinstance(issue, dict):
+            issues.append(
+                {
+                    "component": "privacy",
+                    "status": str(issue.get("severity") or "error"),
+                    "message": str(issue.get("message") or issue.get("check") or "privacy issue"),
+                }
+            )
+    return issues
+
+
+def _component_problem(component: dict[str, Any]) -> bool:
+    return str(component.get("status") or "").lower() in {"error", "warn", "warning"}
 
 
 def gpu_status() -> dict[str, Any]:
