@@ -360,6 +360,90 @@ class WebTests(unittest.TestCase):
             self.assertIn("mic", response.text)
             self.assertIn("file", response.text)
 
+    def test_voice_console_shows_coaching_progress_dashboard(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            session_id = web_app.db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Coaching progress session",
+            )
+            conversation_event = web_app.db.log_feedback_event(
+                event_type="coaching.conversation_signals",
+                category="conversation_signals",
+                session_id=session_id,
+                message="Conversation Signals - Coaching progress session",
+                score=0.75,
+                metadata={
+                    "signals": {
+                        "clarity": 0.75,
+                        "concision": 0.5,
+                        "question_ratio": 0.25,
+                        "follow_through": 0.5,
+                    }
+                },
+            )
+            writing_event = web_app.db.log_feedback_event(
+                event_type="coaching.writing_signals",
+                category="writing_signals",
+                message="Writing Signals - Launch note",
+                score=0.9,
+                metadata={
+                    "label": "Launch note",
+                    "signals": {
+                        "clarity": 0.9,
+                        "concision": 0.8,
+                        "ask_action_clarity": 1.0,
+                        "tone": 1.0,
+                    },
+                },
+            )
+            with web_app.db.connect() as conn:
+                conn.execute(
+                    "UPDATE feedback_events SET created_at = ? WHERE id = ?",
+                    ("2026-07-01T10:00:00+00:00", conversation_event),
+                )
+                conn.execute(
+                    "UPDATE feedback_events SET created_at = ? WHERE id = ?",
+                    ("2026-07-02T10:00:00+00:00", writing_event),
+                )
+            client = TestClient(web_app.app)
+
+            api_response = client.get("/api/coaching/progress")
+            voice_response = client.get("/voice")
+
+            self.assertEqual(api_response.status_code, 200)
+            payload = api_response.json()
+            self.assertEqual(payload["event_count"], 2)
+            self.assertEqual(payload["latest_events"][0]["title"], "Writing Signals - Launch note")
+            self.assertEqual(payload["averages"]["clarity"], 0.825)
+            self.assertEqual(payload["categories"]["conversation_signals"], 1)
+            self.assertEqual(payload["categories"]["writing_signals"], 1)
+            self.assertEqual(voice_response.status_code, 200)
+            self.assertIn('data-coaching-progress', voice_response.text)
+            self.assertIn("Progress Dashboard", voice_response.text)
+            self.assertIn("Clarity", voice_response.text)
+            self.assertIn("82%", voice_response.text)
+            self.assertIn("Conversation Signals - Coaching progress session", voice_response.text)
+            self.assertIn("Writing Signals - Launch note", voice_response.text)
+
     def test_voice_console_memory_ui_can_edit_and_delete_items(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

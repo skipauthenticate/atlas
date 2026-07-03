@@ -326,8 +326,108 @@ def voice_console(request: Request) -> Response:
             "ambient_timeline": ambient_timeline,
             "voice_settings": _voice_settings_view(),
             "memory_items": _memory_item_views(db.list_memory_items(limit=8)),
+            "coaching_progress": _coaching_progress_view(),
         },
     )
+
+
+def _coaching_progress_view(limit: int = 100) -> dict[str, Any]:
+    events = [
+        event
+        for event in db.list_feedback_events(limit=limit)
+        if str(event.get("event_type") or "").startswith("coaching.")
+    ]
+    categories: dict[str, int] = {}
+    metric_values: dict[str, list[float]] = {}
+    latest_events: list[dict[str, Any]] = []
+    for event in events:
+        category = str(event.get("category") or "uncategorized")
+        categories[category] = categories.get(category, 0) + 1
+        signals = _feedback_signal_metrics(event)
+        for key, value in signals.items():
+            metric_values.setdefault(key, []).append(value)
+        latest_events.append(_coaching_progress_event_view(event, signals))
+
+    averages = {
+        key: round(sum(values) / len(values), 3)
+        for key, values in sorted(metric_values.items())
+        if values
+    }
+    headline_metrics = [
+        _coaching_metric_view("Clarity", averages.get("clarity")),
+        _coaching_metric_view("Concision", averages.get("concision")),
+        _coaching_metric_view("Question ratio", averages.get("question_ratio")),
+        _coaching_metric_view("Ask/action clarity", averages.get("ask_action_clarity")),
+    ]
+    return {
+        "status": "ok",
+        "event_count": len(events),
+        "categories": categories,
+        "averages": averages,
+        "headline_metrics": headline_metrics,
+        "latest_events": latest_events[:8],
+    }
+
+
+def _feedback_signal_metrics(event: dict[str, Any]) -> dict[str, float]:
+    raw_signals = (event.get("metadata") or {}).get("signals") or {}
+    metrics: dict[str, float] = {}
+    for key, value in raw_signals.items():
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= number <= 1.0:
+            metrics[str(key)] = number
+    score = event.get("score")
+    if "score" not in metrics and score is not None:
+        try:
+            score_value = float(score)
+        except (TypeError, ValueError):
+            score_value = -1.0
+        if 0.0 <= score_value <= 1.0:
+            metrics["score"] = score_value
+    return metrics
+
+
+def _coaching_progress_event_view(event: dict[str, Any], metrics: dict[str, float]) -> dict[str, Any]:
+    title = str(event.get("message") or "").splitlines()[0] or str(event.get("event_type") or "feedback")
+    primary_value = metrics.get("clarity") or metrics.get("score")
+    metric_rows = [
+        _coaching_metric_view(_metric_title(key), value)
+        for key, value in metrics.items()
+        if key != "score"
+    ]
+    return {
+        "id": event.get("id"),
+        "title": title,
+        "event_type": event.get("event_type"),
+        "category": event.get("category"),
+        "category_label": _metric_title(str(event.get("category") or "feedback")),
+        "created_at": event.get("created_at"),
+        "created_at_display": _timestamp_label(_parse_timestamp(event.get("created_at"))),
+        "primary_score": primary_value,
+        "primary_score_display": _percent_label(primary_value),
+        "metrics": metric_rows[:5],
+    }
+
+
+def _coaching_metric_view(label: str, value: float | None) -> dict[str, Any]:
+    return {
+        "label": label,
+        "value": value,
+        "display": _percent_label(value),
+    }
+
+
+def _percent_label(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{int(max(min(value, 1.0), 0.0) * 100)}%"
+
+
+def _metric_title(value: str) -> str:
+    return value.replace("_", " ").strip().title()
 
 
 def _memory_item_views(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -719,6 +819,11 @@ def delete_memory_item(memory_id: int) -> Response:
     if not db.delete_memory_item(memory_id):
         raise HTTPException(status_code=404, detail="Memory item not found")
     return RedirectResponse("/voice#voice-memory", status_code=303)
+
+
+@app.get("/api/coaching/progress")
+def api_coaching_progress(limit: int = 100) -> JSONResponse:
+    return JSONResponse(_coaching_progress_view(limit=max(min(limit, 500), 1)))
 
 
 @app.get("/search", response_class=HTMLResponse)

@@ -226,9 +226,31 @@
         </div>
       </section>
 
-      <section id="voice-coaching">
-        <h2>Coaching</h2>
-        <label class="voice-toggle"><input type="checkbox" disabled> Feedback events</label>
+      <section id="voice-coaching" data-coaching-progress>
+        <h2>Progress Dashboard</h2>
+        {% if coaching_progress.event_count %}
+          <div class="voice-progress-metrics">
+            {% for metric in coaching_progress.headline_metrics %}
+              <div class="voice-progress-card">
+                <span>{{ metric.label }}</span>
+                <strong>{{ metric.display }}</strong>
+              </div>
+            {% endfor %}
+          </div>
+          <div class="voice-progress-list">
+            {% for event in coaching_progress.latest_events %}
+              <article class="voice-progress-event">
+                <div>
+                  <strong>{{ event.title }}</strong>
+                  <small>{{ event.created_at_display }} · {{ event.category_label }}</small>
+                </div>
+                <span>{{ event.primary_score_display }}</span>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty tight">No coaching progress yet.</div>
+        {% endif %}
       </section>
     </aside>
 

@@ -334,6 +334,17 @@ structure, specificity, audience fit, ask/action clarity, tone, hedging, and
 repeated phrasing. The stored metadata keeps the hash, label, and signal scores;
 it does not duplicate the full analyzed text.
 
+Review progress over time in the Voice inspector or as JSON:
+
+```bash
+curl http://127.0.0.1:8787/api/coaching/progress
+```
+
+The `/voice` Coaching panel shows a local progress dashboard with average
+clarity, concision, question ratio, ask/action clarity, and recent coaching
+events derived from stored feedback events. The API is bounded to recent events
+and does not trigger model work.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,
