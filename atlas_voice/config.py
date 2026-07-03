@@ -65,6 +65,10 @@ class Settings:
     nemo_target_lang: str = "en"
     vibevoice_model: str = "microsoft/VibeVoice-ASR"
     vibevoice_max_new_tokens: int = 32768
+    hyprwhspr_endpoint: str | None = None
+    hyprwhspr_cli: str = "hyprwhspr"
+    hyprwhspr_timeout: float = 10.0
+    realtime_asr_prefer_hyprwhspr: bool = True
     anythingllm_base_url: str = "http://127.0.0.1:3001/api"
     anythingllm_api_key: str | None = None
     anythingllm_workspace_slug: str | None = None
@@ -134,6 +138,12 @@ class Settings:
             ),
             vibevoice_max_new_tokens=int(
                 os.environ.get("ATLAS_VOICE_VIBEVOICE_MAX_NEW_TOKENS", "32768")
+            ),
+            hyprwhspr_endpoint=os.environ.get("ATLAS_VOICE_HYPRWHSPR_ENDPOINT") or None,
+            hyprwhspr_cli=os.environ.get("ATLAS_VOICE_HYPRWHSPR_CLI", "hyprwhspr"),
+            hyprwhspr_timeout=float(os.environ.get("ATLAS_VOICE_HYPRWHSPR_TIMEOUT", "10")),
+            realtime_asr_prefer_hyprwhspr=_bool_from_env(
+                "ATLAS_VOICE_REALTIME_ASR_PREFER_HYPRWHSPR", True
             ),
             anythingllm_base_url=os.environ.get(
                 "ANYTHINGLLM_BASE_URL", "http://127.0.0.1:3001/api"

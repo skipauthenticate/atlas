@@ -75,10 +75,11 @@ templates.env.filters["timecode"] = format_seconds
 
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
-ASR_PROVIDERS = ("whisperx", "parakeet", "canary", "vibevoice")
+ASR_PROVIDERS = ("whisperx", "hyprwhspr", "parakeet", "canary", "vibevoice")
 DIARIZATION_PROVIDERS = ("pyannote", "transcript", "none")
 PROVIDER_DEFAULT_MODELS = {
     "whisperx": "large-v3-turbo",
+    "hyprwhspr": "hyprwhspr-local",
     "parakeet": "nvidia/parakeet-tdt-0.6b-v3",
     "canary": "nvidia/canary-1b-v2",
     "vibevoice": "microsoft/VibeVoice-ASR",
@@ -90,6 +91,7 @@ COMMON_ASR_MODELS = (
     "small",
     "base",
     "tiny.en",
+    "hyprwhspr-local",
     "nvidia/parakeet-tdt-0.6b-v3",
     "nvidia/canary-1b-v2",
     "microsoft/VibeVoice-ASR",

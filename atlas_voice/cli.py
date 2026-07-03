@@ -114,8 +114,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
     benchmark.add_argument(
         "--providers",
-        default="whisperx,parakeet,canary,vibevoice",
-        help="Comma-separated providers: whisperx, parakeet, canary, vibevoice",
+        default="whisperx,hyprwhspr,parakeet,canary,vibevoice",
+        help="Comma-separated providers: whisperx, hyprwhspr, parakeet, canary, vibevoice",
     )
     benchmark.add_argument("--reference", type=Path, help="Optional reference transcript text")
     benchmark.add_argument("--json", action="store_true", help="Print machine-readable JSON")

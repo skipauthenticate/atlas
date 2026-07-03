@@ -501,10 +501,10 @@ Implemented event paths:
 
 ### Phase 5: Microphone Voice Mode
 
-Status: not complete as browser realtime voice mode. Mic capture exists for ambient CLI.
+Status: not complete as browser realtime voice mode. Browser mic capture and optional Hyprwhspr-first realtime ASR routing exist; realtime VAD/end-of-turn remains open.
 
 - [x] Stream browser mic audio to the realtime endpoint.
-- [ ] Use Hyprwhspr first if its local socket/CLI is reliable.
+- [x] Use Hyprwhspr first if its local socket/CLI is reliable.
 - [ ] Fallback to local Whisper/faster-whisper.
 - [x] Add VAD for ambient file/mic chunks.
 - [ ] Add realtime VAD/end-of-turn detection.

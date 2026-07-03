@@ -1,4 +1,7 @@
+from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
+import json
 import sys
 import types
 import unittest
@@ -6,7 +9,12 @@ from unittest import mock
 
 from atlas_voice.benchmark import run_asr_benchmark, word_error_rate
 from atlas_voice.config import Settings
+from atlas_voice.providers.asr import select_realtime_asr_provider
 from atlas_voice.providers.diarization import diarize_audio
+from atlas_voice.providers.hyprwhspr_provider import (
+    hyprwhspr_available,
+    transcribe_hyprwhspr,
+)
 from atlas_voice.providers.nemo_provider import transcribe_parakeet
 from atlas_voice.providers.transcript_utils import (
     diarization_from_transcript,
@@ -39,6 +47,61 @@ def settings(
 
 
 class ExperimentalProviderTests(unittest.TestCase):
+
+    def test_realtime_asr_prefers_available_hyprwhspr_cli(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "hyprwhspr"
+            cli.write_text("#!/bin/sh\n")
+            cli.chmod(0o755)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(cli),
+                hyprwhspr_endpoint=None,
+                realtime_asr_prefer_hyprwhspr=True,
+            )
+
+            self.assertTrue(hyprwhspr_available(provider_settings))
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "hyprwhspr")
+
+    def test_realtime_asr_falls_back_when_hyprwhspr_is_unavailable(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(root / "missing-hyprwhspr"),
+                hyprwhspr_endpoint=None,
+                realtime_asr_prefer_hyprwhspr=True,
+            )
+
+            self.assertFalse(hyprwhspr_available(provider_settings))
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "whisperx")
+
+    def test_hyprwhspr_cli_transcription_parses_json_stdout(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "hyprwhspr"
+            cli.write_text("#!/bin/sh\n")
+            cli.chmod(0o755)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(cli),
+                hyprwhspr_endpoint=None,
+                hyprwhspr_timeout=2.0,
+            )
+            completed = types.SimpleNamespace(
+                stdout=json.dumps({"text": "hello local", "segments": [{"text": "hello local"}]}),
+                stderr="",
+            )
+
+            with mock.patch("subprocess.run", return_value=completed) as run_mock:
+                transcript = transcribe_hyprwhspr(Path("audio.wav"), provider_settings)
+
+        run_mock.assert_called_once()
+        self.assertEqual(transcript["provider"], "hyprwhspr")
+        self.assertEqual(transcript["text"], "hello local")
+        self.assertEqual(transcript["segments"][0]["text"], "hello local")
+
     def test_word_error_rate_counts_word_edits(self) -> None:
         self.assertEqual(word_error_rate("alpha beta", "alpha beta"), 0.0)
         self.assertAlmostEqual(word_error_rate("one two three", "one four three"), 1 / 3)

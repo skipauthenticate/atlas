@@ -140,7 +140,7 @@ def transcribe_realtime_audio(
 
     from .providers.asr import transcribe_audio
 
-    payload = transcribe_audio(audio_path, settings)
+    payload = transcribe_audio(audio_path, settings, realtime=True)
     text = transcript_text(payload)
     if not text:
         raise RuntimeError("ASR returned no transcript text")

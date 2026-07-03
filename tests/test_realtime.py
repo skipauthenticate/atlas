@@ -19,6 +19,7 @@ from atlas_voice.realtime import (
     normalize_tts_provider,
     synthesize_with_tts_sidecar,
     transcript_text,
+    transcribe_realtime_audio,
     write_realtime_audio,
 )
 
@@ -70,6 +71,26 @@ class RealtimeTests(unittest.TestCase):
                 self.assertEqual(audio.getframerate(), 16000)
                 self.assertEqual(audio.getnchannels(), 1)
                 self.assertEqual(audio.getsampwidth(), 2)
+
+
+    def test_transcribe_realtime_audio_marks_asr_call_realtime(self) -> None:
+        settings = SimpleNamespace(
+            stub_mode=False,
+            realtime_audio_sample_rate=16000,
+            realtime_audio_channels=1,
+        )
+
+        with TemporaryDirectory() as tmp:
+            with patch(
+                "atlas_voice.providers.asr.transcribe_audio",
+                return_value={"text": "hello realtime"},
+            ) as transcribe_mock:
+                text, audio_path = transcribe_realtime_audio(b"\0\0" * 12, settings, Path(tmp))
+
+        self.assertEqual(text, "hello realtime")
+        self.assertEqual(audio_path.suffix, ".wav")
+        transcribe_mock.assert_called_once()
+        self.assertTrue(transcribe_mock.call_args.kwargs["realtime"])
 
     def test_transcript_text_extracts_segments(self) -> None:
         payload = {"segments": [{"text": "hello"}, {"text": "there"}]}
