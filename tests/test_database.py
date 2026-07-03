@@ -234,6 +234,47 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(completed["status"], "completed")
             self.assertIsNotNone(completed["completed_at"])
 
+    def test_feedback_events_can_be_logged_and_filtered(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            goal_id = db.create_coaching_goal(title="Improve clarity")
+            session_id = db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Coaching conversation",
+            )
+
+            event_id = db.log_feedback_event(
+                event_type="coaching.signal",
+                category="conversation",
+                message="Asked a concrete follow-up question.",
+                goal_id=goal_id,
+                session_id=session_id,
+                score=0.75,
+                evidence_ref="utterance:1",
+                metadata={"signal": "question_ratio", "direction": "positive"},
+            )
+            db.log_feedback_event(
+                event_type="writing.signal",
+                category="writing",
+                message="Draft has a clear ask.",
+            )
+
+            event = db.get_feedback_event(event_id)
+            goal_events = db.list_feedback_events(goal_id=goal_id)
+            session_events = db.list_feedback_events(session_id=session_id)
+            conversation_events = db.list_feedback_events(category="conversation")
+
+            self.assertEqual(event["message"], "Asked a concrete follow-up question.")
+            self.assertEqual(event["goal_id"], goal_id)
+            self.assertEqual(event["session_id"], session_id)
+            self.assertEqual(event["score"], 0.75)
+            self.assertEqual(event["metadata"], {"signal": "question_ratio", "direction": "positive"})
+            self.assertEqual([item["id"] for item in goal_events], [event_id])
+            self.assertEqual([item["id"] for item in session_events], [event_id])
+            self.assertEqual([item["id"] for item in conversation_events], [event_id])
+
     def test_audit_tables_store_model_runs_and_privacy_events(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

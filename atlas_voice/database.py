@@ -224,6 +224,30 @@ class Database:
                     ON coaching_goals(status, target_date, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_coaching_goals_updated
                     ON coaching_goals(updated_at DESC, id DESC);
+
+                CREATE TABLE IF NOT EXISTS feedback_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    goal_id INTEGER,
+                    session_id TEXT,
+                    event_type TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    score REAL,
+                    evidence_ref TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (goal_id) REFERENCES coaching_goals(id) ON DELETE SET NULL,
+                    FOREIGN KEY (session_id) REFERENCES ambient_sessions(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_feedback_events_created
+                    ON feedback_events(created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_feedback_events_goal
+                    ON feedback_events(goal_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_feedback_events_session
+                    ON feedback_events(session_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_feedback_events_category
+                    ON feedback_events(category, created_at DESC);
                 """
             )
 
@@ -1043,6 +1067,88 @@ class Database:
 
     @staticmethod
     def _coaching_goal_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        item = dict(row)
+        try:
+            item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+        except json.JSONDecodeError:
+            item["metadata"] = {}
+        return item
+
+    def log_feedback_event(
+        self,
+        *,
+        event_type: str,
+        category: str,
+        message: str,
+        goal_id: int | None = None,
+        session_id: str | None = None,
+        score: float | None = None,
+        evidence_ref: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO feedback_events (
+                    goal_id, session_id, event_type, category, message, score,
+                    evidence_ref, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    goal_id,
+                    session_id,
+                    event_type,
+                    category,
+                    message[:4000],
+                    score,
+                    evidence_ref,
+                    json.dumps(metadata or {}, sort_keys=True),
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def get_feedback_event(self, event_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM feedback_events WHERE id = ?",
+                (event_id,),
+            ).fetchone()
+        return self._feedback_event_from_row(row)
+
+    def list_feedback_events(
+        self,
+        *,
+        goal_id: int | None = None,
+        session_id: str | None = None,
+        category: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM feedback_events"
+        params: list[Any] = []
+        filters: list[str] = []
+        if goal_id is not None:
+            filters.append("goal_id = ?")
+            params.append(goal_id)
+        if session_id is not None:
+            filters.append("session_id = ?")
+            params.append(session_id)
+        if category is not None:
+            filters.append("category = ?")
+            params.append(category)
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(max(min(limit, 500), 1))
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._feedback_event_from_row(row) for row in rows]
+
+    @staticmethod
+    def _feedback_event_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         if row is None:
             return None
         item = dict(row)
