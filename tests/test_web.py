@@ -335,6 +335,40 @@ class WebTests(unittest.TestCase):
             self.assertIn("/models/voice.onnx", response.text)
             self.assertIn("24000 Hz", response.text)
 
+    def test_voice_console_center_workbench_is_realtime_ready(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('data-voice-console="true"', response.text)
+            self.assertIn('data-websocket-path="/v1/realtime"', response.text)
+            self.assertIn('data-assistant-enabled="true"', response.text)
+            self.assertIn('data-transcript-stream', response.text)
+            self.assertIn('id="voice-prompt-input"', response.text)
+            self.assertIn('id="voice-prompt-submit"', response.text)
+            self.assertNotIn('id="voice-prompt-input" disabled', response.text)
+            self.assertIn('/static/voice.js', response.text)
+
     def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

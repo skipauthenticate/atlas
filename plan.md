@@ -444,7 +444,7 @@ Status: remaining.
 
 - [x] Add `/voice` as the main assistant console.
 - [x] Add left rail: Home, Voice, Ambient, Memory, Coaching, Search, Settings.
-- [ ] Add center workbench: live conversation, transcript, waveform/call surface, typed prompt box.
+- [x] Add center workbench: live conversation, transcript, waveform/call surface, typed prompt box.
 - [x] Add right inspector: voice/model settings, session history, privacy state, memory toggles.
 - [ ] Add bottom transport: mic, pause/private mode, interrupt, playback, volume, session timer.
 - [ ] Add Voice Playground for testing text-to-speech.
@@ -453,7 +453,7 @@ Status: remaining.
 - [ ] Add Voice Playground latency display.
 - [ ] Use restrained cards only for repeated items like sessions, memories, goals, and model runs.
 - [ ] Add ambient session timeline UI.
-- [ ] Add browser realtime console UI for `/v1/realtime`.
+- [x] Add browser realtime console UI for `/v1/realtime`.
 - [ ] Add desktop and mobile layout QA.
 
 ### Phase 4: Direct Voice MVP

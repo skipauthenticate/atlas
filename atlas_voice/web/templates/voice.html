@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Voice - Atlas Voice{% endblock %}
+{% block head_extra %}
+  <script src="/static/voice.js" defer></script>
+{% endblock %}
 
 {% block content %}
-  <div class="voice-workbench">
+  <div class="voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
     <nav class="voice-rail" aria-label="Voice workspace">
       <a href="/">Home</a>
       <a href="/voice" class="active">Voice</a>
@@ -19,8 +22,8 @@
           <h1>Voice</h1>
           <p>{{ "Realtime enabled" if assistant_enabled else "Realtime disabled" }}</p>
         </div>
-        <span class="status {{ 'status-done' if assistant_enabled else 'status-queued' }}">
-          {{ 'online' if assistant_enabled else 'off' }}
+        <span class="status {{ 'status-done' if assistant_enabled else 'status-queued' }}" data-voice-connection>
+          {{ 'ready' if assistant_enabled else 'off' }}
         </span>
       </div>
 
@@ -34,7 +37,7 @@
         </div>
       </div>
 
-      <section class="voice-transcript" aria-label="Conversation transcript">
+      <section class="voice-transcript" aria-label="Conversation transcript" data-transcript-stream>
         <div class="section-heading compact">
           <h2>Conversation</h2>
           <small>{{ sessions | length }} recent sessions</small>
@@ -58,9 +61,9 @@
         {% endif %}
       </section>
 
-      <form class="voice-prompt" aria-label="Typed prompt">
-        <input type="text" name="prompt" placeholder="Message Atlas" disabled>
-        <button type="button" disabled>Send</button>
+      <form class="voice-prompt" aria-label="Typed prompt" data-voice-prompt>
+        <input id="voice-prompt-input" type="text" name="prompt" placeholder="Message Atlas" {% if not assistant_enabled %}disabled{% endif %}>
+        <button id="voice-prompt-submit" type="submit" {% if not assistant_enabled %}disabled{% endif %}>Send</button>
       </form>
     </section>
 
