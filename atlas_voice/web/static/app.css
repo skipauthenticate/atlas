@@ -785,10 +785,11 @@ code {
 
 .voice-workbench {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(120px, 150px) minmax(0, 1fr) minmax(260px, 300px);
   grid-template-rows: minmax(520px, auto) auto;
   gap: 14px;
   align-items: stretch;
+  max-width: 100%;
 }
 
 .voice-rail,
@@ -1088,16 +1089,52 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .voice-titlebar {
+    display: grid;
+  }
+
   .voice-main {
     padding: 12px;
   }
 
+  .voice-call-surface {
+    min-height: 180px;
+    padding: 12px;
+  }
+
   .voice-waveform {
+    grid-template-columns: repeat(12, minmax(3px, 1fr));
     gap: 4px;
+    min-height: 100px;
   }
 
   .voice-prompt {
     grid-template-columns: 1fr;
+  }
+
+  .voice-transport {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .voice-transport h2 {
+    grid-column: 1 / -1;
+    margin: 0;
+  }
+
+  .voice-transport button {
+    width: 100%;
+  }
+
+  .voice-transport label {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin-left: 0;
+  }
+
+  .voice-transport input[type="range"] {
+    width: 100%;
   }
 }
 

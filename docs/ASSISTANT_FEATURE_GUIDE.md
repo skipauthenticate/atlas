@@ -150,8 +150,10 @@ each playground result. The Ambient Timeline on `/voice` surfaces recent ambient
 meeting, private, and paused sessions with their latest utterance preview. The
 workbench keeps card framing restrained to repeated row items such as sessions,
 models, and timeline entries; playground sections remain unframed inside the main
-work surface. Browser mic audio streaming and backend response cancellation are
-still tracked separately in `plan.md`.
+work surface. The desktop/tablet/mobile layout is covered by static QA checks
+for bounded workbench columns, stacked narrow-screen controls, readable transport
+controls, and reduced mobile waveform density. Browser mic audio streaming and
+backend response cancellation are still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 
