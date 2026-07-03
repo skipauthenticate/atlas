@@ -65,6 +65,74 @@ class AmbientTests(unittest.TestCase):
             self.assertEqual(model_run["task"], "ambient_transcribe")
             self.assertFalse((settings.artifacts_dir / "ambient" / result.session_id).exists())
 
+    def test_process_ambient_file_stores_speaker_from_speaker_aware_asr(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_path = root / "meeting.wav"
+            _write_test_wav(audio_path)
+            settings = replace(_settings(root), stub_mode=False, asr_provider="vibevoice")
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+
+            with mock.patch(
+                "atlas_voice.providers.asr.transcribe_audio",
+                return_value={
+                    "segments": [
+                        {
+                            "start": 0.0,
+                            "end": 0.8,
+                            "speaker": "SPEAKER_02",
+                            "text": "speaker aware transcript",
+                        }
+                    ]
+                },
+            ):
+                result = process_ambient_file(
+                    audio_path,
+                    settings,
+                    db,
+                    mode="meeting",
+                    retain_audio=False,
+                    vad_threshold=1000,
+                    min_speech_seconds=0.2,
+                )
+
+            utterance = db.list_utterances(result.session_id)[0]
+            self.assertEqual(utterance["text"], "speaker aware transcript")
+            self.assertEqual(utterance["speaker"], "SPEAKER_02")
+
+    def test_process_ambient_file_stores_speaker_from_transcript_diarization(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_path = root / "meeting.wav"
+            _write_test_wav(audio_path)
+            settings = replace(_settings(root), stub_mode=False, asr_provider="vibevoice")
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+
+            with mock.patch(
+                "atlas_voice.providers.asr.transcribe_audio",
+                return_value={
+                    "segments": [{"start": 0.0, "end": 0.8, "text": "diarized transcript"}],
+                    "diarization": [{"start": 0.0, "end": 0.8, "speaker": "SPEAKER_03"}],
+                },
+            ):
+                result = process_ambient_file(
+                    audio_path,
+                    settings,
+                    db,
+                    mode="meeting",
+                    retain_audio=False,
+                    vad_threshold=1000,
+                    min_speech_seconds=0.2,
+                )
+
+            utterance = db.list_utterances(result.session_id)[0]
+            self.assertEqual(utterance["text"], "diarized transcript")
+            self.assertEqual(utterance["speaker"], "SPEAKER_03")
+
     def test_validate_microphone_asr_captures_brio_and_returns_transcript(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

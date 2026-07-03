@@ -548,14 +548,14 @@ Ambient mic command:
 
 ### Phase 6: Ambient Assistant
 
-Status: CLI/API MVP complete; UI and richer privacy controls remain.
+Status: CLI/API MVP complete; speaker-aware ambient utterance storage exists; UI and richer privacy controls remain.
 
 - [x] Add `atlas-voice ambient`.
 - [x] Add modes: `paused`, `ambient`, `meeting`, `direct`.
 - [x] Add `private` mode as an additional safety mode.
 - [x] Store ambient sessions.
 - [x] Store utterances with timestamps.
-- [ ] Store optional speaker labels from diarization or speaker-aware ASR.
+- [x] Store optional speaker labels from diarization or speaker-aware ASR.
 - [x] Add privacy controls for pause/private mode at CLI level.
 - [x] Add privacy purge command.
 - [x] Add retention policy for raw-audio disablement.

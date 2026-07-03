@@ -10,6 +10,8 @@ from array import array
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
 from .audio import normalize_audio
 from .config import Settings
 from .database import Database
@@ -45,6 +47,13 @@ class MicrophoneAsrValidationResult:
     provider: str
     transcript: str
     audio_seconds: float
+
+
+@dataclass(frozen=True)
+class AmbientTranscriptResult:
+    text: str
+    speaker: str | None = None
+    confidence: float | None = None
 
 
 def process_ambient_file(
@@ -92,14 +101,16 @@ def process_ambient_file(
         for index, segment in enumerate(segments, start=1):
             segment_path = artifact_dir / f"segment-{index:04d}.wav"
             write_wav_segment(normalized_path, segment_path, segment.start, segment.end)
-            text = _transcribe_ambient_segment(segment_path, settings, db, session_id, index)
-            if not text:
+            transcript = _transcribe_ambient_segment(segment_path, settings, db, session_id, index)
+            if not transcript.text:
                 continue
             db.add_utterance(
                 session_id=session_id,
-                text=text,
+                text=transcript.text,
+                speaker=transcript.speaker or "user",
                 start=segment.start,
                 end=segment.end,
+                confidence=transcript.confidence,
                 source_provider="stub" if settings.stub_mode else settings.asr_provider,
                 sensitivity=_sensitivity_for_mode(mode),
             )
@@ -391,18 +402,18 @@ def _transcribe_ambient_segment(
     db: Database,
     session_id: str,
     index: int,
-) -> str:
+) -> AmbientTranscriptResult:
     started = time.perf_counter()
     provider = "stub" if settings.stub_mode else settings.asr_provider
     model = _asr_model(settings)
     input_ref = f"ambient_segment:{session_id}:{index}"
     try:
         if settings.stub_mode:
-            text = f"Ambient segment {index} captured."
+            transcript = AmbientTranscriptResult(text=f"Ambient segment {index} captured.")
         else:
             from .providers.asr import transcribe_audio
 
-            text = transcript_text(transcribe_audio(segment_path, settings))
+            transcript = _ambient_transcript_result(transcribe_audio(segment_path, settings))
         db.log_model_run(
             provider=provider,
             model=model,
@@ -410,7 +421,7 @@ def _transcribe_ambient_segment(
             input_ref=input_ref,
             latency_ms=_elapsed_ms(started),
         )
-        return text
+        return transcript
     except Exception as exc:
         db.log_model_run(
             provider=provider,
@@ -421,6 +432,78 @@ def _transcribe_ambient_segment(
             error=f"{type(exc).__name__}: {exc}",
         )
         raise
+
+
+def _ambient_transcript_result(payload: dict[str, Any]) -> AmbientTranscriptResult:
+    text = transcript_text(payload)
+    segment = _first_text_segment(payload)
+    speaker = _ambient_speaker(payload, segment)
+    confidence = _optional_float(
+        segment.get("confidence") or segment.get("score") or segment.get("probability")
+        if segment
+        else None
+    )
+    return AmbientTranscriptResult(text=text, speaker=speaker, confidence=confidence)
+
+
+def _ambient_speaker(payload: dict[str, Any], segment: dict[str, Any] | None) -> str | None:
+    speaker = _clean_optional_text(segment.get("speaker") if segment else None)
+    if speaker:
+        return speaker
+    if not segment:
+        return None
+    return _diarization_speaker_for_segment(
+        payload.get("diarization"),
+        _optional_float(segment.get("start")),
+        _optional_float(segment.get("end")),
+    )
+
+
+def _diarization_speaker_for_segment(
+    diarization: Any,
+    start: float | None,
+    end: float | None,
+) -> str | None:
+    if not isinstance(diarization, list) or start is None or end is None:
+        return None
+    best_speaker = None
+    best_overlap = 0.0
+    for turn in diarization:
+        if not isinstance(turn, dict):
+            continue
+        turn_start = _optional_float(turn.get("start"))
+        turn_end = _optional_float(turn.get("end"))
+        if turn_start is None or turn_end is None:
+            continue
+        overlap = max(min(end, turn_end) - max(start, turn_start), 0.0)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_speaker = _clean_optional_text(turn.get("speaker"))
+    return best_speaker
+
+
+def _first_text_segment(payload: dict[str, Any]) -> dict[str, Any] | None:
+    segments = payload.get("segments")
+    if not isinstance(segments, list):
+        return None
+    for segment in segments:
+        if isinstance(segment, dict) and str(segment.get("text") or "").strip():
+            return segment
+    return None
+
+
+def _clean_optional_text(value: Any) -> str | None:
+    cleaned = str(value or "").strip()
+    return cleaned or None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _asr_model(settings: Settings) -> str:

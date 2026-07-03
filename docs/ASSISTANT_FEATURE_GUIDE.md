@@ -227,7 +227,11 @@ ASR returns an empty transcript. Use
 `--allow-stub` only for command smoke tests, not for real mic validation.
 
 Ambient mode stores sessions in `ambient_sessions` and transcripts in
-`utterances`. Raw audio is deleted after transcription unless
+`utterances`. When the ASR provider returns speaker-aware segments or
+diarization turns, the best available speaker label is stored on the utterance
+as `speaker`; providers without speaker metadata keep the default user label.
+Raw audio is deleted after
+transcription unless
 `ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true` or `--retain-audio` is set. Use `private`
 or `paused` modes when capture should be skipped and logged as a local privacy
 event.
