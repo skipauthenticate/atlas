@@ -1049,6 +1049,18 @@ code {
   width: 120px;
 }
 
+.voice-playback-status {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.voice-transport audio {
+  width: min(220px, 100%);
+  height: 32px;
+}
+
 .voice-transport time {
   min-width: 44px;
   color: var(--muted);
@@ -1127,13 +1139,16 @@ code {
     width: 100%;
   }
 
-  .voice-transport label {
+  .voice-transport label,
+  .voice-playback-status,
+  .voice-transport audio {
     grid-column: 1 / -1;
     min-width: 0;
     margin-left: 0;
   }
 
-  .voice-transport input[type="range"] {
+  .voice-transport input[type="range"],
+  .voice-transport audio {
     width: 100%;
   }
 }

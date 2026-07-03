@@ -114,10 +114,12 @@ The interrupt control sends `response.cancel`, which the backend accepts as an
 interruption signal and acknowledges with `response.interrupted` after clearing
 pending text and buffered audio. Mid-generation response cancellation remains a
 separate planned item. When TTS is configured, assistant audio is returned as
-`response.audio.delta` and stored under `data/artifacts/realtime/`. Realtime
-sessions use an internal turn state module to track buffered audio, pending text,
-audio format, and active responses. Every assistant text turn and TTS run is
-logged in SQLite `model_runs` for latency review.
+`response.audio.delta`, queued in the browser playback control on `/voice`, and
+stored under `data/artifacts/realtime/`. Use the transport Play button to enable
+or pause assistant audio playback and the Volume slider to set playback level.
+Realtime sessions use an internal turn state module to track buffered audio,
+pending text, audio format, and active responses. Every assistant text turn and
+TTS run is logged in SQLite `model_runs` for latency review.
 
 A minimal text event looks like:
 
@@ -143,7 +145,7 @@ The workbench includes the voice rail, realtime call surface, browser text
 console for `/v1/realtime`, transcript streaming, right inspector with voice
 settings, privacy, local model state, session history, memory/coaching toggles,
 and bottom transport controls for mic state, pause/private mode, interrupt,
-playback state, volume, and session timer. The Voice Playground text-to-speech
+browser playback, volume, and session timer. The Voice Playground text-to-speech
 control calls `POST /api/voice/playground/tts`; the speech-to-text control uploads
 a local audio file to `POST /api/voice/playground/stt`; the model response control
 calls `POST /api/voice/playground/model`. These paths log latency in `model_runs`

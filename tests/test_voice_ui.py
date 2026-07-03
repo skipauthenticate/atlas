@@ -49,9 +49,12 @@ class VoiceUiStaticTests(unittest.TestCase):
         tablet_transport = self._css_block(tablet, ".voice-transport")
         mobile_titlebar = self._css_block(mobile, ".voice-titlebar")
         mobile_transport = self._css_block(mobile, ".voice-transport")
-        mobile_transport_label = self._css_block(mobile, ".voice-transport label")
-        mobile_transport_range = self._css_block(
-            mobile, '.voice-transport input[type="range"]'
+        mobile_transport_group = self._css_block(
+            mobile,
+            ".voice-transport label,\n  .voice-playback-status,\n  .voice-transport audio",
+        )
+        mobile_transport_range_group = self._css_block(
+            mobile, '.voice-transport input[type="range"],\n  .voice-transport audio'
         )
         mobile_waveform = self._css_block(mobile, ".voice-waveform")
 
@@ -59,9 +62,9 @@ class VoiceUiStaticTests(unittest.TestCase):
         self.assertIn("flex-wrap: wrap", tablet_transport)
         self.assertIn("display: grid", mobile_titlebar)
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", mobile_transport)
-        self.assertIn("grid-column: 1 / -1", mobile_transport_label)
-        self.assertIn("min-width: 0", mobile_transport_label)
-        self.assertIn("width: 100%", mobile_transport_range)
+        self.assertIn("grid-column: 1 / -1", mobile_transport_group)
+        self.assertIn("min-width: 0", mobile_transport_group)
+        self.assertIn("width: 100%", mobile_transport_range_group)
         self.assertIn("grid-template-columns: repeat(12, minmax(3px, 1fr))", mobile_waveform)
 
     def test_voice_playground_sections_are_not_card_framed(self) -> None:

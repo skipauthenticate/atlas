@@ -27,6 +27,16 @@
     return `${scheme}//${window.location.host}${path}`;
   }
 
+  function audioUrlFromDelta(delta, mediaType) {
+    const binary = atob(delta || '');
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const blob = new Blob([bytes], { type: mediaType || 'audio/wav' });
+    return URL.createObjectURL(blob);
+  }
+
   window.addEventListener('DOMContentLoaded', () => {
     const root = document.querySelector('[data-voice-console="true"]');
     if (!root) return;
@@ -38,11 +48,49 @@
     const submit = document.getElementById('voice-prompt-submit');
     const transcript = root.querySelector('[data-transcript-stream]');
     const connection = root.querySelector('[data-voice-connection]');
+    const audio = root.querySelector('[data-response-audio]');
+    const playbackStatus = root.querySelector('[data-playback-status]');
     const pending = [];
+    const playbackQueue = [];
     let socket = null;
     let assistantText = null;
+    let playbackEnabled = false;
+    let currentAudioUrl = null;
 
     if (!form || !input || !submit || !transcript) return;
+
+    function setPlaybackStatus(state) {
+      if (playbackStatus) playbackStatus.textContent = state;
+    }
+
+    function revokeCurrentAudioUrl() {
+      if (!currentAudioUrl) return;
+      URL.revokeObjectURL(currentAudioUrl);
+      currentAudioUrl = null;
+    }
+
+    function playNextAudio() {
+      if (!audio || !playbackEnabled || currentAudioUrl || playbackQueue.length === 0) return;
+      currentAudioUrl = playbackQueue.shift();
+      audio.src = currentAudioUrl;
+      setPlaybackStatus('playing assistant audio');
+      audio.play().catch(() => {
+        setPlaybackStatus('playback blocked');
+        revokeCurrentAudioUrl();
+      });
+    }
+
+    audio?.addEventListener('ended', () => {
+      revokeCurrentAudioUrl();
+      setPlaybackStatus(playbackQueue.length ? 'audio queued' : 'playback idle');
+      playNextAudio();
+    });
+
+    audio?.addEventListener('error', () => {
+      revokeCurrentAudioUrl();
+      setPlaybackStatus('playback error');
+      playNextAudio();
+    });
 
     function connect() {
       if (!enabled) return null;
@@ -74,6 +122,24 @@
         }
         if (payload.type === 'response.text.done' && assistantText) {
           assistantText.textContent = payload.text || assistantText.textContent;
+          return;
+        }
+        if (payload.type === 'response.audio.delta' && payload.delta) {
+          playbackQueue.push(audioUrlFromDelta(payload.delta, payload.media_type));
+          setPlaybackStatus('audio queued');
+          playNextAudio();
+          return;
+        }
+        if (payload.type === 'response.audio.done') {
+          if (payload.status === 'skipped') setPlaybackStatus('no assistant audio');
+          else if (!currentAudioUrl && playbackQueue.length === 0) setPlaybackStatus('audio ready');
+          return;
+        }
+        if (payload.type === 'response.interrupted') {
+          playbackQueue.length = 0;
+          audio?.pause();
+          revokeCurrentAudioUrl();
+          setPlaybackStatus('playback interrupted');
           return;
         }
         if (payload.type === 'response.done') {
@@ -199,13 +265,26 @@
 
       controls.get('play')?.addEventListener('click', () => {
         const button = controls.get('play');
-        const pressed = button?.getAttribute('aria-pressed') !== 'true';
-        togglePressed(button, pressed);
+        playbackEnabled = button?.getAttribute('aria-pressed') !== 'true';
+        togglePressed(button, playbackEnabled);
+        setPlaybackStatus(playbackEnabled ? 'playback enabled' : 'playback paused');
+        if (!playbackEnabled) {
+          audio?.pause();
+          return;
+        }
+        if (audio && currentAudioUrl && audio.paused) {
+          audio.play().catch(() => setPlaybackStatus('playback blocked'));
+          return;
+        }
+        playNextAudio();
       });
 
       volume?.addEventListener('input', () => {
         if (volumeOutput) volumeOutput.textContent = volume.value;
+        if (audio) audio.volume = Number(volume.value) / 100;
       });
+
+      if (audio && volume) audio.volume = Number(volume.value) / 100;
     }
 
     const playground = root.querySelector('[data-tts-playground]');

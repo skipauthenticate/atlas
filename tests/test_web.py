@@ -541,6 +541,35 @@ class WebTests(unittest.TestCase):
             self.assertIn('aria-pressed="false"', response.text)
             self.assertNotIn('data-transport-action="mic" disabled', response.text)
 
+    def test_voice_console_exposes_browser_playback_ui(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('data-response-audio', response.text)
+            self.assertIn('aria-label="Assistant audio playback"', response.text)
+            self.assertIn('preload="none"', response.text)
+            self.assertIn('data-playback-status', response.text)
+
     def test_voice_static_script_handles_transport_state(self) -> None:
         script = Path("atlas_voice/web/static/voice.js").read_text()
 
@@ -550,6 +579,22 @@ class WebTests(unittest.TestCase):
         self.assertIn("data-voice-timer", script)
         self.assertIn("response.cancel", script)
         self.assertIn("setInterval", script)
+
+    def test_voice_static_script_handles_browser_audio_playback(self) -> None:
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+
+        self.assertIn("data-response-audio", script)
+        self.assertIn("data-playback-status", script)
+        self.assertIn("response.audio.delta", script)
+        self.assertIn("atob", script)
+        self.assertIn("Blob", script)
+        self.assertIn("URL.createObjectURL", script)
+        self.assertIn("URL.revokeObjectURL", script)
+        self.assertIn("audio.play", script)
+        self.assertIn("playbackQueue", script)
+        self.assertIn("audio.volume =", script)
+        self.assertIn("response.audio.done", script)
+        self.assertIn("response.interrupted", script)
 
     def test_voice_console_exposes_stt_playground(self) -> None:
         with TemporaryDirectory() as tmp:

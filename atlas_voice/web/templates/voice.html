@@ -200,6 +200,8 @@
       <button type="button" data-transport-action="interrupt" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Interrupt</button>
       <button type="button" data-transport-action="play" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Play</button>
       <label><span>Volume</span><input type="range" min="0" max="100" value="70" data-transport-volume {% if not assistant_enabled %}disabled{% endif %}><output data-volume-output>70</output></label>
+      <span class="voice-playback-status" data-playback-status>playback idle</span>
+      <audio data-response-audio aria-label="Assistant audio playback" preload="none"></audio>
       <time data-voice-timer>00:00</time>
     </footer>
   </div>

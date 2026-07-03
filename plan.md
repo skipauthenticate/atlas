@@ -469,7 +469,7 @@ Status: backend MVP complete; UI and richer realtime behavior remain.
 - [x] Add interruption events.
 - [x] Add error events.
 - [x] First support typed user input -> local Qwen-compatible LLM -> local TTS path.
-- [ ] Add browser playback UI.
+- [x] Add browser playback UI.
 - [x] Persist every turn.
 - [x] Persist every model run with enough metadata to debug latency and quality.
 - [ ] Add response cancellation.
