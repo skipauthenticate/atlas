@@ -356,6 +356,16 @@ The `/voice` Coaching Goals panel lists active goals, target dates, tracked
 metrics, next actions, latest feedback scores, and feedback counts. The panel can
 create goals and mark them completed or archived without starting model work.
 
+Review recent privacy events in the Voice inspector or as JSON:
+
+```bash
+curl http://127.0.0.1:8787/api/privacy/events
+```
+
+The `/voice` Privacy panel shows local-only status, severity counts, recent
+privacy audit/purge/retention events, and compact metadata summaries. The view is
+read-only and uses bounded recent event queries.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,

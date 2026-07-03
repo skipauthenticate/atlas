@@ -1074,6 +1074,75 @@ code {
   background: #912018;
 }
 
+.voice-privacy-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.voice-privacy-summary span {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fbfcfe;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.voice-inspector h3 {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.voice-privacy-list {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-privacy-event {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid #98a2b3;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.voice-privacy-event.privacy-event-warning {
+  border-left-color: #dc6803;
+}
+
+.voice-privacy-event.privacy-event-error {
+  border-left-color: #b42318;
+}
+
+.voice-privacy-event div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.voice-privacy-event strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.voice-privacy-event small,
+.voice-privacy-event em {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.voice-privacy-event p {
+  margin: 0;
+  font-size: 13px;
+}
+
 .voice-goal-summary {
   display: flex;
   flex-wrap: wrap;

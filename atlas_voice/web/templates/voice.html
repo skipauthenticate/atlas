@@ -127,10 +127,32 @@
     </section>
 
     <aside class="voice-inspector" aria-label="Voice inspector">
-      <section>
+      <section id="voice-privacy" data-privacy-events>
         <h2>Privacy</h2>
         <strong class="privacy-state privacy-{{ status.privacy.status }}">{{ status.privacy.status }}</strong>
         <small>{{ status.privacy.issue_count }} local-only issues</small>
+        <div class="voice-privacy-summary">
+          {% for severity, count in privacy_events.severity_counts.items() %}
+            <span>{{ count }} {{ severity }}</span>
+          {% else %}
+            <span>0 events</span>
+          {% endfor %}
+        </div>
+        <h3>Privacy Events</h3>
+        <div class="voice-privacy-list">
+          {% for event in privacy_events.events %}
+            <article class="voice-privacy-event privacy-event-{{ event.severity }}">
+              <div>
+                <strong>{{ event.event_type }}</strong>
+                <small>{{ event.created_at_display }} · {{ event.severity }}</small>
+              </div>
+              <p>{{ event.message }}</p>
+              {% if event.metadata_summary %}<em>{{ event.metadata_summary }}</em>{% endif %}
+            </article>
+          {% else %}
+            <div class="empty tight">No privacy events.</div>
+          {% endfor %}
+        </div>
       </section>
 
       <section id="voice-settings">

@@ -326,10 +326,48 @@ def voice_console(request: Request) -> Response:
             "ambient_timeline": ambient_timeline,
             "voice_settings": _voice_settings_view(),
             "memory_items": _memory_item_views(db.list_memory_items(limit=8)),
+            "privacy_events": _privacy_events_view(limit=8),
             "coaching_goals": _coaching_goals_view(status="active"),
             "coaching_progress": _coaching_progress_view(),
         },
     )
+
+
+def _privacy_events_view(limit: int = 20) -> dict[str, Any]:
+    events = db.list_privacy_events(limit=max(min(limit, 500), 1))
+    severity_counts: dict[str, int] = {}
+    event_views = [_privacy_event_view(event) for event in events]
+    for event in event_views:
+        severity = str(event.get("severity") or "info")
+        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+    return {
+        "status": "ok",
+        "event_count": len(event_views),
+        "severity_counts": severity_counts,
+        "events": event_views,
+    }
+
+
+def _privacy_event_view(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **event,
+        "created_at_display": _timestamp_label(_parse_timestamp(event.get("created_at"))),
+        "metadata_summary": _metadata_summary(event.get("metadata") or {}),
+    }
+
+
+def _metadata_summary(metadata: dict[str, Any]) -> str:
+    parts = []
+    for key in sorted(metadata):
+        value = metadata[key]
+        if isinstance(value, list):
+            value_label = f"{len(value)} item(s)"
+        elif isinstance(value, dict):
+            value_label = f"{len(value)} field(s)"
+        else:
+            value_label = str(value)
+        parts.append(f"{key}={value_label}")
+    return ", ".join(parts)
 
 
 def _coaching_goals_view(status: str | None = "active", limit: int = 50) -> dict[str, Any]:
@@ -833,6 +871,11 @@ def retry_recording(recording_id: str) -> Response:
         raise HTTPException(status_code=404, detail="Recording not found")
     db.retry_recording(recording_id)
     return RedirectResponse(f"/recordings/{recording_id}", status_code=303)
+
+
+@app.get("/api/privacy/events")
+def api_privacy_events(limit: int = 20) -> JSONResponse:
+    return JSONResponse(_privacy_events_view(limit=max(min(limit, 500), 1)))
 
 
 @app.get("/api/coaching/goals")

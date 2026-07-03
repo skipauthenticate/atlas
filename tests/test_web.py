@@ -360,6 +360,67 @@ class WebTests(unittest.TestCase):
             self.assertIn("mic", response.text)
             self.assertIn("file", response.text)
 
+    def test_voice_console_shows_recent_privacy_events(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            purge_id = web_app.db.log_privacy_event(
+                "privacy.purge",
+                "Purged 2 privacy session(s).",
+                severity="warning",
+                metadata={"session_count": 2, "artifact_count": 1},
+            )
+            audit_id = web_app.db.log_privacy_event(
+                "privacy.audit_egress",
+                "Local-only status: ok",
+                metadata={"issue_count": 0},
+            )
+            with web_app.db.connect() as conn:
+                conn.execute(
+                    "UPDATE privacy_events SET created_at = ? WHERE id = ?",
+                    ("2026-07-01T10:00:00+00:00", audit_id),
+                )
+                conn.execute(
+                    "UPDATE privacy_events SET created_at = ? WHERE id = ?",
+                    ("2026-07-02T10:00:00+00:00", purge_id),
+                )
+            client = TestClient(web_app.app)
+
+            api_response = client.get("/api/privacy/events")
+            voice_response = client.get("/voice")
+
+            self.assertEqual(api_response.status_code, 200)
+            payload = api_response.json()
+            self.assertEqual(payload["event_count"], 2)
+            self.assertEqual(payload["events"][0]["event_type"], "privacy.purge")
+            self.assertEqual(payload["events"][0]["severity"], "warning")
+            self.assertEqual(payload["events"][0]["metadata_summary"], "artifact_count=1, session_count=2")
+            self.assertEqual(payload["severity_counts"]["warning"], 1)
+            self.assertEqual(payload["severity_counts"]["info"], 1)
+            self.assertEqual(voice_response.status_code, 200)
+            self.assertIn('data-privacy-events', voice_response.text)
+            self.assertIn("Privacy Events", voice_response.text)
+            self.assertIn("privacy.purge", voice_response.text)
+            self.assertIn("Purged 2 privacy session(s).", voice_response.text)
+            self.assertIn("warning", voice_response.text)
+            self.assertIn("artifact_count=1, session_count=2", voice_response.text)
+
     def test_voice_console_shows_coaching_progress_dashboard(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
