@@ -378,6 +378,12 @@ API. `Database.record_skill_score(...)` writes bounded progress measurements to
 count, and reporting period. Use `Database.list_skill_scores(...)` to retrieve
 scores by goal, domain, or metric for future dashboards and reports.
 
+Local prompt and rubric registry files live in `config/prompts/*.yaml`. Each file
+defines a `prompts` mapping with id, name, domain, system text, user text, and an
+optional rubric mapping. Load prompts programmatically with
+`load_prompt_registry()` or point `ATLAS_VOICE_PROMPTS_DIR` at another directory
+for deployment-specific overrides.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,

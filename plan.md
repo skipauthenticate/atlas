@@ -689,7 +689,7 @@ Current status:
 - [x] `.env` remains supported.
 - [x] `config/atlas.assistant.yaml` optional config loader exists.
 - [x] `config/atlas.assistant.example.yaml` exists.
-- [ ] `config/prompts/*.yaml`
+- [x] `config/prompts/*.yaml`
 - [ ] `config/tools/*.yaml`
 
 Target profile shape:
@@ -724,7 +724,7 @@ Current config support:
 - [x] Realtime audio sample rate/channel settings.
 - [x] Piper executable and voice settings.
 - [ ] Full profile-driven provider selection.
-- [ ] Prompt/rubric registry.
+- [x] Prompt/rubric registry.
 - [ ] Tool definition and permission registry.
 
 ## Local Model Strategy

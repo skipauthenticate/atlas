@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from atlas_voice.assistant_config import load_assistant_config
+from atlas_voice.prompts import PromptRegistryError, load_prompt_registry
 from atlas_voice.config import Settings
 
 
@@ -175,6 +176,50 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(settings.ambient_raw_audio_retention_days, 0)
         self.assertIsNone(settings.ambient_transcript_retention_days)
+
+    def test_prompt_registry_loads_default_and_custom_yaml_prompts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            prompts_dir = Path(tmp) / "config" / "prompts"
+            prompts_dir.mkdir(parents=True)
+            (prompts_dir / "custom.yaml").write_text(
+                "prompts:\n"
+                "  custom_reflection:\n"
+                "    name: Custom Reflection\n"
+                "    domain: coaching\n"
+                "    version: 1\n"
+                "    system: Ask one direct reflective question.\n"
+                "    user: Summarize the user's current goal.\n"
+                "    rubric:\n"
+                "      clarity: Check whether the ask is specific.\n"
+                "      follow_through: Check whether a next action exists.\n"
+            )
+
+            registry = load_prompt_registry(prompts_dir)
+
+        default_prompt = registry.get("direct_voice_assistant")
+        custom_prompt = registry.get("custom_reflection")
+        self.assertIn("direct_voice_assistant", registry.ids())
+        self.assertEqual(default_prompt.domain, "voice")
+        self.assertIn("private local realtime assistant", default_prompt.system.lower())
+        self.assertEqual(custom_prompt.name, "Custom Reflection")
+        self.assertEqual(custom_prompt.version, "1")
+        self.assertEqual(custom_prompt.rubric["clarity"], "Check whether the ask is specific.")
+        self.assertIn("Custom Reflection", registry.as_dict()["custom_reflection"]["name"])
+
+    def test_prompt_registry_rejects_invalid_prompt_yaml(self) -> None:
+        with TemporaryDirectory() as tmp:
+            prompts_dir = Path(tmp) / "prompts"
+            prompts_dir.mkdir()
+            (prompts_dir / "broken.yaml").write_text(
+                "prompts:\n"
+                "  broken:\n"
+                "    name: Broken\n"
+                "    domain: coaching\n"
+                "    system: Missing user template.\n"
+            )
+
+            with self.assertRaises(PromptRegistryError):
+                load_prompt_registry(prompts_dir)
 
     def test_assistant_config_loader_merges_yaml_with_defaults(self) -> None:
         with TemporaryDirectory() as tmp:
