@@ -1,21 +1,32 @@
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from atlas_voice.config import Settings
+from atlas_voice.anythingllm import (
+    AnythingLLMConfigError,
+    AnythingLLMError,
+    sync_recording_to_anythingllm,
+)
+from atlas_voice.config import Settings, dotenv_path
 from atlas_voice.database import Database, row_to_dict
 from atlas_voice.exporter import export_payload, export_recording
 from atlas_voice.merge import format_seconds
 from atlas_voice.pipeline import PipelineProcessor
 from atlas_voice.storage import safe_filename
+from atlas_voice.summarizer import get_template, list_templates, summary_to_sections
 
 
 settings = Settings.from_env()
@@ -43,14 +54,273 @@ templates.env.filters["timecode"] = format_seconds
 
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+ASR_PROVIDERS = ("whisperx", "parakeet", "canary", "vibevoice")
+DIARIZATION_PROVIDERS = ("pyannote", "transcript", "none")
+PROVIDER_DEFAULT_MODELS = {
+    "whisperx": "large-v3-turbo",
+    "parakeet": "nvidia/parakeet-tdt-0.6b-v3",
+    "canary": "nvidia/canary-1b-v2",
+    "vibevoice": "microsoft/VibeVoice-ASR",
+}
+COMMON_ASR_MODELS = (
+    "large-v3-turbo",
+    "large-v3",
+    "medium",
+    "small",
+    "base",
+    "tiny.en",
+    "nvidia/parakeet-tdt-0.6b-v3",
+    "nvidia/canary-1b-v2",
+    "microsoft/VibeVoice-ASR",
+)
+RUNTIME_ENV_KEYS = {
+    "ATLAS_VOICE_ASR_PROVIDER",
+    "ATLAS_VOICE_ASR_MODEL",
+    "ATLAS_VOICE_DIARIZATION_PROVIDER",
+    "ATLAS_VOICE_VIBEVOICE_MODEL",
+    "WHISPERX_MODEL",
+}
+
+
+def runtime_info(current_settings: Settings) -> dict[str, Any]:
+    device = current_settings.whisperx_device
+    accelerator = "GPU" if device != "cpu" else "CPU"
+    return {
+        "accelerator": accelerator,
+        "device": device,
+        "asr_provider": current_settings.asr_provider,
+        "asr_model": _effective_asr_model(current_settings),
+        "asr_model_value": _model_form_value(current_settings),
+        "asr_providers": ASR_PROVIDERS,
+        "asr_model_options": COMMON_ASR_MODELS,
+        "whisperx_model": current_settings.whisperx_model,
+        "compute_type": current_settings.whisperx_compute_type,
+        "diarization_provider": current_settings.diarization_provider,
+        "diarization_providers": DIARIZATION_PROVIDERS,
+        "pyannote_model": current_settings.pyannote_model,
+    }
+
+
+def _effective_asr_model(current_settings: Settings) -> str:
+    provider = current_settings.asr_provider
+    if provider == "whisperx":
+        return current_settings.whisperx_model
+    if current_settings.asr_model:
+        return current_settings.asr_model
+    if provider == "vibevoice":
+        return current_settings.vibevoice_model
+    return PROVIDER_DEFAULT_MODELS.get(provider, current_settings.whisperx_model)
+
+
+def _model_form_value(current_settings: Settings) -> str:
+    return _effective_asr_model(current_settings)
+
+
+def _runtime_env_values(provider: str, model: str, diarization: str) -> dict[str, str]:
+    values = {
+        "ATLAS_VOICE_ASR_PROVIDER": provider,
+        "ATLAS_VOICE_DIARIZATION_PROVIDER": diarization,
+    }
+    if provider == "whisperx":
+        values["WHISPERX_MODEL"] = model or PROVIDER_DEFAULT_MODELS["whisperx"]
+        values["ATLAS_VOICE_ASR_MODEL"] = ""
+    elif provider == "vibevoice":
+        values["ATLAS_VOICE_VIBEVOICE_MODEL"] = model or PROVIDER_DEFAULT_MODELS["vibevoice"]
+        values["ATLAS_VOICE_ASR_MODEL"] = ""
+    else:
+        default_model = PROVIDER_DEFAULT_MODELS[provider]
+        values["ATLAS_VOICE_ASR_MODEL"] = "" if model in {"", default_model} else model
+    return values
+
+
+def _write_dotenv_values(values: dict[str, str]) -> None:
+    unsafe = set(values) - RUNTIME_ENV_KEYS
+    if unsafe:
+        raise ValueError(f"Unsupported runtime setting keys: {sorted(unsafe)}")
+
+    path = dotenv_path()
+    lines = path.read_text().splitlines() if path.exists() else []
+    remaining = dict(values)
+    updated: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            updated.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in remaining:
+            updated.append(f"{key}={_clean_env_value(remaining.pop(key))}")
+        else:
+            updated.append(line)
+
+    if remaining and updated and updated[-1].strip():
+        updated.append("")
+    for key, value in remaining.items():
+        updated.append(f"{key}={_clean_env_value(value)}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(updated).rstrip() + "\n")
+
+
+def _clean_env_value(value: str) -> str:
+    return value.replace("\n", " ").replace("\r", " ").strip()
+
+
+def _refresh_runtime_settings() -> None:
+    global settings, processor
+    settings = Settings.from_env()
+    settings.ensure_directories()
+    processor = PipelineProcessor(settings, db)
+
+
+def _restart_worker_if_idle() -> str:
+    if _running_job_count() > 0:
+        return "pending"
+    if shutil.which("systemctl") is None:
+        return "manual"
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "restart", "atlas-voice-worker.service"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=15,
+            check=False,
+        )
+    except Exception:
+        return "manual"
+    return "restarted" if result.returncode == 0 else "manual"
+
+
+def _running_job_count() -> int:
+    with db.connect() as conn:
+        row = conn.execute("SELECT COUNT(*) AS count FROM jobs WHERE status = 'running'").fetchone()
+    return int(row["count"] if row else 0)
+
+
+def _runtime_settings_message(status: str | None, worker: str | None) -> str | None:
+    if status != "saved":
+        return None
+    if worker == "restarted":
+        return "Runtime settings saved. Worker restarted."
+    if worker == "pending":
+        return "Runtime settings saved. Worker restart deferred because a job is running."
+    return "Runtime settings saved. Restart the worker to apply them."
+
+
+def _anythingllm_message(status: str | None, error: str | None) -> dict[str, str] | None:
+    if status == "synced":
+        return {"kind": "ok", "text": "Synced to AnythingLLM."}
+    if status == "not_configured":
+        return {
+            "kind": "error",
+            "text": "AnythingLLM sync is not configured. Set the API key and workspace slug.",
+        }
+    if status == "error":
+        safe_error = (error or "request failed").replace("\n", " ").replace("\r", " ")[:240]
+        return {"kind": "error", "text": f"AnythingLLM sync failed: {safe_error}"}
+    return None
+
+
+def job_views(rows: list[Any]) -> list[dict[str, Any]]:
+    return [_job_view(dict(row)) for row in rows]
+
+
+def _job_view(job: dict[str, Any]) -> dict[str, Any]:
+    started_at = _parse_timestamp(job.get("started_at"))
+    finished_at = _parse_timestamp(job.get("finished_at"))
+    duration_seconds: float | None = None
+    if started_at and finished_at:
+        duration_seconds = (finished_at - started_at).total_seconds()
+    elif started_at and job.get("status") == "running":
+        duration_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+
+    if duration_seconds is None:
+        duration_label = "not started"
+    elif job.get("status") == "running" and not finished_at:
+        duration_label = f"elapsed {format_seconds(duration_seconds)}"
+    else:
+        duration_label = format_seconds(duration_seconds)
+
+    return {
+        **job,
+        "duration_seconds": duration_seconds,
+        "duration_label": duration_label,
+        "started_at_display": _timestamp_label(started_at),
+        "finished_at_display": _timestamp_label(finished_at),
+    }
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _timestamp_label(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request) -> Response:
+def dashboard(
+    request: Request, runtime_settings: str | None = None, worker: str | None = None
+) -> Response:
     recordings = [dict(row) for row in db.list_recordings()]
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"recordings": recordings},
+        {
+            "recordings": recordings,
+            "runtime": runtime_info(settings),
+            "runtime_settings_message": _runtime_settings_message(runtime_settings, worker),
+        },
+    )
+
+
+@app.post("/settings/runtime")
+def update_runtime_settings(
+    asr_provider: str = Form(...),
+    asr_model: str = Form(""),
+    diarization_provider: str = Form(...),
+) -> Response:
+    provider = asr_provider.strip().lower()
+    diarization = diarization_provider.strip().lower()
+    if provider not in ASR_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unknown ASR provider")
+    if diarization not in DIARIZATION_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unknown diarization provider")
+
+    model = asr_model.strip()
+    if provider != settings.asr_provider and model == _effective_asr_model(settings):
+        model = ""
+    provider_changed = provider != settings.asr_provider
+    if (
+        provider == "vibevoice"
+        and provider_changed
+        and diarization == settings.diarization_provider
+    ):
+        diarization = "transcript"
+    if (
+        provider != "vibevoice"
+        and provider_changed
+        and diarization == "transcript"
+        and diarization == settings.diarization_provider
+    ):
+        diarization = "pyannote"
+
+    values = _runtime_env_values(provider, model, diarization)
+    _write_dotenv_values(values)
+    os.environ.update(values)
+    _refresh_runtime_settings()
+    worker_state = _restart_worker_if_idle()
+    return RedirectResponse(
+        f"/?runtime_settings=saved&worker={worker_state}", status_code=303
     )
 
 
@@ -68,20 +338,73 @@ def upload_audio(file: UploadFile = File(...)) -> Response:
 
 
 @app.get("/recordings/{recording_id}", response_class=HTMLResponse)
-def recording_detail(request: Request, recording_id: str) -> Response:
+def recording_detail(
+    request: Request,
+    recording_id: str,
+    anythingllm: str | None = None,
+    anythingllm_error: str | None = None,
+) -> Response:
     recording = row_to_dict(db.get_recording(recording_id))
     if recording is None:
         raise HTTPException(status_code=404, detail="Recording not found")
+    summary = db.get_summary(recording_id)
+    preferred_template_id = db.get_recording_template(recording_id)
+    summary_template_id = summary.get("template_id") if summary else None
+    selected_template_id = preferred_template_id or summary_template_id or "meeting"
+    preferred_template = get_template(selected_template_id) or get_template("meeting")
+
+    # Check if a summary is being regenerated (old template in use, new template set)
+    # If so, keep the cached summary but note the pending change
+    cached_summary = summary  # existing summary (may be None)
+    is_resummarizing = (
+        summary is not None
+        and preferred_template_id
+        and preferred_template is not None
+        and summary.get("template_id") != preferred_template_id
+    )
+
     return templates.TemplateResponse(
         request,
         "recording.html",
         {
             "recording": recording,
-            "jobs": [dict(row) for row in db.jobs_for_recording(recording_id)],
+            "runtime": runtime_info(settings),
+            "jobs": job_views(db.jobs_for_recording(recording_id)),
             "segments": db.get_segments(recording_id),
-            "summary": db.get_summary(recording_id),
+            "summary": summary,
+            "summary_sections": summary_to_sections(summary["text"]) if summary else [],
+            "cached_summary": cached_summary,
+            "cached_summary_sections": (
+                summary_to_sections(cached_summary["text"]) if cached_summary else []
+            ),
+            "is_resummarizing": is_resummarizing,
+            "all_templates": {tid: tpl.to_dict() for tid, tpl in list_templates().items()},
+            "preferred_template_id": selected_template_id,
+            "preferred_template": preferred_template.to_dict() if preferred_template else None,
+            "anythingllm_workspace_slug": settings.anythingllm_workspace_slug,
+            "anythingllm_message": _anythingllm_message(anythingllm, anythingllm_error),
         },
     )
+
+
+@app.post("/recordings/{recording_id}/sync-anythingllm")
+def sync_anythingllm(recording_id: str) -> Response:
+    if db.get_recording(recording_id) is None:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    try:
+        sync_recording_to_anythingllm(db, recording_id, settings)
+    except AnythingLLMConfigError:
+        return RedirectResponse(
+            f"/recordings/{recording_id}?anythingllm=not_configured",
+            status_code=303,
+        )
+    except (ValueError, AnythingLLMError) as exc:
+        message = quote(str(exc)[:240])
+        return RedirectResponse(
+            f"/recordings/{recording_id}?anythingllm=error&anythingllm_error={message}",
+            status_code=303,
+        )
+    return RedirectResponse(f"/recordings/{recording_id}?anythingllm=synced", status_code=303)
 
 
 @app.post("/recordings/{recording_id}/retry")
@@ -98,7 +421,7 @@ def search(request: Request, q: str = "") -> Response:
     return templates.TemplateResponse(
         request,
         "search.html",
-        {"query": q, "results": results},
+        {"query": q, "results": results, "runtime": runtime_info(settings)},
     )
 
 
@@ -138,3 +461,70 @@ def normalized_audio(recording_id: str) -> FileResponse:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Template management endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/templates")
+def api_list_templates() -> JSONResponse:
+    """Return all available summary templates."""
+    templates = {tid: tpl.to_dict() for tid, tpl in list_templates().items()}
+    return JSONResponse({"templates": templates})
+
+
+@app.post("/recordings/{recording_id}/template")
+async def api_set_template(recording_id: str, request: Request) -> JSONResponse:
+    """Set the summary template for a recording and re-run only summarization."""
+    recording = db.get_recording(recording_id)
+    if recording is None:
+        return JSONResponse(
+            {"error": "Recording not found"}, status_code=404
+        )
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON body"}, status_code=400
+        )
+
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"error": "JSON body must be an object"}, status_code=400
+        )
+
+    template_id = body.get("template_id", "")
+    if not template_id:
+        return JSONResponse(
+            {"error": "template_id is required"}, status_code=400
+        )
+
+    template = get_template(template_id)
+    if template is None:
+        return JSONResponse(
+            {"error": f"Unknown template: {template_id}"}, status_code=400
+        )
+
+    db.set_recording_template(recording_id, template_id)
+
+    queued = db.reset_summary_job(recording_id)
+    if not queued and recording["status"] == "done":
+        db.enqueue_job(recording_id, "summarize")
+        db.update_recording(recording_id, status="queued", error=None)
+        queued = True
+
+    if queued:
+        message = f"Template changed to {template.name}; re-summarizing."
+    else:
+        message = f"Template changed to {template.name}; it will be used when summarization runs."
+
+    return JSONResponse({
+        "status": "ok",
+        "template_id": template_id,
+        "queued": queued,
+        "message": message,
+    })

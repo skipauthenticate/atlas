@@ -1,5 +1,30 @@
 {% extends "base.html" %}
 {% block title %}Recordings - Atlas Voice{% endblock %}
+
+{% block head_extra %}
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const provider = document.querySelector('[name="asr_provider"]');
+      const model = document.querySelector('[name="asr_model"]');
+      const diarization = document.querySelector('[name="diarization_provider"]');
+      const defaults = {
+        whisperx: 'large-v3-turbo',
+        parakeet: 'nvidia/parakeet-tdt-0.6b-v3',
+        canary: 'nvidia/canary-1b-v2',
+        vibevoice: 'microsoft/VibeVoice-ASR',
+      };
+      if (!provider || !model || !diarization) return;
+      provider.addEventListener('change', () => {
+        model.value = defaults[provider.value] || '';
+        if (provider.value === 'vibevoice') {
+          diarization.value = 'transcript';
+        } else if (diarization.value === 'transcript') {
+          diarization.value = 'pyannote';
+        }
+      });
+    });
+  </script>
+{% endblock %}
 {% block content %}
   <section class="panel">
     <div class="panel-heading">
@@ -12,6 +37,54 @@
         <button type="submit">Upload</button>
       </form>
     </div>
+    {% if runtime_settings_message %}
+      <div class="notice">{{ runtime_settings_message }}</div>
+    {% endif %}
+    <section class="runtime-summary" aria-label="Worker runtime">
+      <div>
+        <span>Compute</span>
+        <strong>{{ runtime.accelerator }}</strong>
+        <small>{{ runtime.device }} · {{ runtime.compute_type }}</small>
+      </div>
+      <div>
+        <span>ASR</span>
+        <strong>{{ runtime.asr_model }}</strong>
+        <small>{{ runtime.asr_provider }}</small>
+      </div>
+      <div>
+        <span>Diarization</span>
+        <strong>{{ runtime.pyannote_model if runtime.diarization_provider == "pyannote" else runtime.diarization_provider }}</strong>
+        <small>{{ runtime.diarization_provider }}</small>
+      </div>
+    </section>
+    <form class="runtime-settings" action="/settings/runtime" method="post">
+      <label>
+        <span>ASR provider</span>
+        <select name="asr_provider">
+          {% for provider in runtime.asr_providers %}
+            <option value="{{ provider }}" {% if runtime.asr_provider == provider %}selected{% endif %}>{{ provider }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Model</span>
+        <input type="text" name="asr_model" value="{{ runtime.asr_model_value }}" list="asr-models" autocomplete="off">
+        <datalist id="asr-models">
+          {% for model in runtime.asr_model_options %}
+            <option value="{{ model }}"></option>
+          {% endfor %}
+        </datalist>
+      </label>
+      <label>
+        <span>Diarization</span>
+        <select name="diarization_provider">
+          {% for provider in runtime.diarization_providers %}
+            <option value="{{ provider }}" {% if runtime.diarization_provider == provider %}selected{% endif %}>{{ provider }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Apply</button>
+    </form>
     {% if recordings %}
       <div class="recording-list">
         {% for recording in recordings %}

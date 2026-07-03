@@ -147,13 +147,6 @@ prepare_llm_model() {
     return
   fi
 
-  local default_path="/home/atlas/workspace/jetson-qwen/models/qwen3.6-35b-a3b-mtp/Qwen3.6-35B-A3B-MXFP4_MOE.gguf"
-  if [[ -f "$default_path" ]]; then
-    set_env LLM_MODEL_PATH "$default_path"
-    log "Using LLM model from $default_path"
-    return
-  fi
-
   local model_url
   model_url="$(get_env LLM_MODEL_URL)"
   if [[ -n "$model_url" ]]; then

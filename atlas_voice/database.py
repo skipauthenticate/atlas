@@ -98,6 +98,7 @@ class Database:
                     recording_id TEXT NOT NULL UNIQUE,
                     text TEXT NOT NULL,
                     model TEXT NOT NULL,
+                    template_id TEXT,
                     chunks_json TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
@@ -109,8 +110,50 @@ class Database:
                     speaker UNINDEXED,
                     text
                 );
+
+                CREATE TABLE IF NOT EXISTS recording_settings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recording_id TEXT NOT NULL UNIQUE,
+                    summary_template TEXT NOT NULL DEFAULT 'meeting',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                );
                 """
             )
+
+            # --- Migration helpers for existing databases ---
+            existing_tables = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+
+            if "recording_settings" not in existing_tables:
+                conn.execute(
+                    """
+                    CREATE TABLE recording_settings (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        recording_id TEXT NOT NULL UNIQUE,
+                        summary_template TEXT NOT NULL DEFAULT 'meeting',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                    )
+                    """
+                )
+
+            if "summaries" in existing_tables:
+                # Add template_id column if it doesn't exist
+                summary_cols = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(summaries)").fetchall()
+                }
+                if "template_id" not in summary_cols:
+                    conn.execute(
+                        "ALTER TABLE summaries ADD COLUMN template_id TEXT"
+                    )
 
     def create_recording(self, source_path: Path | str, title: str | None = None) -> str:
         recording_id = uuid.uuid4().hex
@@ -320,6 +363,44 @@ class Database:
                 (now, recording_id),
             )
 
+    def reset_summary_job(self, recording_id: str) -> bool:
+        """Reset the summarize job so it will be re-run next tick.
+
+        Returns True if a summarize job was found and reset.
+        """
+        now = utc_now()
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM jobs WHERE recording_id = ? AND step = 'summarize'",
+                (recording_id,),
+            ).fetchone()
+            if existing is None:
+                return False
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued',
+                    attempts = 0,
+                    error = NULL,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = ?
+                WHERE recording_id = ? AND step = 'summarize'
+                """,
+                (now, recording_id),
+            )
+            conn.execute(
+                """
+                UPDATE recordings
+                SET status = 'queued',
+                    error = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, recording_id),
+            )
+            return True
+
     def replace_segments(self, recording_id: str, segments: list[dict[str, Any]]) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM segments WHERE recording_id = ?", (recording_id,))
@@ -384,6 +465,7 @@ class Database:
         text: str,
         *,
         model: str,
+        template_id: str | None = None,
         chunks: list[dict[str, Any]] | None = None,
     ) -> None:
         now = utc_now()
@@ -391,15 +473,16 @@ class Database:
         with self.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO summaries (recording_id, text, model, chunks_json, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO summaries (recording_id, text, model, template_id, chunks_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(recording_id) DO UPDATE SET
                     text = excluded.text,
                     model = excluded.model,
+                    template_id = excluded.template_id,
                     chunks_json = excluded.chunks_json,
                     created_at = excluded.created_at
                 """,
-                (recording_id, text, model, chunks_json, now),
+                (recording_id, text, model, template_id, chunks_json, now),
             )
             conn.execute(
                 "DELETE FROM search_fts WHERE recording_id = ? AND kind = 'summary'",
@@ -423,9 +506,51 @@ class Database:
         return {
             "text": row["text"],
             "model": row["model"],
+            "template_id": row["template_id"],
             "chunks": json.loads(row["chunks_json"] or "[]"),
             "created_at": row["created_at"],
         }
+
+    def set_recording_template(
+        self, recording_id: str, template_id: str
+    ) -> None:
+        """Set or update the preferred summary template for a recording."""
+        now = utc_now()
+        with self.connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM recording_settings WHERE recording_id = ?",
+                (recording_id,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO recording_settings
+                        (recording_id, summary_template, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (recording_id, template_id, now, now),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE recording_settings
+                    SET summary_template = ?, updated_at = ?
+                    WHERE recording_id = ?
+                    """,
+                    (template_id, now, recording_id),
+                )
+
+    def get_recording_template(self, recording_id: str) -> str | None:
+        """Return the preferred template id for a recording, or None."""
+        try:
+            with self.connect() as conn:
+                row = conn.execute(
+                    "SELECT summary_template FROM recording_settings WHERE recording_id = ?",
+                    (recording_id,),
+                ).fetchone()
+            return row["summary_template"] if row else None
+        except Exception:
+            return None
 
     def search(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         match = self._fts_query(query)

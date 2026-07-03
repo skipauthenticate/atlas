@@ -9,6 +9,11 @@ if [[ -f .env ]]; then
   set +a
 fi
 for name in web worker; do
+  service_name="atlas-voice-${name}.service"
+  if systemctl --user is-active --quiet "$service_name" 2>/dev/null; then
+    echo "$name running via systemd service ${service_name}"
+    continue
+  fi
   pid_file=".run/${name}.pid"
   if [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
     echo "$name running pid=$(cat "$pid_file")"
