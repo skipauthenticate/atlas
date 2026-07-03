@@ -440,7 +440,7 @@ Status: complete.
 
 ### Phase 3: ElevenLabs-Inspired Voice UI
 
-Status: remaining.
+Status: partial.
 
 - [x] Add `/voice` as the main assistant console.
 - [x] Add left rail: Home, Voice, Ambient, Memory, Coaching, Search, Settings.
