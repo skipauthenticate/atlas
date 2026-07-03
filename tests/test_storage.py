@@ -7,7 +7,7 @@ from atlas_voice.database import Database
 from atlas_voice.storage import FileStorage
 
 
-def test_settings(root: Path) -> Settings:
+def make_test_settings(root: Path) -> Settings:
     return Settings(
         host="127.0.0.1",
         port=8787,
@@ -31,7 +31,7 @@ class StorageTests(unittest.TestCase):
     def test_ingest_detects_duplicate_sha256(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            settings = test_settings(root)
+            settings = make_test_settings(root)
             settings.ensure_directories()
             db = Database(settings.db_path)
             db.initialize()
