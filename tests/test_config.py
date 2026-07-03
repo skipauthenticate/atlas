@@ -34,6 +34,23 @@ class ConfigTests(unittest.TestCase):
 
         self.assertTrue(settings.assistant_enabled)
 
+    def test_exact_tts_base_url_flag_overrides_namespaced_alias(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_TTS_BASE_URL": "http://127.0.0.1:8008/v1/audio/speech",
+                "ATLAS_VOICE_TTS_BASE_URL": "http://127.0.0.1:9999/v1/audio/speech",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(settings.tts_base_url, "http://127.0.0.1:8008/v1/audio/speech")
+
     def test_from_env_loads_dotenv_without_overriding_environment(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
