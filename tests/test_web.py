@@ -21,6 +21,7 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
             os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
@@ -180,6 +181,66 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["components"]["tts"]["status"], "error")
             self.assertIn("faster-qwen3-tts-0.6b", payload["components"]["tts"]["detail"])
             self.assertIn("tts", payload["issues"][0]["component"])
+
+    def test_assistant_privacy_api_reports_local_only_status(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/api/assistant/privacy")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(payload["local_only"])
+            self.assertEqual(payload["issue_count"], 0)
+            self.assertIn("pause", payload["controls"])
+            self.assertIn("audit_egress", payload["controls"])
+
+    def test_assistant_privacy_api_surfaces_external_endpoint_errors(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "https://api.example.com/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/api/assistant/privacy")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "error")
+            self.assertFalse(payload["local_only"])
+            self.assertIn("llm_base_url", {issue["check"] for issue in payload["issues"]})
 
     def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
         with TemporaryDirectory() as tmp:

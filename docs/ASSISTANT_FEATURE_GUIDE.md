@@ -21,6 +21,12 @@ assistant health endpoint when validating voice features:
 curl -fsS http://127.0.0.1:8787/api/assistant/health | python -m json.tool
 ```
 
+Focused privacy status is also available at:
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/assistant/privacy | python -m json.tool
+```
+
 The assistant health payload includes:
 
 - `status`: `ok`, `degraded`, or `error`.

@@ -27,6 +27,7 @@ from atlas_voice.database import Database, row_to_dict
 from atlas_voice.exporter import export_payload, export_recording
 from atlas_voice.merge import format_seconds
 from atlas_voice.pipeline import PipelineProcessor
+from atlas_voice.privacy import privacy_summary
 from atlas_voice.realtime import (
     REALTIME_SYSTEM_PROMPT,
     audio_delta_payload,
@@ -907,6 +908,23 @@ def api_assistant_sessions(
             "mode": normalized_mode,
             "limit": safe_limit,
             "status": status,
+        }
+    )
+
+
+@app.get("/api/assistant/privacy")
+def api_assistant_privacy() -> JSONResponse:
+    summary = privacy_summary(settings, assistant_config)
+    return JSONResponse(
+        {
+            **summary,
+            "local_only": summary["status"] == "ok",
+            "controls": [
+                "pause",
+                "private_mode",
+                "audit_egress",
+                "transcript_only_retention",
+            ],
         }
     )
 

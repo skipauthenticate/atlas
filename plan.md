@@ -839,7 +839,7 @@ Suggested controls:
 - [x] `/v1/realtime`
 - [x] `/api/assistant/health`
 - [x] `/api/assistant/sessions`
-- [ ] `/api/assistant/privacy`
+- [x] `/api/assistant/privacy`
 - [x] `/api/status`
 - [x] `/api/ambient/sessions`
 
