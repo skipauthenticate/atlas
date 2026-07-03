@@ -572,13 +572,13 @@ Status: CLI/API MVP complete; speaker-aware ambient utterance storage exists; UI
 
 ### Phase 7: Coaching, Memory, And Observability
 
-Status: remaining, except basic observability, durable memory item storage, SQLite FTS memory retrieval, and ambient memory extraction exist.
+Status: remaining, except basic observability, durable memory item storage, SQLite FTS memory retrieval, and ambient/direct voice memory extraction exist.
 
 - [x] Use SQLite FTS first for memory retrieval.
 - [ ] Add `sqlite-vec` later for semantic memory if needed.
 - [x] Add `memory_items` table.
 - [x] Add memory extraction from ambient sessions.
-- [ ] Add memory extraction from direct voice sessions.
+- [x] Add memory extraction from direct voice sessions.
 - [ ] Add memory inspect/edit/delete UI.
 - [ ] Generate daily local-only coaching summaries.
 - [ ] Generate weekly local-only coaching summaries.
@@ -893,7 +893,7 @@ Suggested controls:
 - [x] Unit tests for ambient session processing.
 - [x] Unit tests for faster-qwen3-tts sidecar client.
 - [x] Unit tests for privacy purge.
-- [ ] Unit tests for memory extraction and retrieval.
+- [x] Unit tests for memory extraction and retrieval.
 
 ### Integration Tests
 

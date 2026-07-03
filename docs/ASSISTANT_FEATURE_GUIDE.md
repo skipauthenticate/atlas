@@ -275,18 +275,21 @@ Programmatic memory storage is available through `Database.create_memory_item`,
 `Database.get_memory_item`, and `Database.list_memory_items`. Local retrieval uses
 SQLite FTS5 through `Database.search_memory_items`, filtering out memories outside
 their validity window and ranking matches locally without an external vector
-service. Ambient and meeting sessions can extract explicit durable memory cues
-locally without calling a large LLM for every utterance:
+service. Ambient, meeting, and direct voice sessions can extract explicit durable
+memory cues locally without calling a large LLM for every utterance:
 
 ```bash
 atlas-voice memory extract-ambient --session <session_id>
 atlas-voice memory extract-ambient --session <session_id> --yes
+atlas-voice memory extract-direct --session <session_id>
+atlas-voice memory extract-direct --session <session_id> --yes
 ```
 
-The command is dry-run by default and currently stores explicit cues such as
-`remember that ...` and `I prefer ...` as local memory items. Direct voice
-extraction, vector search, and UI workflows are intentionally still separate
-follow-up items.
+The commands are dry-run by default and currently store explicit cues such as
+`remember that ...` and `I prefer ...` as local memory items. Ambient and direct
+voice memories use separate source types so future UI and retention controls can
+filter them independently. Vector search and UI workflows are intentionally still
+separate follow-up items.
 
 ## Jetson Operating Notes
 

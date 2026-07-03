@@ -23,7 +23,11 @@ from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
 from .privacy import privacy_summary
-from .memory import extract_memories_from_ambient_session
+from .memory import (
+    MemoryExtractionResult,
+    extract_memories_from_ambient_session,
+    extract_memories_from_direct_voice_session,
+)
 from .retention import apply_ambient_retention
 from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
 from .storage import is_audio_file
@@ -106,6 +110,14 @@ def build_parser() -> argparse.ArgumentParser:
     memory_extract_ambient.add_argument("--limit", type=int, default=20, help="Maximum candidates")
     memory_extract_ambient.add_argument("--yes", action="store_true", help="Actually store candidates")
     memory_extract_ambient.set_defaults(func=cmd_memory_extract_ambient)
+    memory_extract_direct = memory_subparsers.add_parser(
+        "extract-direct",
+        help="Dry-run or store memory candidates from a direct voice session",
+    )
+    memory_extract_direct.add_argument("--session", required=True, help="Direct voice session id")
+    memory_extract_direct.add_argument("--limit", type=int, default=20, help="Maximum candidates")
+    memory_extract_direct.add_argument("--yes", action="store_true", help="Actually store candidates")
+    memory_extract_direct.set_defaults(func=cmd_memory_extract_direct)
 
     ambient = subparsers.add_parser("ambient", help="Run the ambient listener MVP")
     ambient.add_argument(
@@ -432,7 +444,35 @@ def cmd_memory_extract_ambient(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    return _print_memory_extraction_result(
+        result,
+        skipped_message="session mode is not eligible for ambient memory extraction",
+    )
 
+
+def cmd_memory_extract_direct(args: argparse.Namespace) -> int:
+    _settings, db = settings_and_db()
+    try:
+        result = extract_memories_from_direct_voice_session(
+            db,
+            args.session,
+            dry_run=not args.yes,
+            max_items=args.limit,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return _print_memory_extraction_result(
+        result,
+        skipped_message="session mode is not eligible for direct voice memory extraction",
+    )
+
+
+def _print_memory_extraction_result(
+    result: MemoryExtractionResult,
+    *,
+    skipped_message: str,
+) -> int:
     suffix = "dry run" if result.dry_run else "applied"
     print(
         f"memory extraction {suffix}: "
@@ -441,7 +481,7 @@ def cmd_memory_extract_ambient(args: argparse.Namespace) -> int:
         f"{result.skipped_duplicates} duplicate(s) skipped"
     )
     if result.status == "skipped":
-        print("session mode is not eligible for ambient memory extraction")
+        print(skipped_message)
     elif result.dry_run:
         print("dry run only; rerun with --yes to store memory candidates")
     return 0

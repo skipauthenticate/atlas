@@ -7,6 +7,7 @@ from .database import Database
 
 
 AMBIENT_MEMORY_MODES = {"ambient", "meeting"}
+DIRECT_VOICE_MEMORY_MODES = {"direct_voice"}
 
 
 @dataclass(frozen=True)
@@ -37,10 +38,46 @@ def extract_memories_from_ambient_session(
     dry_run: bool = True,
     max_items: int = 20,
 ) -> MemoryExtractionResult:
+    return _extract_memories_from_session(
+        db,
+        session_id,
+        eligible_modes=AMBIENT_MEMORY_MODES,
+        source_type="ambient_session",
+        dry_run=dry_run,
+        max_items=max_items,
+    )
+
+
+def extract_memories_from_direct_voice_session(
+    db: Database,
+    session_id: str,
+    *,
+    dry_run: bool = True,
+    max_items: int = 20,
+) -> MemoryExtractionResult:
+    return _extract_memories_from_session(
+        db,
+        session_id,
+        eligible_modes=DIRECT_VOICE_MEMORY_MODES,
+        source_type="direct_voice_session",
+        dry_run=dry_run,
+        max_items=max_items,
+    )
+
+
+def _extract_memories_from_session(
+    db: Database,
+    session_id: str,
+    *,
+    eligible_modes: set[str],
+    source_type: str,
+    dry_run: bool,
+    max_items: int,
+) -> MemoryExtractionResult:
     session = db.get_ambient_session(session_id)
     if session is None:
         raise ValueError(f"Unknown ambient session: {session_id}")
-    if str(session.get("mode") or "") not in AMBIENT_MEMORY_MODES:
+    if str(session.get("mode") or "") not in eligible_modes:
         return MemoryExtractionResult(
             session_id=session_id,
             status="skipped",
@@ -48,8 +85,10 @@ def extract_memories_from_ambient_session(
             candidates=(),
         )
 
-    candidates = tuple(_candidate_memories(db.list_utterances(session_id), session_id))[:max_items]
-    existing = _existing_memory_texts(db, session_id)
+    candidates = tuple(_candidate_memories(db.list_utterances(session_id), session_id, source_type))[
+        :max_items
+    ]
+    existing = _existing_memory_texts(db, session_id, source_type)
     fresh_candidates = tuple(
         candidate for candidate in candidates if _dedupe_key(candidate.text) not in existing
     )
@@ -87,18 +126,22 @@ def extract_memories_from_ambient_session(
     )
 
 
-def _candidate_memories(utterances: list[dict[str, object]], session_id: str) -> list[MemoryCandidate]:
+def _candidate_memories(
+    utterances: list[dict[str, object]],
+    session_id: str,
+    source_type: str,
+) -> list[MemoryCandidate]:
     candidates: list[MemoryCandidate] = []
     for utterance in utterances:
         text = _clean_text(str(utterance.get("text") or ""))
         if not text:
             continue
-        candidates.extend(_remember_candidates(text, session_id))
-        candidates.extend(_preference_candidates(text, session_id))
+        candidates.extend(_remember_candidates(text, session_id, source_type))
+        candidates.extend(_preference_candidates(text, session_id, source_type))
     return candidates
 
 
-def _remember_candidates(text: str, session_id: str) -> list[MemoryCandidate]:
+def _remember_candidates(text: str, session_id: str, source_type: str) -> list[MemoryCandidate]:
     pattern = re.compile(
         r"(?:^|\b)remember(?:\s+(?:that|this))?[:\s]+(?P<value>[^.?!]+[.?!]?)",
         flags=re.I,
@@ -108,7 +151,7 @@ def _remember_candidates(text: str, session_id: str) -> list[MemoryCandidate]:
             kind="fact",
             title=_title_for("Memory", value),
             text=_sentence_case(value),
-            source_type="ambient_session",
+            source_type=source_type,
             source_id=session_id,
             importance=0.7,
             confidence=0.75,
@@ -118,7 +161,7 @@ def _remember_candidates(text: str, session_id: str) -> list[MemoryCandidate]:
     ]
 
 
-def _preference_candidates(text: str, session_id: str) -> list[MemoryCandidate]:
+def _preference_candidates(text: str, session_id: str, source_type: str) -> list[MemoryCandidate]:
     pattern = re.compile(
         r"(?:^|\b)(?:i|we)\s+prefer\s+(?P<value>[^.?!]+[.?!]?)",
         flags=re.I,
@@ -134,7 +177,7 @@ def _preference_candidates(text: str, session_id: str) -> list[MemoryCandidate]:
                 kind="preference",
                 title=_title_for("Preference", value),
                 text=_sentence_case(memory_text),
-                source_type="ambient_session",
+                source_type=source_type,
                 source_id=session_id,
                 importance=0.8,
                 confidence=0.8,
@@ -143,8 +186,8 @@ def _preference_candidates(text: str, session_id: str) -> list[MemoryCandidate]:
     return candidates
 
 
-def _existing_memory_texts(db: Database, session_id: str) -> set[str]:
-    memories = db.list_memory_items(source_type="ambient_session", limit=500)
+def _existing_memory_texts(db: Database, session_id: str, source_type: str) -> set[str]:
+    memories = db.list_memory_items(source_type=source_type, limit=500)
     return {
         _dedupe_key(str(memory.get("text") or ""))
         for memory in memories

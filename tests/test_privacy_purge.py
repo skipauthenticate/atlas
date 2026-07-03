@@ -142,6 +142,43 @@ class PrivacyPurgeCliTests(unittest.TestCase):
                 self.assertIn("memory extraction applied", confirmed["stdout"])
                 self.assertEqual(len(db.list_memory_items()), 1)
 
+    def test_memory_extract_direct_dry_run_and_confirmed_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+            }
+            with patch.dict(os.environ, env, clear=True):
+                settings = Settings.from_env()
+                settings.ensure_directories()
+                db = Database(settings.db_path)
+                db.initialize()
+                session_id = db.create_ambient_session(
+                    mode="direct_voice",
+                    source="websocket",
+                    title="Direct",
+                )
+                db.add_utterance(
+                    session_id=session_id,
+                    text="I prefer direct answers before detailed rationale.",
+                    source_provider="text",
+                )
+                db.end_ambient_session(session_id)
+
+                dry_run = _run_cli(["memory", "extract-direct", "--session", session_id])
+
+                self.assertEqual(dry_run["code"], 0)
+                self.assertIn("memory extraction dry run", dry_run["stdout"])
+                self.assertEqual(db.list_memory_items(), [])
+
+                confirmed = _run_cli(["memory", "extract-direct", "--session", session_id, "--yes"])
+
+                self.assertEqual(confirmed["code"], 0)
+                self.assertIn("memory extraction applied", confirmed["stdout"])
+                self.assertEqual(len(db.list_memory_items()), 1)
+
     def test_privacy_purge_requires_at_least_one_filter(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
