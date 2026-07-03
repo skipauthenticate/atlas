@@ -326,6 +326,51 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(completed["status"], "completed")
             self.assertIsNotNone(completed["completed_at"])
 
+    def test_skill_scores_can_be_recorded_and_filtered(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            goal_id = db.create_coaching_goal(
+                title="Improve clarity",
+                metric="clarity",
+            )
+
+            clarity_id = db.record_skill_score(
+                goal_id=goal_id,
+                domain="conversation",
+                metric="clarity",
+                value=0.82,
+                evidence_count=4,
+                period_start="2026-07-01",
+                period_end="2026-07-07",
+            )
+            db.record_skill_score(
+                goal_id=goal_id,
+                domain="writing",
+                metric="concision",
+                value=0.6,
+                evidence_count=2,
+                period_start="2026-07-08",
+                period_end="2026-07-14",
+            )
+
+            score = db.get_skill_score(clarity_id)
+            goal_scores = db.list_skill_scores(goal_id=goal_id)
+            conversation_scores = db.list_skill_scores(domain="conversation")
+            clarity_scores = db.list_skill_scores(metric="clarity")
+
+            self.assertEqual(score["goal_id"], goal_id)
+            self.assertEqual(score["domain"], "conversation")
+            self.assertEqual(score["metric"], "clarity")
+            self.assertEqual(score["value"], 0.82)
+            self.assertEqual(score["evidence_count"], 4)
+            self.assertEqual(score["period_start"], "2026-07-01")
+            self.assertEqual(score["period_end"], "2026-07-07")
+            self.assertEqual([item["id"] for item in conversation_scores], [clarity_id])
+            self.assertEqual([item["id"] for item in clarity_scores], [clarity_id])
+            self.assertEqual(len(goal_scores), 2)
+
+
     def test_feedback_events_can_be_logged_and_filtered(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

@@ -659,7 +659,7 @@ Database status:
 - [x] `memory_items`
 - [x] `feedback_events`
 - [x] `coaching_goals`
-- [ ] `skill_scores`
+- [x] `skill_scores`
 - [x] `model_runs`
 - [x] `privacy_events`
 

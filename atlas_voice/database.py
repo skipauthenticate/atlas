@@ -249,6 +249,24 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_feedback_events_category
                     ON feedback_events(category, created_at DESC);
 
+                CREATE TABLE IF NOT EXISTS skill_scores (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    goal_id INTEGER,
+                    domain TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    value REAL NOT NULL,
+                    evidence_count INTEGER NOT NULL DEFAULT 0,
+                    period_start TEXT,
+                    period_end TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (goal_id) REFERENCES coaching_goals(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_skill_scores_goal
+                    ON skill_scores(goal_id, period_end DESC, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_skill_scores_domain_metric
+                    ON skill_scores(domain, metric, period_end DESC, created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS memory_items (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     kind TEXT NOT NULL,
@@ -1265,6 +1283,76 @@ class Database:
         except json.JSONDecodeError:
             item["metadata"] = {}
         return item
+
+    def record_skill_score(
+        self,
+        *,
+        domain: str,
+        metric: str,
+        value: float,
+        goal_id: int | None = None,
+        evidence_count: int = 0,
+        period_start: str | None = None,
+        period_end: str | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO skill_scores (
+                    goal_id, domain, metric, value, evidence_count,
+                    period_start, period_end, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    goal_id,
+                    domain,
+                    metric,
+                    value,
+                    max(evidence_count, 0),
+                    period_start,
+                    period_end,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def get_skill_score(self, score_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM skill_scores WHERE id = ?",
+                (score_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_skill_scores(
+        self,
+        *,
+        goal_id: int | None = None,
+        domain: str | None = None,
+        metric: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM skill_scores"
+        params: list[Any] = []
+        filters: list[str] = []
+        if goal_id is not None:
+            filters.append("goal_id = ?")
+            params.append(goal_id)
+        if domain is not None:
+            filters.append("domain = ?")
+            params.append(domain)
+        if metric is not None:
+            filters.append("metric = ?")
+            params.append(metric)
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY period_end DESC, created_at DESC, id DESC LIMIT ?"
+        params.append(max(min(limit, 500), 1))
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
 
     def log_feedback_event(
         self,

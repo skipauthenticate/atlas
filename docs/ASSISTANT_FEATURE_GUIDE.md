@@ -366,6 +366,12 @@ The `/voice` Privacy panel shows local-only status, severity counts, recent
 privacy audit/purge/retention events, and compact metadata summaries. The view is
 read-only and uses bounded recent event queries.
 
+Developer-facing coaching score storage is available through the local database
+API. `Database.record_skill_score(...)` writes bounded progress measurements to
+`skill_scores` with optional goal linkage, domain, metric, score value, evidence
+count, and reporting period. Use `Database.list_skill_scores(...)` to retrieve
+scores by goal, domain, or metric for future dashboards and reports.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,
