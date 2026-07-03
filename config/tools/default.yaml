@@ -1,0 +1,29 @@
+# Local tool definition and permission registry.
+# These definitions describe allowed local tool calls; execution is implemented separately.
+tools:
+  search_recordings:
+    name: Search Recordings
+    description: Search local transcripts and summaries.
+    handler: atlas_voice.tools.search_recordings
+    permission: allow
+    mutating: false
+    parameters:
+      query: Search query for local recordings.
+      limit: Maximum result count.
+  summarize_recent_day:
+    name: Summarize Recent Day
+    description: Draft a local daily summary from recent sessions.
+    handler: atlas_voice.tools.summarize_recent_day
+    permission: allow
+    mutating: false
+    parameters:
+      date: Optional YYYY-MM-DD date to summarize.
+  privacy_purge:
+    name: Privacy Purge
+    description: Delete local privacy-scoped sessions after confirmation.
+    handler: atlas_voice.tools.privacy_purge
+    permission: confirm
+    mutating: true
+    parameters:
+      session_id: Exact session id to purge.
+      keyword: Optional keyword filter.

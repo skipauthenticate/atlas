@@ -690,7 +690,7 @@ Current status:
 - [x] `config/atlas.assistant.yaml` optional config loader exists.
 - [x] `config/atlas.assistant.example.yaml` exists.
 - [x] `config/prompts/*.yaml`
-- [ ] `config/tools/*.yaml`
+- [x] `config/tools/*.yaml`
 
 Target profile shape:
 
@@ -725,7 +725,7 @@ Current config support:
 - [x] Piper executable and voice settings.
 - [ ] Full profile-driven provider selection.
 - [x] Prompt/rubric registry.
-- [ ] Tool definition and permission registry.
+- [x] Tool definition and permission registry.
 
 ## Local Model Strategy
 

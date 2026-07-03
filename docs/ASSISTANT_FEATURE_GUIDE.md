@@ -384,6 +384,13 @@ optional rubric mapping. Load prompts programmatically with
 `load_prompt_registry()` or point `ATLAS_VOICE_PROMPTS_DIR` at another directory
 for deployment-specific overrides.
 
+Local tool definition and permission files live in `config/tools/*.yaml`. Each
+file defines a `tools` mapping with id, name, description, handler, mutating flag,
+permission policy (`allow`, `confirm`, or `deny`), and parameter descriptions.
+Load tools with `load_tool_registry()` or set `ATLAS_VOICE_TOOLS_DIR` for
+deployment-specific allow/confirmation policy overrides. Tool execution remains a
+separate runtime concern; this registry is the local policy source.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,

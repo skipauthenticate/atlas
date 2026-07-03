@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from atlas_voice.assistant_config import load_assistant_config
 from atlas_voice.prompts import PromptRegistryError, load_prompt_registry
+from atlas_voice.tools import ToolRegistryError, load_tool_registry
 from atlas_voice.config import Settings
 
 
@@ -220,6 +221,52 @@ class ConfigTests(unittest.TestCase):
 
             with self.assertRaises(PromptRegistryError):
                 load_prompt_registry(prompts_dir)
+
+    def test_tool_registry_loads_default_and_custom_yaml_tools(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tools_dir = Path(tmp) / "config" / "tools"
+            tools_dir.mkdir(parents=True)
+            (tools_dir / "custom.yaml").write_text(
+                "tools:\n"
+                "  draft_message:\n"
+                "    name: Draft Message\n"
+                "    description: Draft local text without sending it.\n"
+                "    handler: atlas_voice.tools.draft_message\n"
+                "    mutating: false\n"
+                "    permission: allow\n"
+                "    parameters:\n"
+                "      recipient: Person receiving the draft.\n"
+                "      topic: Topic to draft about.\n"
+            )
+
+            registry = load_tool_registry(tools_dir)
+
+        default_tool = registry.get("search_recordings")
+        custom_tool = registry.get("draft_message")
+        self.assertIn("search_recordings", registry.ids())
+        self.assertEqual(default_tool.permission, "allow")
+        self.assertFalse(default_tool.requires_confirmation)
+        self.assertEqual(custom_tool.name, "Draft Message")
+        self.assertEqual(custom_tool.parameters["recipient"], "Person receiving the draft.")
+        self.assertFalse(custom_tool.requires_confirmation)
+        self.assertTrue(registry.get("privacy_purge").requires_confirmation)
+        self.assertEqual(registry.as_dict()["draft_message"]["handler"], "atlas_voice.tools.draft_message")
+
+    def test_tool_registry_rejects_invalid_permission_policy(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tools_dir = Path(tmp) / "tools"
+            tools_dir.mkdir()
+            (tools_dir / "broken.yaml").write_text(
+                "tools:\n"
+                "  broken:\n"
+                "    name: Broken\n"
+                "    description: Invalid permission.\n"
+                "    handler: atlas_voice.tools.broken\n"
+                "    permission: maybe\n"
+            )
+
+            with self.assertRaises(ToolRegistryError):
+                load_tool_registry(tools_dir)
 
     def test_assistant_config_loader_merges_yaml_with_defaults(self) -> None:
         with TemporaryDirectory() as tmp:
