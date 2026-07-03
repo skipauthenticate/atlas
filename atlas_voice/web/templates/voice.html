@@ -145,15 +145,15 @@
       </section>
     </aside>
 
-    <footer class="voice-transport" aria-label="Transport">
+    <footer class="voice-transport" aria-label="Transport" data-voice-transport>
       <h2>Transport</h2>
-      <button type="button" disabled>Mic</button>
-      <button type="button" disabled>Pause</button>
-      <button type="button" disabled>Private</button>
-      <button type="button" disabled>Interrupt</button>
-      <button type="button" disabled>Play</button>
-      <label><span>Volume</span><input type="range" min="0" max="100" value="70" disabled></label>
-      <time>00:00</time>
+      <button type="button" data-transport-action="mic" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Mic</button>
+      <button type="button" data-transport-action="pause" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Pause</button>
+      <button type="button" data-transport-action="private" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Private</button>
+      <button type="button" data-transport-action="interrupt" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Interrupt</button>
+      <button type="button" data-transport-action="play" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Play</button>
+      <label><span>Volume</span><input type="range" min="0" max="100" value="70" data-transport-volume {% if not assistant_enabled %}disabled{% endif %}><output data-volume-output>70</output></label>
+      <time data-voice-timer>00:00</time>
     </footer>
   </div>
 {% endblock %}

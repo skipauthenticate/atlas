@@ -446,7 +446,7 @@ Status: partial.
 - [x] Add left rail: Home, Voice, Ambient, Memory, Coaching, Search, Settings.
 - [x] Add center workbench: live conversation, transcript, waveform/call surface, typed prompt box.
 - [x] Add right inspector: voice/model settings, session history, privacy state, memory toggles.
-- [ ] Add bottom transport: mic, pause/private mode, interrupt, playback, volume, session timer.
+- [x] Add bottom transport: mic, pause/private mode, interrupt, playback, volume, session timer.
 - [x] Add Voice Playground for testing text-to-speech.
 - [ ] Add Voice Playground for testing STT.
 - [ ] Add Voice Playground for testing model response.
@@ -883,7 +883,7 @@ Suggested controls:
 - [ ] Ambient search/delete.
 - [x] Privacy purge.
 - [ ] Browser mic streaming.
-- [ ] Voice UI transport controls.
+- [x] Voice UI transport controls.
 
 ### Manual Jetson Tests
 

@@ -98,7 +98,8 @@ in the existing SQLite database.
 Open `/voice` for the assistant workbench console. It shows the voice rail,
 conversation surface, recent direct voice sessions, local model status, privacy
 state, memory/coaching placeholders, and transport controls for the browser voice
-path.
+path, including pause/private state, interrupt, playback state, volume, and a
+session timer.
 
 Enable direct realtime sessions explicitly with `ATLAS_ASSISTANT_ENABLED=true`.
 `ATLAS_REALTIME_HOST=127.0.0.1` is the default bind-host alias for the realtime

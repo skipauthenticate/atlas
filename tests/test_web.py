@@ -452,6 +452,49 @@ class WebTests(unittest.TestCase):
             self.assertEqual(tts_runs[0]["provider"], "piper")
             self.assertEqual(tts_runs[0]["latency_ms"], 5)
 
+    def test_voice_console_transport_controls_are_wired(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('data-voice-transport', response.text)
+            for action in ("mic", "pause", "private", "interrupt", "play"):
+                self.assertIn(f'data-transport-action="{action}"', response.text)
+            self.assertIn('data-voice-timer', response.text)
+            self.assertIn('data-volume-output', response.text)
+            self.assertIn('aria-pressed="false"', response.text)
+            self.assertNotIn('data-transport-action="mic" disabled', response.text)
+
+    def test_voice_static_script_handles_transport_state(self) -> None:
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+
+        self.assertIn("data-voice-transport", script)
+        self.assertIn("data-transport-action", script)
+        self.assertIn("data-volume-output", script)
+        self.assertIn("data-voice-timer", script)
+        self.assertIn("response.cancel", script)
+        self.assertIn("setInterval", script)
+
     def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

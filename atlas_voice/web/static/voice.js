@@ -113,6 +113,101 @@
       }
     });
 
+    const transport = root.querySelector('[data-voice-transport]');
+    if (transport) {
+      const controls = new Map(
+        Array.from(transport.querySelectorAll('[data-transport-action]')).map((button) => [
+          button.dataset.transportAction,
+          button,
+        ]),
+      );
+      const timer = transport.querySelector('[data-voice-timer]');
+      const volume = transport.querySelector('[data-transport-volume]');
+      const volumeOutput = transport.querySelector('[data-volume-output]');
+      let sessionStartedAt = null;
+      let timerId = null;
+      let paused = false;
+      let privateMode = false;
+      let micEnabled = false;
+
+      const formatElapsed = () => {
+        if (!sessionStartedAt) return '00:00';
+        const seconds = Math.max(Math.floor((Date.now() - sessionStartedAt) / 1000), 0);
+        const minutes = String(Math.floor(seconds / 60)).padStart(2, '0');
+        const remainder = String(seconds % 60).padStart(2, '0');
+        return `${minutes}:${remainder}`;
+      };
+
+      const startTimer = () => {
+        if (!sessionStartedAt) sessionStartedAt = Date.now();
+        if (timerId) return;
+        timerId = window.setInterval(() => {
+          if (timer) timer.textContent = formatElapsed();
+        }, 1000);
+      };
+
+      const stopTimer = () => {
+        if (timerId) window.clearInterval(timerId);
+        timerId = null;
+      };
+
+      const togglePressed = (button, pressed) => {
+        button?.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+        button?.classList.toggle('active', pressed);
+      };
+
+      const setPromptAvailability = () => {
+        const blocked = !enabled || paused || privateMode;
+        input.disabled = blocked;
+        submit.disabled = blocked;
+      };
+
+      controls.get('mic')?.addEventListener('click', () => {
+        micEnabled = !micEnabled;
+        togglePressed(controls.get('mic'), micEnabled);
+        if (micEnabled) {
+          connect();
+          startTimer();
+        } else {
+          stopTimer();
+        }
+      });
+
+      controls.get('pause')?.addEventListener('click', () => {
+        paused = !paused;
+        togglePressed(controls.get('pause'), paused);
+        setPromptAvailability();
+        setConnection(connection, paused ? 'paused' : 'ready', paused ? 'status-queued' : 'status-done');
+      });
+
+      controls.get('private')?.addEventListener('click', () => {
+        privateMode = !privateMode;
+        togglePressed(controls.get('private'), privateMode);
+        setPromptAvailability();
+        setConnection(connection, privateMode ? 'private' : 'ready', privateMode ? 'status-queued' : 'status-done');
+      });
+
+      controls.get('interrupt')?.addEventListener('click', () => {
+        pending.length = 0;
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'response.cancel' }));
+        }
+        assistantText = null;
+        togglePressed(controls.get('interrupt'), true);
+        window.setTimeout(() => togglePressed(controls.get('interrupt'), false), 250);
+      });
+
+      controls.get('play')?.addEventListener('click', () => {
+        const button = controls.get('play');
+        const pressed = button?.getAttribute('aria-pressed') !== 'true';
+        togglePressed(button, pressed);
+      });
+
+      volume?.addEventListener('input', () => {
+        if (volumeOutput) volumeOutput.textContent = volume.value;
+      });
+    }
+
     const playground = root.querySelector('[data-tts-playground]');
     if (playground) {
       const playgroundForm = playground.querySelector('form');
