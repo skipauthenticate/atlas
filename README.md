@@ -52,6 +52,7 @@ atlas-voice export <recording_id> --format txt
 atlas-voice sync-anythingllm <recording_id>
 atlas-voice ambient --source /path/to/audio.wav --mode meeting --once
 atlas-voice ambient --source mic --mode ambient
+atlas-voice validate-brio --device plughw:2,0 --seconds 5
 ```
 
 When running from source without installation:

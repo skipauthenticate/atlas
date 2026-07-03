@@ -501,7 +501,7 @@ Implemented event paths:
 
 ### Phase 5: Microphone Voice Mode
 
-Status: not complete as browser realtime voice mode. Browser mic capture, optional Hyprwhspr-first routing, local faster-whisper fallback, PCM16 realtime VAD/end-of-turn, and mic interruption exist; browser container VAD and real mic ASR validation remain open.
+Status: not complete as browser realtime voice mode. Browser mic capture, optional Hyprwhspr-first routing, local faster-whisper fallback, PCM16 realtime VAD/end-of-turn, mic interruption, and BRIO validation tooling exist; browser container VAD and a successful real BRIO ASR run remain open.
 
 - [x] Stream browser mic audio to the realtime endpoint.
 - [x] Use Hyprwhspr first if its local socket/CLI is reliable.
@@ -512,6 +512,7 @@ Status: not complete as browser realtime voice mode. Browser mic capture, option
 - [x] Default: discard raw audio for ambient mode.
 - [x] Default: keep transcript unless retention is disabled.
 - [x] Detect Logitech BRIO ALSA device as `plughw:2,0`.
+- [x] Add `atlas-voice validate-brio` command for BRIO capture plus real ASR validation.
 - [ ] Validate Logitech BRIO end-to-end with real ASR.
 
 BRIO test command:
@@ -519,6 +520,20 @@ BRIO test command:
 ```bash
 ffmpeg -hide_banner -f alsa -i plughw:2,0 -t 5 -ac 1 -ar 16000 -f wav /tmp/brio-test.wav
 ```
+
+BRIO validation command:
+
+```bash
+ATLAS_VOICE_STUB_MODE=false .venv/bin/python -m atlas_voice.cli validate-brio \
+  --device plughw:2,0 \
+  --seconds 5
+```
+
+Validation attempts on 2026-07-03:
+
+- `arecord -l` reports Logitech BRIO at `plughw:2,0`.
+- Default CUDA WhisperX validation failed because CTranslate2 CUDA is unavailable.
+- CPU/int8 WhisperX validation captured from `plughw:2,0` but returned no transcript text; rerun while speaking a known phrase.
 
 Ambient mic command:
 

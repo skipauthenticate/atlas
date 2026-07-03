@@ -14,6 +14,7 @@ from .ambient import (
     process_ambient_file,
     process_ambient_path,
     process_microphone_once,
+    validate_microphone_asr,
 )
 from .anythingllm import AnythingLLMError, sync_recording_to_anythingllm
 from .assistant_config import AssistantConfigError, load_assistant_config
@@ -109,6 +110,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep transient ambient audio artifacts",
     )
     ambient.set_defaults(func=cmd_ambient)
+
+    validate_brio = subparsers.add_parser(
+        "validate-brio",
+        help="Capture Logitech BRIO ALSA audio and validate real ASR transcription",
+    )
+    validate_brio.add_argument("--device", default="plughw:2,0", help="ALSA capture device")
+    validate_brio.add_argument("--seconds", type=float, default=5.0, help="Capture duration")
+    validate_brio.add_argument(
+        "--allow-stub",
+        action="store_true",
+        help="Allow stub mode for command smoke tests; real validation should leave this off",
+    )
+    validate_brio.add_argument(
+        "--min-transcript-chars",
+        type=int,
+        default=1,
+        help="Minimum transcript characters required for success",
+    )
+    validate_brio.set_defaults(func=cmd_validate_brio)
 
     benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
@@ -444,6 +464,26 @@ def _print_ambient_result(result: AmbientResult) -> None:
         f"ambient session {session}: {result.status}; "
         f"{result.utterance_count} utterances from {result.segment_count} segments"
     )
+
+
+def cmd_validate_brio(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    try:
+        result = validate_microphone_asr(
+            settings,
+            device=args.device,
+            seconds=args.seconds,
+            allow_stub=args.allow_stub,
+            min_transcript_chars=args.min_transcript_chars,
+        )
+    except Exception as exc:
+        print(f"BRIO validation failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"BRIO validation ok: device={result.device} provider={result.provider} "
+        f"audio={result.audio_path} transcript={result.transcript[:120]!r}"
+    )
+    return 0
 
 
 def cmd_benchmark_asr(args: argparse.Namespace) -> int:

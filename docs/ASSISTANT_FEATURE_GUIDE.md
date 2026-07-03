@@ -215,6 +215,17 @@ Capture a local microphone chunk through `ffmpeg`/ALSA:
 atlas-voice ambient --source mic --mic-device plughw:2,0 --mode ambient --once --chunk-seconds 10
 ```
 
+Validate Logitech BRIO capture with the configured real ASR provider:
+
+```bash
+ATLAS_VOICE_STUB_MODE=false atlas-voice validate-brio --device plughw:2,0 --seconds 5
+```
+
+Speak a known phrase during the capture window. The validation command fails if
+stub mode is enabled, if ALSA/`ffmpeg` cannot capture from the device, or if
+ASR returns an empty transcript. Use
+`--allow-stub` only for command smoke tests, not for real mic validation.
+
 Ambient mode stores sessions in `ambient_sessions` and transcripts in
 `utterances`. Raw audio is deleted after transcription unless
 `ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true` or `--retain-audio` is set. Use `private`

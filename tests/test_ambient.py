@@ -3,11 +3,14 @@ from __future__ import annotations
 import math
 import wave
 from array import array
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest import mock
 
-from atlas_voice.ambient import process_ambient_file, vad_segments
+from atlas_voice.ambient import process_ambient_file, validate_microphone_asr, vad_segments
+from atlas_voice.cli import build_parser
 from atlas_voice.config import Settings
 from atlas_voice.database import Database
 
@@ -61,6 +64,64 @@ class AmbientTests(unittest.TestCase):
             self.assertEqual(utterances[0]["sensitivity"], "shared_meeting")
             self.assertEqual(model_run["task"], "ambient_transcribe")
             self.assertFalse((settings.artifacts_dir / "ambient" / result.session_id).exists())
+
+    def test_validate_microphone_asr_captures_brio_and_returns_transcript(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = replace(_settings(root), stub_mode=False)
+            audio_path = root / "data" / "artifacts" / "mic-validation" / "brio-validation.wav"
+
+            def fake_capture(path: Path, *, device: str, seconds: float) -> Path:
+                self.assertEqual(device, "plughw:2,0")
+                self.assertEqual(seconds, 2.0)
+                _write_test_wav(path)
+                return path
+
+            with (
+                mock.patch("atlas_voice.ambient.capture_microphone_chunk", side_effect=fake_capture),
+                mock.patch(
+                    "atlas_voice.providers.asr.transcribe_audio",
+                    return_value={"text": "brio validation transcript", "segments": []},
+                ) as transcribe_mock,
+            ):
+                result = validate_microphone_asr(
+                    settings,
+                    device="plughw:2,0",
+                    seconds=2.0,
+                    output_path=audio_path,
+                )
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.device, "plughw:2,0")
+        self.assertEqual(result.transcript, "brio validation transcript")
+        self.assertEqual(result.provider, "whisperx")
+        self.assertEqual(result.audio_path, audio_path)
+        transcribe_mock.assert_called_once()
+
+    def test_validate_microphone_asr_requires_real_asr_by_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            settings = _settings(Path(tmp))
+
+            with self.assertRaisesRegex(RuntimeError, "real ASR"):
+                validate_microphone_asr(settings, device="plughw:2,0")
+
+    def test_validate_brio_cli_exposes_device_and_real_asr_options(self) -> None:
+        parser = build_parser()
+
+        args = parser.parse_args([
+            "validate-brio",
+            "--device",
+            "plughw:2,0",
+            "--seconds",
+            "2",
+            "--min-transcript-chars",
+            "4",
+        ])
+
+        self.assertEqual(args.device, "plughw:2,0")
+        self.assertEqual(args.seconds, 2)
+        self.assertEqual(args.min_transcript_chars, 4)
+        self.assertFalse(args.allow_stub)
 
     def test_private_mode_skips_audio_and_logs_privacy_event(self) -> None:
         with TemporaryDirectory() as tmp:

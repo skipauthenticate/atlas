@@ -37,6 +37,16 @@ class AmbientResult:
     utterance_count: int = 0
 
 
+@dataclass(frozen=True)
+class MicrophoneAsrValidationResult:
+    status: str
+    device: str
+    audio_path: Path
+    provider: str
+    transcript: str
+    audio_seconds: float
+
+
 def process_ambient_file(
     source_path: Path,
     settings: Settings,
@@ -181,6 +191,41 @@ def capture_microphone_chunk(
     ]
     subprocess.run(command, check=True)
     return output_path
+
+
+def validate_microphone_asr(
+    settings: Settings,
+    *,
+    device: str = "plughw:2,0",
+    seconds: float = 5.0,
+    output_path: Path | None = None,
+    allow_stub: bool = False,
+    min_transcript_chars: int = 1,
+) -> MicrophoneAsrValidationResult:
+    if settings.stub_mode and not allow_stub:
+        raise RuntimeError(
+            "BRIO validation requires real ASR; disable ATLAS_VOICE_STUB_MODE or pass allow_stub."
+        )
+    settings.ensure_directories()
+    capture_path = output_path or settings.artifacts_dir / "mic-validation" / "brio-validation.wav"
+    capture_microphone_chunk(capture_path, device=device, seconds=seconds)
+
+    from atlas_voice.providers.asr import transcribe_audio
+
+    transcript = transcribe_audio(capture_path, settings)
+    text = transcript_text(transcript)
+    if len(text.strip()) < min_transcript_chars:
+        raise RuntimeError(
+            f"BRIO validation captured audio from {device}, but ASR returned no transcript text."
+        )
+    return MicrophoneAsrValidationResult(
+        status="ok",
+        device=device,
+        audio_path=capture_path,
+        provider=settings.asr_provider,
+        transcript=text,
+        audio_seconds=seconds,
+    )
 
 
 def process_microphone_once(
