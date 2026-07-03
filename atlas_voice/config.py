@@ -70,6 +70,27 @@ class Settings:
     anythingllm_workspace_slug: str | None = None
     anythingllm_timeout: float = 60.0
     anythingllm_auto_sync: bool = False
+    assistant_config_path: Path = Path("config/atlas.assistant.yaml")
+    tts_provider: str = "none"
+    tts_base_url: str = "http://127.0.0.1:8008/v1/audio/speech"
+    tts_health_url: str = "http://127.0.0.1:8008/health"
+    tts_model: str = "faster-qwen3-tts-0.6b"
+    tts_voice: str = "default"
+    tts_response_format: str = "wav"
+    tts_timeout: float = 60.0
+    tts_health_timeout: float = 2.0
+    piper_executable: str = "piper"
+    piper_voice: str | None = None
+    realtime_audio_sample_rate: int = 24000
+    realtime_audio_channels: int = 1
+    ambient_source: str = "mic"
+    ambient_mode: str = "ambient"
+    ambient_chunk_seconds: float = 15.0
+    ambient_poll_seconds: float = 2.0
+    ambient_mic_device: str = "default"
+    ambient_vad_threshold: float = 500.0
+    ambient_min_speech_seconds: float = 0.4
+    ambient_retain_audio: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -117,6 +138,46 @@ class Settings:
             anythingllm_workspace_slug=os.environ.get("ANYTHINGLLM_WORKSPACE_SLUG") or None,
             anythingllm_timeout=float(os.environ.get("ANYTHINGLLM_TIMEOUT", "60")),
             anythingllm_auto_sync=_bool_from_env("ANYTHINGLLM_AUTO_SYNC", False),
+            assistant_config_path=_path_from_env(
+                "ATLAS_VOICE_ASSISTANT_CONFIG", "./config/atlas.assistant.yaml"
+            ),
+            tts_provider=os.environ.get("ATLAS_VOICE_TTS_PROVIDER", "none").strip().lower(),
+            tts_base_url=os.environ.get(
+                "ATLAS_TTS_BASE_URL",
+                os.environ.get(
+                    "ATLAS_VOICE_TTS_BASE_URL",
+                    "http://127.0.0.1:8008/v1/audio/speech",
+                ),
+            ).rstrip("/"),
+            tts_health_url=os.environ.get(
+                "ATLAS_TTS_HEALTH_URL",
+                os.environ.get("ATLAS_VOICE_TTS_HEALTH_URL", "http://127.0.0.1:8008/health"),
+            ).rstrip("/"),
+            tts_model=os.environ.get("ATLAS_TTS_MODEL") or "faster-qwen3-tts-0.6b",
+            tts_voice=os.environ.get("ATLAS_TTS_VOICE") or "default",
+            tts_response_format=os.environ.get("ATLAS_TTS_RESPONSE_FORMAT", "wav").strip().lower(),
+            tts_timeout=float(os.environ.get("ATLAS_TTS_TIMEOUT", "60")),
+            tts_health_timeout=float(os.environ.get("ATLAS_TTS_HEALTH_TIMEOUT", "2")),
+            piper_executable=os.environ.get("ATLAS_VOICE_PIPER_EXECUTABLE", "piper"),
+            piper_voice=os.environ.get("ATLAS_VOICE_PIPER_VOICE") or None,
+            realtime_audio_sample_rate=int(
+                os.environ.get("ATLAS_VOICE_REALTIME_AUDIO_SAMPLE_RATE", "24000")
+            ),
+            realtime_audio_channels=int(os.environ.get("ATLAS_VOICE_REALTIME_AUDIO_CHANNELS", "1")),
+            ambient_source=os.environ.get("ATLAS_VOICE_AMBIENT_SOURCE", "mic"),
+            ambient_mode=os.environ.get("ATLAS_VOICE_AMBIENT_MODE", "ambient").strip().lower(),
+            ambient_chunk_seconds=float(
+                os.environ.get("ATLAS_VOICE_AMBIENT_CHUNK_SECONDS", "15")
+            ),
+            ambient_poll_seconds=float(os.environ.get("ATLAS_VOICE_AMBIENT_POLL_SECONDS", "2")),
+            ambient_mic_device=os.environ.get("ATLAS_VOICE_AMBIENT_MIC_DEVICE", "default"),
+            ambient_vad_threshold=float(
+                os.environ.get("ATLAS_VOICE_AMBIENT_VAD_THRESHOLD", "500")
+            ),
+            ambient_min_speech_seconds=float(
+                os.environ.get("ATLAS_VOICE_AMBIENT_MIN_SPEECH_SECONDS", "0.4")
+            ),
+            ambient_retain_audio=_bool_from_env("ATLAS_VOICE_AMBIENT_RETAIN_AUDIO", False),
         )
 
     @property

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -148,45 +149,66 @@ class PipelineProcessor:
         self.db.update_recording(recording_id, status="merged", error=None)
 
     def _summarize(self, recording_id: str) -> None:
-        segments = self.db.get_segments(recording_id)
-        # Determine template: explicit user preference > auto-detect
-        preferred_id = self.db.get_recording_template(recording_id)
-        if self.settings.stub_mode:
-            text = (
-                "Overview\n"
-                "Atlas Voice processed a local test recording.\n\n"
-                "Key Points\n"
-                "- Stub mode is enabled.\n\n"
-                "Action Items\n"
-                "None\n\n"
-                "Open Questions\n"
-                "None"
+        started = time.perf_counter()
+        provider = "stub" if self.settings.stub_mode else "openai-compatible"
+        try:
+            segments = self.db.get_segments(recording_id)
+            # Determine template: explicit user preference > auto-detect
+            preferred_id = self.db.get_recording_template(recording_id)
+            if self.settings.stub_mode:
+                text = (
+                    "Overview\n"
+                    "Atlas Voice processed a local test recording.\n\n"
+                    "Key Points\n"
+                    "- Stub mode is enabled.\n\n"
+                    "Action Items\n"
+                    "None\n\n"
+                    "Open Questions\n"
+                    "None"
+                )
+                chunks_payload = [{"chunk_index": 1, "text": text}]
+                tpl_id = preferred_id or "meeting"
+            else:
+                chunks = chunk_transcript(segments)
+                # Build a mini transcript for auto-detection (first 2000 chars)
+                mini_transcript = "\n".join(
+                    s.get("text", "") for s in segments[:100]
+                )[:2000]
+                tpl = None
+                if preferred_id:
+                    tpl = get_template(preferred_id)
+                if tpl is None and mini_transcript.strip():
+                    tpl = detect_template(mini_transcript)
+                tpl_id = tpl.id if tpl else "meeting"
+                text, chunks_payload = summarize_with_llm(
+                    chunks, self.settings, template=tpl, template_id=preferred_id
+                )
+            self.db.save_summary(
+                recording_id,
+                text,
+                model=self.settings.llm_model,
+                template_id=tpl_id,
+                chunks=chunks_payload,
             )
-            chunks_payload = [{"chunk_index": 1, "text": text}]
-            tpl_id = preferred_id or "meeting"
-        else:
-            chunks = chunk_transcript(segments)
-            # Build a mini transcript for auto-detection (first 2000 chars)
-            mini_transcript = "\n".join(
-                s.get("text", "") for s in segments[:100]
-            )[:2000]
-            tpl = None
-            if preferred_id:
-                tpl = get_template(preferred_id)
-            if tpl is None and mini_transcript.strip():
-                tpl = detect_template(mini_transcript)
-            tpl_id = tpl.id if tpl else "meeting"
-            text, chunks_payload = summarize_with_llm(
-                chunks, self.settings, template=tpl, template_id=preferred_id
+            self.db.update_recording(recording_id, status="done", error=None)
+        except Exception as exc:
+            self.db.log_model_run(
+                provider=provider,
+                model=self.settings.llm_model,
+                task="summarize",
+                input_ref=f"recording:{recording_id}",
+                latency_ms=_elapsed_ms(started),
+                error=f"{type(exc).__name__}: {exc}",
             )
-        self.db.save_summary(
-            recording_id,
-            text,
+            raise
+        self.db.log_model_run(
+            provider=provider,
             model=self.settings.llm_model,
-            template_id=tpl_id,
-            chunks=chunks_payload,
+            task="summarize",
+            input_ref=f"recording:{recording_id}",
+            output_ref=f"summary:{recording_id}",
+            latency_ms=_elapsed_ms(started),
         )
-        self.db.update_recording(recording_id, status="done", error=None)
 
     def _sync_anythingllm_after_summary(self, recording_id: str) -> None:
         if not self.settings.anythingllm_auto_sync:
@@ -198,3 +220,7 @@ class PipelineProcessor:
                 recording_id,
                 error=f"AnythingLLM auto-sync failed: {str(exc)[:500]}",
             )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(int((time.perf_counter() - started) * 1000), 0)

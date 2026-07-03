@@ -119,6 +119,93 @@ class Database:
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS ambient_sessions (
+                    id TEXT PRIMARY KEY,
+                    mode TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    started_at TEXT NOT NULL,
+                    ended_at TEXT,
+                    status TEXT NOT NULL,
+                    retention_policy TEXT NOT NULL DEFAULT 'ephemeral',
+                    title TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ambient_sessions_status
+                    ON ambient_sessions(status, started_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_ambient_sessions_mode
+                    ON ambient_sessions(mode, started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS utterances (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    idx INTEGER NOT NULL,
+                    start REAL,
+                    end REAL,
+                    speaker TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    confidence REAL,
+                    source_provider TEXT NOT NULL,
+                    is_directed_to_assistant INTEGER NOT NULL DEFAULT 1,
+                    sensitivity TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES ambient_sessions(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_utterances_session
+                    ON utterances(session_id, idx);
+
+                CREATE TABLE IF NOT EXISTS assistant_turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    user_utterance_id INTEGER,
+                    text TEXT NOT NULL,
+                    audio_path TEXT,
+                    model TEXT NOT NULL,
+                    latency_ms INTEGER,
+                    tool_calls_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (session_id) REFERENCES ambient_sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (user_utterance_id) REFERENCES utterances(id) ON DELETE SET NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_assistant_turns_session
+                    ON assistant_turns(session_id, id);
+
+                CREATE TABLE IF NOT EXISTS model_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    input_ref TEXT,
+                    output_ref TEXT,
+                    latency_ms INTEGER,
+                    tokens_in INTEGER,
+                    tokens_out INTEGER,
+                    error TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_model_runs_created
+                    ON model_runs(created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_model_runs_task
+                    ON model_runs(task, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS privacy_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'info',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_privacy_events_created
+                    ON privacy_events(created_at DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_privacy_events_type
+                    ON privacy_events(event_type, created_at DESC);
                 """
             )
 
@@ -551,6 +638,287 @@ class Database:
             return row["summary_template"] if row else None
         except Exception:
             return None
+
+    def list_ambient_sessions(
+        self,
+        limit: int = 20,
+        *,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = """
+            SELECT
+                s.*,
+                COUNT(DISTINCT u.id) AS utterance_count,
+                COUNT(DISTINCT t.id) AS assistant_turn_count
+            FROM ambient_sessions s
+            LEFT JOIN utterances u ON u.session_id = s.id
+            LEFT JOIN assistant_turns t ON t.session_id = s.id
+        """
+        params: list[Any] = []
+        if status:
+            query += " WHERE s.status = ?"
+            params.append(status)
+        query += " GROUP BY s.id ORDER BY s.started_at DESC LIMIT ?"
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_ambient_sessions(self, *, status: str | None = None) -> int:
+        query = "SELECT COUNT(*) AS count FROM ambient_sessions"
+        params: list[Any] = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        with self.connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return int(row["count"] if row else 0)
+
+    def create_ambient_session(
+        self,
+        *,
+        mode: str,
+        source: str,
+        retention_policy: str = "ephemeral",
+        title: str | None = None,
+        status: str = "active",
+    ) -> str:
+        session_id = uuid.uuid4().hex
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ambient_sessions (
+                    id, mode, source, started_at, status, retention_policy,
+                    title, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (session_id, mode, source, now, status, retention_policy, title, now, now),
+            )
+        return session_id
+
+    def end_ambient_session(self, session_id: str, *, status: str = "ended") -> None:
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE ambient_sessions
+                SET status = ?, ended_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, now, session_id),
+            )
+
+    def get_ambient_session(self, session_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM ambient_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def add_utterance(
+        self,
+        *,
+        session_id: str,
+        text: str,
+        speaker: str = "user",
+        start: float | None = None,
+        end: float | None = None,
+        confidence: float | None = None,
+        source_provider: str = "text",
+        is_directed_to_assistant: bool = True,
+        sensitivity: str | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(idx) + 1, 0) AS next_idx FROM utterances WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            idx = int(row["next_idx"] if row else 0)
+            cursor = conn.execute(
+                """
+                INSERT INTO utterances (
+                    session_id, idx, start, end, speaker, text, confidence,
+                    source_provider, is_directed_to_assistant, sensitivity, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    idx,
+                    start,
+                    end,
+                    speaker,
+                    text,
+                    confidence,
+                    source_provider,
+                    1 if is_directed_to_assistant else 0,
+                    sensitivity,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_utterances(self, session_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM utterances
+                WHERE session_id = ?
+                ORDER BY idx ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_assistant_turn(
+        self,
+        *,
+        session_id: str,
+        text: str,
+        model: str,
+        user_utterance_id: int | None = None,
+        audio_path: str | None = None,
+        latency_ms: int | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO assistant_turns (
+                    session_id, user_utterance_id, text, audio_path, model,
+                    latency_ms, tool_calls_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    user_utterance_id,
+                    text,
+                    audio_path,
+                    model,
+                    latency_ms,
+                    json.dumps(tool_calls or []),
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_assistant_turns(self, session_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM assistant_turns
+                WHERE session_id = ?
+                ORDER BY id ASC
+                """,
+                (session_id,),
+            ).fetchall()
+        turns: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["tool_calls"] = json.loads(item.pop("tool_calls_json") or "[]")
+            except json.JSONDecodeError:
+                item["tool_calls"] = []
+            turns.append(item)
+        return turns
+
+    def log_model_run(
+        self,
+        *,
+        provider: str,
+        model: str,
+        task: str,
+        input_ref: str | None = None,
+        output_ref: str | None = None,
+        latency_ms: int | None = None,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        error: str | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO model_runs (
+                    provider, model, task, input_ref, output_ref, latency_ms,
+                    tokens_in, tokens_out, error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider,
+                    model,
+                    task,
+                    input_ref,
+                    output_ref,
+                    latency_ms,
+                    tokens_in,
+                    tokens_out,
+                    error[:4000] if error else None,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_model_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM model_runs
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def log_privacy_event(
+        self,
+        event_type: str,
+        message: str,
+        *,
+        severity: str = "info",
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO privacy_events (
+                    event_type, message, severity, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    event_type,
+                    message[:4000],
+                    severity,
+                    json.dumps(metadata or {}, sort_keys=True),
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def list_privacy_events(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM privacy_events
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+            except json.JSONDecodeError:
+                item["metadata"] = {}
+            events.append(item)
+        return events
 
     def search(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
         match = self._fts_query(query)

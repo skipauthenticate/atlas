@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 from tempfile import TemporaryDirectory
 import importlib
 import os
@@ -6,6 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+from atlas_voice.realtime import RealtimeAudio
 
 
 class WebTests(unittest.TestCase):
@@ -15,6 +18,8 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
@@ -60,17 +65,36 @@ class WebTests(unittest.TestCase):
                 "- **Result:** readable summary",
                 model="test",
             )
+            ambient_id = web_app.db.create_ambient_session(
+                mode="ambient",
+                source="test",
+                title="Ambient Test",
+            )
+            web_app.db.add_utterance(
+                session_id=ambient_id,
+                text="ambient transcript",
+                source_provider="stub",
+            )
+            web_app.db.end_ambient_session(ambient_id, status="done")
 
             client = TestClient(web_app.app)
 
             dashboard = client.get("/")
             detail = client.get(f"/recordings/{recording_id}")
             search = client.get("/search", params={"q": "Atlas"})
+            status = client.get("/api/status")
+            ambient_sessions = client.get("/api/ambient/sessions")
 
             self.assertEqual(dashboard.status_code, 200)
             self.assertIn("Test Audio", dashboard.text)
             self.assertIn("CPU", dashboard.text)
             self.assertIn("tiny.en", dashboard.text)
+            self.assertIn("Privacy", dashboard.text)
+            self.assertEqual(status.status_code, 200)
+            self.assertEqual(status.json()["privacy"]["status"], "ok")
+            self.assertEqual(ambient_sessions.status_code, 200)
+            self.assertEqual(ambient_sessions.json()["sessions"][0]["id"], ambient_id)
+            self.assertEqual(ambient_sessions.json()["sessions"][0]["utterance_count"], 1)
             self.assertEqual(detail.status_code, 200)
             self.assertIn("SPEAKER_00", detail.text)
             self.assertIn("summary-section-overview", detail.text)
@@ -83,12 +107,141 @@ class WebTests(unittest.TestCase):
             self.assertIn("[Atlas]", search.text)
             self.assertNotIn("&lt;mark&gt;", search.text)
 
+    def test_realtime_websocket_handles_text_and_persists_turn(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            with client.websocket_connect("/v1/realtime") as websocket:
+                created = websocket.receive_json()
+                session_id = created["session"]["id"]
+                websocket.send_json({"type": "input_text", "text": "Hello Atlas"})
+                events = _receive_until(websocket, "response.done")
+
+            event_types = [event["type"] for event in events]
+            self.assertEqual(created["type"], "session.created")
+            self.assertIn("conversation.item.input_text.delta", event_types)
+            self.assertIn("response.text.delta", event_types)
+            self.assertIn("response.audio.done", event_types)
+            self.assertEqual(web_app.db.get_ambient_session(session_id)["status"], "ended")
+            self.assertEqual(web_app.db.list_utterances(session_id)[0]["text"], "Hello Atlas")
+            self.assertEqual(
+                web_app.db.list_assistant_turns(session_id)[0]["text"],
+                "Atlas heard: Hello Atlas",
+            )
+            self.assertEqual(web_app.db.list_model_runs()[0]["task"], "realtime_chat")
+
+
+    def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "faster-qwen3-tts"
+            os.environ["ATLAS_TTS_MODEL"] = "faster-qwen3-tts-0.6b"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            audio_path = root / "assistant.wav"
+
+            with patch.object(
+                web_app,
+                "synthesize_with_tts_sidecar",
+                return_value=RealtimeAudio(
+                    path=audio_path,
+                    payload=b"RIFFtest",
+                    media_type="audio/wav",
+                    latency_ms=7,
+                ),
+            ) as synth_mock:
+                with client.websocket_connect("/v1/realtime") as websocket:
+                    created = websocket.receive_json()
+                    websocket.send_json({"type": "input_text", "text": "Hello Atlas"})
+                    events = _receive_until(websocket, "response.done")
+
+            event_types = [event["type"] for event in events]
+            self.assertEqual(created["session"]["output_audio_format"], "wav")
+            self.assertIn("response.audio.delta", event_types)
+            self.assertIn("response.audio.done", event_types)
+            synth_mock.assert_called_once()
+            tts_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "realtime_tts"]
+            self.assertEqual(len(tts_runs), 1)
+            self.assertEqual(tts_runs[0]["provider"], "faster-qwen3-tts")
+            self.assertEqual(tts_runs[0]["model"], "faster-qwen3-tts-0.6b")
+            self.assertEqual(tts_runs[0]["latency_ms"], 7)
+
+    def test_realtime_websocket_accepts_audio_buffer_with_transcript(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            audio = base64.b64encode(b"\0\0" * 12).decode("ascii")
+
+            with client.websocket_connect("/v1/realtime") as websocket:
+                created = websocket.receive_json()
+                session_id = created["session"]["id"]
+                websocket.send_json({"type": "input_audio_buffer.append", "audio": audio})
+                appended = websocket.receive_json()
+                websocket.send_json({
+                    "type": "input_audio_buffer.commit",
+                    "transcript": "Audio hello",
+                })
+                events = _receive_until(websocket, "response.done")
+
+            event_types = [event["type"] for event in events]
+            self.assertEqual(appended["type"], "input_audio_buffer.appended")
+            self.assertIn("conversation.item.input_audio_transcription.delta", event_types)
+            utterance = web_app.db.list_utterances(session_id)[0]
+            self.assertEqual(utterance["text"], "Audio hello")
+            self.assertEqual(utterance["source_provider"], "whisperx")
+
     def test_runtime_settings_form_persists_provider_config(self) -> None:
         keys = [
             "ATLAS_VOICE_ENV_FILE",
             "ATLAS_VOICE_DATA_DIR",
             "ATLAS_VOICE_MODELS_DIR",
             "ATLAS_VOICE_HF_CACHE",
+            "ATLAS_VOICE_ASSISTANT_CONFIG",
+            "ATLAS_VOICE_TTS_PROVIDER",
             "ATLAS_VOICE_STUB_MODE",
             "ATLAS_VOICE_ASR_PROVIDER",
             "ATLAS_VOICE_ASR_MODEL",
@@ -107,6 +260,8 @@ class WebTests(unittest.TestCase):
                 os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
                 os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
                 os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+                os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
                 os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
                 os.environ["ATLAS_VOICE_ASR_PROVIDER"] = "whisperx"
                 os.environ["ATLAS_VOICE_ASR_MODEL"] = ""
@@ -153,6 +308,8 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
@@ -197,6 +354,8 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
@@ -236,6 +395,15 @@ class WebTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("Synced to AnythingLLM", response.text)
             sync_mock.assert_called_once_with(web_app.db, recording_id, web_app.settings)
+
+
+def _receive_until(websocket, event_type: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    while True:
+        event = websocket.receive_json()
+        events.append(event)
+        if event.get("type") == event_type:
+            return events
 
 
 if __name__ == "__main__":

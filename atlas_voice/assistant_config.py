@@ -1,0 +1,228 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+class AssistantConfigError(ValueError):
+    pass
+
+
+DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
+    "profiles": {
+        "ambient": {
+            "enabled": False,
+            "stt_provider": "hyprwhspr",
+            "llm_profile": "small-classifier",
+            "tts_provider": "none",
+            "store_raw_audio_seconds": 30,
+        },
+        "direct_voice": {
+            "enabled": False,
+            "realtime_backend": "atlas-native",
+            "stt_provider": "whisperx",
+            "llm_profile": "qwen-voice",
+            "tts_provider": "none",
+            "require_tool_confirmation": True,
+        },
+        "reflection": {
+            "enabled": False,
+            "asr_provider": "whisperx",
+            "diarization_provider": "pyannote",
+            "llm_profile": "qwen-deep",
+            "schedule": "manual",
+        },
+    },
+    "privacy": {
+        "local_only": True,
+        "telemetry": False,
+        "allowed_hosts": ["127.0.0.1", "localhost", "llm"],
+        "raw_audio_retention_seconds": 30,
+    },
+}
+
+
+@dataclass(frozen=True)
+class AssistantConfig:
+    path: Path
+    loaded: bool
+    raw: dict[str, Any]
+
+    @property
+    def profiles(self) -> dict[str, dict[str, Any]]:
+        profiles = self.raw.get("profiles")
+        if isinstance(profiles, dict):
+            return {
+                str(name): dict(value)
+                for name, value in profiles.items()
+                if isinstance(value, dict)
+            }
+        return {}
+
+    @property
+    def privacy(self) -> dict[str, Any]:
+        privacy = self.raw.get("privacy")
+        return dict(privacy) if isinstance(privacy, dict) else {}
+
+    def enabled_profiles(self) -> list[str]:
+        return [
+            name
+            for name, profile in self.profiles.items()
+            if _truthy(profile.get("enabled", False))
+        ]
+
+
+def assistant_config_path(path: Path | None = None) -> Path:
+    if path is not None:
+        return path.expanduser().resolve()
+    configured = os.environ.get("ATLAS_VOICE_ASSISTANT_CONFIG")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.cwd() / "config" / "atlas.assistant.yaml"
+
+
+def load_assistant_config(path: Path | None = None) -> AssistantConfig:
+    config_path = assistant_config_path(path)
+    if not config_path.exists():
+        return AssistantConfig(
+            path=config_path,
+            loaded=False,
+            raw=_deep_merge(DEFAULT_ASSISTANT_CONFIG, {}),
+        )
+
+    try:
+        parsed = _load_mapping(config_path)
+    except Exception as exc:  # noqa: BLE001 - normalize parser failures for callers.
+        raise AssistantConfigError(f"Could not load assistant config {config_path}: {exc}") from exc
+
+    return AssistantConfig(
+        path=config_path,
+        loaded=True,
+        raw=_deep_merge(DEFAULT_ASSISTANT_CONFIG, parsed),
+    )
+
+
+def _load_mapping(path: Path) -> dict[str, Any]:
+    text = path.read_text()
+    stripped = text.lstrip()
+    if not stripped:
+        return {}
+    if stripped.startswith("{"):
+        parsed = json.loads(text)
+    else:
+        parsed = _parse_simple_yaml(text)
+    if not isinstance(parsed, dict):
+        raise AssistantConfigError("assistant config must be a mapping")
+    return parsed
+
+
+def _parse_simple_yaml(text: str) -> dict[str, Any]:
+    root: dict[str, Any] = {}
+    stack: list[tuple[int, dict[str, Any]]] = [(-1, root)]
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        if raw_line[: len(raw_line) - len(raw_line.lstrip())].replace(" ", ""):
+            raise AssistantConfigError(f"line {line_no}: tabs are not supported")
+
+        line = _strip_comment(raw_line).rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        item = line.strip()
+        if ":" not in item:
+            raise AssistantConfigError(f"line {line_no}: expected key: value")
+        key, raw_value = item.split(":", 1)
+        key = key.strip()
+        if not key:
+            raise AssistantConfigError(f"line {line_no}: missing key")
+
+        while indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1]
+        value = raw_value.strip()
+        if value == "":
+            child: dict[str, Any] = {}
+            parent[key] = child
+            stack.append((indent, child))
+        else:
+            parent[key] = _parse_scalar(value)
+
+    return root
+
+
+def _strip_comment(line: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char in {"'", '"'}:
+            if quote == char:
+                quote = None
+            elif quote is None:
+                quote = char
+            continue
+        if char == "#" and quote is None:
+            return line[:index]
+    return line
+
+
+def _parse_scalar(value: str) -> Any:
+    lowered = value.lower()
+    if lowered in {"true", "yes", "on"}:
+        return True
+    if lowered in {"false", "no", "off"}:
+        return False
+    if lowered in {"null", "none", "~"}:
+        return None
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        return value[1:-1]
+    if value.startswith("[") and value.endswith("]"):
+        body = value[1:-1].strip()
+        if not body:
+            return []
+        return [_parse_scalar(item.strip()) for item in body.split(",")]
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for key, value in base.items():
+        if isinstance(value, dict):
+            merged[key] = _deep_merge(value, {})
+        elif isinstance(value, list):
+            merged[key] = list(value)
+        else:
+            merged[key] = value
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)

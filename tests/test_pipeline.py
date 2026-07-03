@@ -35,6 +35,10 @@ class PipelineTests(unittest.TestCase):
 
             self.assertEqual(db.get_recording(recording_id)["status"], "done")
             self.assertIsNotNone(db.get_summary(recording_id))
+            model_run = db.list_model_runs()[0]
+            self.assertEqual(model_run["task"], "summarize")
+            self.assertEqual(model_run["provider"], "stub")
+            self.assertEqual(model_run["input_ref"], f"recording:{recording_id}")
             sync_mock.assert_called_once_with(db, recording_id, settings)
 
     def test_summarize_does_not_auto_sync_by_default(self) -> None:

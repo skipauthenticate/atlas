@@ -56,6 +56,51 @@
         <strong>{{ runtime.pyannote_model if runtime.diarization_provider == "pyannote" else runtime.diarization_provider }}</strong>
         <small>{{ runtime.diarization_provider }}</small>
       </div>
+      <div>
+        <span>RAM</span>
+        <strong>{{ status.system.ram.label }}</strong>
+        <small>{% if status.system.ram.used_percent is not none %}{{ status.system.ram.used_percent }}% used{% else %}unknown{% endif %}</small>
+      </div>
+      <div>
+        <span>Swap</span>
+        <strong>{{ status.system.swap.label }}</strong>
+        <small>{% if status.system.swap.used_percent is not none %}{{ status.system.swap.used_percent }}% used{% else %}unknown{% endif %}</small>
+      </div>
+      <div>
+        <span>GPU</span>
+        <strong>{{ status.system.gpu.label }}</strong>
+        <small>{{ "available" if status.system.gpu.available else "not active" }}</small>
+      </div>
+      <div>
+        <span>Privacy</span>
+        <strong class="privacy-state privacy-{{ status.privacy.status }}">{{ status.privacy.status }}</strong>
+        <small>{{ status.privacy.issue_count }} local-only issues</small>
+      </div>
+      <div>
+        <span>Listeners</span>
+        <strong>{{ status.active_listeners | length }}</strong>
+        <small>{% if status.active_listeners %}{% for listener in status.active_listeners %}{{ listener.profile }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</small>
+      </div>
+    </section>
+    <section class="system-status" aria-label="System status">
+      <div class="status-list">
+        {% for service in status.services %}
+          <div>
+            <span class="service-state service-{{ service.status }}">{{ service.status }}</span>
+            <strong>{{ service.name }}</strong>
+            <small>{{ service.detail }}</small>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="model-list">
+        {% for model in status.active_models %}
+          <div>
+            <span>{{ model.role }}</span>
+            <strong>{{ model.model }}</strong>
+            <small>{{ model.provider }}</small>
+          </div>
+        {% endfor %}
+      </div>
     </section>
     <form class="runtime-settings" action="/settings/runtime" method="post">
       <label>

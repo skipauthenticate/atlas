@@ -4,14 +4,25 @@ import argparse
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
+from .ambient import (
+    AMBIENT_MODES,
+    AmbientResult,
+    process_ambient_file,
+    process_ambient_path,
+    process_microphone_once,
+)
 from .anythingllm import AnythingLLMError, sync_recording_to_anythingllm
+from .assistant_config import AssistantConfigError, load_assistant_config
 from .config import Settings
 from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
+from .privacy import privacy_summary
 from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
+from .storage import is_audio_file
 from .worker import Worker
 
 
@@ -52,6 +63,37 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_anythingllm.add_argument("recording_id")
     sync_anythingllm.set_defaults(func=cmd_sync_anythingllm)
+
+    privacy = subparsers.add_parser("privacy", help="Privacy and local-only checks")
+    privacy_subparsers = privacy.add_subparsers(dest="privacy_command", required=True)
+    privacy_status = privacy_subparsers.add_parser("status", help="Show local-only status")
+    privacy_status.set_defaults(func=cmd_privacy_status)
+    privacy_audit = privacy_subparsers.add_parser("audit-egress", help="Audit configured egress URLs")
+    privacy_audit.set_defaults(func=cmd_privacy_audit_egress)
+
+    ambient = subparsers.add_parser("ambient", help="Run the ambient listener MVP")
+    ambient.add_argument(
+        "--source",
+        help="Audio file, directory, or 'mic'. Defaults to ATLAS_VOICE_AMBIENT_SOURCE.",
+    )
+    ambient.add_argument(
+        "--mode",
+        choices=sorted(AMBIENT_MODES),
+        help="ambient, meeting, direct, private, or paused.",
+    )
+    ambient.add_argument("--once", action="store_true", help="Process one source/chunk and exit")
+    ambient.add_argument("--chunk-seconds", type=float, help="Mic capture chunk duration")
+    ambient.add_argument("--poll-seconds", type=float, help="Directory/mic polling interval")
+    ambient.add_argument("--mic-device", help="ALSA device name for mic capture")
+    ambient.add_argument("--vad-threshold", type=float, help="Energy threshold for VAD")
+    ambient.add_argument("--min-speech-seconds", type=float, help="Minimum segment duration")
+    ambient.add_argument(
+        "--retain-audio",
+        action="store_true",
+        default=None,
+        help="Keep transient ambient audio artifacts",
+    )
+    ambient.set_defaults(func=cmd_ambient)
 
     benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
@@ -142,6 +184,162 @@ def cmd_sync_anythingllm(args: argparse.Namespace) -> int:
     else:
         print("synced to AnythingLLM")
     return 0
+
+
+def cmd_privacy_status(_args: argparse.Namespace) -> int:
+    try:
+        _settings, _db, report = _privacy_report("privacy.status")
+    except AssistantConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Local-only status: {report['status']}")
+    print(f"Assistant config: {report['assistant_config_path']}")
+    print("Assistant config loaded: " + ("yes" if report["assistant_config_loaded"] else "no"))
+    if report["issues"]:
+        for issue in report["issues"]:
+            print(f"[{issue['severity']}] {issue['check']}: {issue['message']}")
+    else:
+        print("No local-only issues found.")
+    return 1 if report["status"] == "error" else 0
+
+
+def cmd_privacy_audit_egress(_args: argparse.Namespace) -> int:
+    try:
+        settings, _db, report = _privacy_report("privacy.audit_egress")
+    except AssistantConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print("Configured endpoints:")
+    print(f"- web: {settings.host}:{settings.port}")
+    print(f"- llm: {settings.llm_base_url}")
+    if (
+        settings.anythingllm_auto_sync
+        or settings.anythingllm_api_key
+        or settings.anythingllm_workspace_slug
+    ):
+        print(f"- anythingllm: {settings.anythingllm_base_url}")
+    print(f"Local-only status: {report['status']}")
+    if report["issues"]:
+        for issue in report["issues"]:
+            print(f"[{issue['severity']}] {issue['check']}: {issue['message']}")
+    else:
+        print("No configured external egress found.")
+    return 1 if report["status"] == "error" else 0
+
+
+def _privacy_report(event_type: str) -> tuple[Settings, Database, dict[str, object]]:
+    settings, db = settings_and_db()
+    assistant_config = load_assistant_config(settings.assistant_config_path)
+    report = privacy_summary(settings, assistant_config)
+    db.log_privacy_event(
+        event_type,
+        f"Local-only status: {report['status']}",
+        severity="error" if report["status"] == "error" else "info",
+        metadata={
+            "issue_count": report["issue_count"],
+            "assistant_config_loaded": report["assistant_config_loaded"],
+        },
+    )
+    return settings, db, report
+
+
+def cmd_ambient(args: argparse.Namespace) -> int:
+    settings, db = settings_and_db()
+    source = args.source or settings.ambient_source
+    mode = args.mode or settings.ambient_mode
+    retain_audio = args.retain_audio
+    if mode in {"private", "paused"}:
+        db.log_privacy_event(
+            "ambient.skipped",
+            f"Ambient mode {mode} skipped audio processing.",
+            metadata={"source": source, "mode": mode},
+        )
+        print(f"ambient listener {mode}; no audio processed")
+        return 0
+
+    try:
+        if source == "mic":
+            return _run_ambient_mic(args, settings, db, mode, retain_audio)
+        source_path = Path(source)
+        if source_path.is_dir() and not args.once:
+            return _run_ambient_directory_loop(args, settings, db, mode, source_path, retain_audio)
+        results = process_ambient_path(
+            source_path,
+            settings,
+            db,
+            mode=mode,
+            retain_audio=retain_audio,
+            vad_threshold=args.vad_threshold,
+            min_speech_seconds=args.min_speech_seconds,
+        )
+    except KeyboardInterrupt:
+        print("ambient listener stopped")
+        return 0
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    for result in results:
+        _print_ambient_result(result)
+    return 0
+
+
+def _run_ambient_mic(
+    args: argparse.Namespace,
+    settings: Settings,
+    db: Database,
+    mode: str,
+    retain_audio: bool | None,
+) -> int:
+    while True:
+        result = process_microphone_once(
+            settings,
+            db,
+            mode=mode,
+            seconds=args.chunk_seconds,
+            device=args.mic_device,
+            retain_audio=retain_audio,
+        )
+        _print_ambient_result(result)
+        if args.once:
+            return 0
+        time.sleep(args.poll_seconds or settings.ambient_poll_seconds)
+
+
+def _run_ambient_directory_loop(
+    args: argparse.Namespace,
+    settings: Settings,
+    db: Database,
+    mode: str,
+    source_path: Path,
+    retain_audio: bool | None,
+) -> int:
+    seen: set[Path] = set()
+    while True:
+        for path in sorted(source_path.iterdir()):
+            resolved = path.resolve()
+            if resolved in seen or not is_audio_file(path):
+                continue
+            result = process_ambient_file(
+                path,
+                settings,
+                db,
+                mode=mode,
+                retain_audio=retain_audio,
+                vad_threshold=args.vad_threshold,
+                min_speech_seconds=args.min_speech_seconds,
+            )
+            seen.add(resolved)
+            _print_ambient_result(result)
+        time.sleep(args.poll_seconds or settings.ambient_poll_seconds)
+
+
+def _print_ambient_result(result: AmbientResult) -> None:
+    session = result.session_id or "-"
+    print(
+        f"ambient session {session}: {result.status}; "
+        f"{result.utterance_count} utterances from {result.segment_count} segments"
+    )
 
 
 def cmd_benchmark_asr(args: argparse.Namespace) -> int:

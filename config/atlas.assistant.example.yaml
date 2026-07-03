@@ -1,0 +1,34 @@
+# Optional assistant runtime configuration.
+# Atlas Voice uses conservative local-only defaults if this file is absent.
+profiles:
+  ambient:
+    enabled: false
+    source: mic
+    mode: ambient
+    stt_provider: hyprwhspr
+    llm_profile: small-classifier
+    tts_provider: none
+    store_raw_audio_seconds: 30
+
+  direct_voice:
+    enabled: false
+    realtime_backend: atlas-native
+    stt_provider: whisperx
+    llm_profile: qwen-voice
+    tts_provider: faster-qwen3-tts
+    tts_base_url: http://127.0.0.1:8008/v1/audio/speech
+    tts_model: faster-qwen3-tts-0.6b
+    require_tool_confirmation: true
+
+  reflection:
+    enabled: false
+    asr_provider: whisperx
+    diarization_provider: pyannote
+    llm_profile: qwen-deep
+    schedule: manual
+
+privacy:
+  local_only: true
+  telemetry: false
+  allowed_hosts: [127.0.0.1, localhost, llm]
+  raw_audio_retention_seconds: 30

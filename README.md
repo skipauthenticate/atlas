@@ -50,6 +50,8 @@ atlas-voice export <recording_id> --format json
 atlas-voice export <recording_id> --format md
 atlas-voice export <recording_id> --format txt
 atlas-voice sync-anythingllm <recording_id>
+atlas-voice ambient --source /path/to/audio.wav --mode meeting --once
+atlas-voice ambient --source mic --mode ambient
 ```
 
 When running from source without installation:
@@ -69,6 +71,53 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
   into an AnythingLLM workspace.
 - `GET /search?q=...`: full-text transcript and summary search.
 - `GET /api/recordings/{id}`: structured JSON export.
+- `GET /api/status`: local system, model, service, listener, and privacy status.
+- `WebSocket /v1/realtime`: OpenAI-style local realtime session events.
+
+## Assistant Foundation
+
+Phase 0 assistant plumbing is available without enabling always-on listening.
+Phase 1 adds a local `/v1/realtime` WebSocket for direct voice sessions.
+Atlas loads optional runtime profiles from:
+
+```text
+config/atlas.assistant.yaml
+```
+
+Start from `config/atlas.assistant.example.yaml` and keep profiles disabled until
+their services are installed. The dashboard and `atlas-voice privacy status`
+show local-only validation, RAM/swap/GPU status, active models, active listeners,
+and service health. Audit tables for `model_runs` and `privacy_events` are stored
+in the existing SQLite database.
+
+The realtime endpoint accepts `input_text`, `conversation.item.create` plus
+`response.create`, and `input_audio_buffer.append` / `commit` JSON events. Audio
+commits are written under `data/artifacts/realtime/` and use the configured local
+ASR provider unless the commit includes a transcript. Assistant replies use the
+local OpenAI-compatible LLM endpoint. Set
+`ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts` with
+`ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech` to stream WAV
+audio deltas from a local OpenAI-compatible TTS sidecar. Atlas checks
+`ATLAS_TTS_HEALTH_URL`, stores synthesized audio under
+`data/artifacts/realtime/`, and logs sidecar latency in `model_runs`. Piper
+remains available with `ATLAS_VOICE_TTS_PROVIDER=piper` and
+`ATLAS_VOICE_PIPER_VOICE=/path/to/voice.onnx`.
+
+Phase 2 adds `atlas-voice ambient`. It can process a file once, watch a directory,
+or capture local mic chunks through `ffmpeg`/ALSA. The listener normalizes audio
+to 16 kHz mono, segments speech with local energy VAD, transcribes each segment
+with the configured local ASR provider, and stores transcripts in
+`ambient_sessions` / `utterances`. Audio artifacts are deleted after
+transcription unless `ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true` or `--retain-audio`
+is set. `private` and `paused` modes skip audio processing and write a local
+privacy event. Recent sessions are available at `GET /api/ambient/sessions`.
+
+Useful commands:
+
+```bash
+atlas-voice privacy status
+atlas-voice privacy audit-egress
+```
 
 ## AnythingLLM Integration
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import subprocess
@@ -10,11 +11,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from atlas_voice.assistant_config import load_assistant_config
 from atlas_voice.anythingllm import (
     AnythingLLMConfigError,
     AnythingLLMError,
@@ -25,11 +27,26 @@ from atlas_voice.database import Database, row_to_dict
 from atlas_voice.exporter import export_payload, export_recording
 from atlas_voice.merge import format_seconds
 from atlas_voice.pipeline import PipelineProcessor
+from atlas_voice.realtime import (
+    REALTIME_SYSTEM_PROMPT,
+    audio_delta_payload,
+    chunk_text,
+    decode_audio_delta,
+    extract_text_input,
+    generate_realtime_reply,
+    is_tts_sidecar_provider,
+    normalize_tts_provider,
+    synthesize_with_piper,
+    synthesize_with_tts_sidecar,
+    transcribe_realtime_audio,
+)
+from atlas_voice.status import runtime_status as collect_runtime_status
 from atlas_voice.storage import safe_filename
 from atlas_voice.summarizer import get_template, list_templates, summary_to_sections
 
 
 settings = Settings.from_env()
+assistant_config = load_assistant_config(settings.assistant_config_path)
 db = Database(settings.db_path)
 processor = PipelineProcessor(settings, db)
 
@@ -166,8 +183,9 @@ def _clean_env_value(value: str) -> str:
 
 
 def _refresh_runtime_settings() -> None:
-    global settings, processor
+    global settings, assistant_config, processor
     settings = Settings.from_env()
+    assistant_config = load_assistant_config(settings.assistant_config_path)
     settings.ensure_directories()
     processor = PipelineProcessor(settings, db)
 
@@ -278,6 +296,7 @@ def dashboard(
         {
             "recordings": recordings,
             "runtime": runtime_info(settings),
+            "status": collect_runtime_status(settings, db, assistant_config),
             "runtime_settings_message": _runtime_settings_message(runtime_settings, worker),
         },
     )
@@ -458,9 +477,418 @@ def normalized_audio(recording_id: str) -> FileResponse:
     return FileResponse(path, media_type="audio/wav", filename=f"{recording_id}.wav")
 
 
+@app.websocket("/v1/realtime")
+async def realtime_websocket(websocket: WebSocket) -> None:
+    await websocket.accept()
+    settings.ensure_directories()
+    db.initialize()
+    session_id = db.create_ambient_session(
+        mode="direct_voice",
+        source="websocket",
+        title="Realtime voice session",
+    )
+    instructions = _realtime_instructions()
+    tts_provider = _realtime_tts_provider()
+    audio_buffer = bytearray()
+    pending_text: str | None = None
+    audio_sample_rate = settings.realtime_audio_sample_rate
+    audio_channels = settings.realtime_audio_channels
+
+    await _send_realtime_event(
+        websocket,
+        "session.created",
+        session={
+            "id": session_id,
+            "object": "realtime.session",
+            "model": settings.llm_model,
+            "modalities": ["text", "audio"],
+            "input_audio_format": "pcm16",
+            "output_audio_format": "wav" if _tts_outputs_audio(tts_provider) else "none",
+        },
+    )
+
+    try:
+        while True:
+            event = await websocket.receive_json()
+            event_type = str(event.get("type") or "")
+            if event_type == "session.update":
+                instructions = _updated_realtime_instructions(event, instructions)
+                audio_sample_rate = int(
+                    event.get("input_audio_sample_rate")
+                    or event.get("sample_rate")
+                    or audio_sample_rate
+                )
+                audio_channels = int(event.get("channels") or audio_channels)
+                await _send_realtime_event(
+                    websocket,
+                    "session.updated",
+                    session={"id": session_id, "instructions": instructions},
+                )
+                continue
+
+            if event_type == "input_audio_buffer.append":
+                try:
+                    audio_buffer.extend(decode_audio_delta(event))
+                except ValueError as exc:
+                    await _send_realtime_error(websocket, str(exc), event_type=event_type)
+                    continue
+                await _send_realtime_event(
+                    websocket,
+                    "input_audio_buffer.appended",
+                    byte_count=len(audio_buffer),
+                )
+                continue
+
+            if event_type == "input_audio_buffer.clear":
+                audio_buffer.clear()
+                await _send_realtime_event(websocket, "input_audio_buffer.cleared")
+                continue
+
+            if event_type == "input_audio_buffer.commit":
+                committed = bytes(audio_buffer)
+                audio_buffer.clear()
+                await _send_realtime_event(
+                    websocket,
+                    "input_audio_buffer.committed",
+                    byte_count=len(committed),
+                )
+                text = extract_text_input(event)
+                if not text and committed:
+                    try:
+                        text, _audio_path = await asyncio.to_thread(
+                            transcribe_realtime_audio,
+                            committed,
+                            settings,
+                            _realtime_artifact_dir(session_id),
+                            sample_rate=audio_sample_rate,
+                            channels=audio_channels,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
+                        await _send_realtime_error(
+                            websocket,
+                            f"Audio transcription failed: {_safe_realtime_error(exc)}",
+                            event_type=event_type,
+                        )
+                        continue
+                if not text:
+                    await _send_realtime_error(
+                        websocket,
+                        "input_audio_buffer.commit requires audio or transcript text",
+                        event_type=event_type,
+                    )
+                    continue
+                await _handle_realtime_user_text(
+                    websocket,
+                    session_id=session_id,
+                    text=text,
+                    source_provider=settings.asr_provider if committed else "text",
+                    transcript_prefix="conversation.item.input_audio_transcription",
+                    instructions=instructions,
+                    tts_provider=tts_provider,
+                )
+                continue
+
+            if event_type in {"input_text", "input.text", "message"}:
+                text = extract_text_input(event)
+                if not text:
+                    await _send_realtime_error(
+                        websocket,
+                        "text event requires a non-empty text field",
+                        event_type=event_type,
+                    )
+                    continue
+                await _handle_realtime_user_text(
+                    websocket,
+                    session_id=session_id,
+                    text=text,
+                    source_provider="text",
+                    transcript_prefix="conversation.item.input_text",
+                    instructions=instructions,
+                    tts_provider=tts_provider,
+                )
+                continue
+
+            if event_type == "conversation.item.create":
+                pending_text = extract_text_input(event)
+                await _send_realtime_event(
+                    websocket,
+                    "conversation.item.created",
+                    item={"id": f"item_{uuid.uuid4().hex}", "type": "message"},
+                )
+                continue
+
+            if event_type == "response.create":
+                if not pending_text:
+                    await _send_realtime_error(
+                        websocket,
+                        "response.create has no pending user text",
+                        event_type=event_type,
+                    )
+                    continue
+                text = pending_text
+                pending_text = None
+                await _handle_realtime_user_text(
+                    websocket,
+                    session_id=session_id,
+                    text=text,
+                    source_provider="text",
+                    transcript_prefix="conversation.item.input_text",
+                    instructions=instructions,
+                    tts_provider=tts_provider,
+                )
+                continue
+
+            await _send_realtime_error(
+                websocket,
+                f"Unsupported realtime event type: {event_type or '<missing>'}",
+                event_type=event_type or None,
+            )
+    except WebSocketDisconnect:
+        pass
+    finally:
+        db.end_ambient_session(session_id)
+
+
+async def _handle_realtime_user_text(
+    websocket: WebSocket,
+    *,
+    session_id: str,
+    text: str,
+    source_provider: str,
+    transcript_prefix: str,
+    instructions: str,
+    tts_provider: str,
+) -> None:
+    utterance_id = db.add_utterance(
+        session_id=session_id,
+        text=text,
+        source_provider=source_provider,
+    )
+    item_id = f"utt_{utterance_id}"
+    await _send_realtime_event(
+        websocket,
+        f"{transcript_prefix}.delta",
+        item_id=item_id,
+        delta=text,
+    )
+    await _send_realtime_event(
+        websocket,
+        f"{transcript_prefix}.done",
+        item_id=item_id,
+        text=text,
+    )
+
+    response_id = f"resp_{uuid.uuid4().hex}"
+    await _send_realtime_event(
+        websocket,
+        "response.created",
+        response={"id": response_id, "status": "in_progress"},
+    )
+
+    provider = "stub" if settings.stub_mode else "openai-compatible"
+    try:
+        reply = await asyncio.to_thread(
+            generate_realtime_reply,
+            text,
+            settings,
+            instructions=instructions,
+        )
+    except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
+        db.log_model_run(
+            provider=provider,
+            model=settings.llm_model,
+            task="realtime_chat",
+            input_ref=f"utterance:{utterance_id}",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        await _send_realtime_event(
+            websocket,
+            "response.failed",
+            response={"id": response_id, "status": "failed"},
+            error={"message": _safe_realtime_error(exc)},
+        )
+        return
+
+    for delta in chunk_text(reply.text):
+        await _send_realtime_event(
+            websocket,
+            "response.text.delta",
+            response_id=response_id,
+            delta=delta,
+        )
+    await _send_realtime_event(
+        websocket,
+        "response.text.done",
+        response_id=response_id,
+        text=reply.text,
+    )
+
+    audio_path: str | None = None
+    if _tts_outputs_audio(tts_provider):
+        try:
+            if tts_provider == "piper":
+                audio = await asyncio.to_thread(
+                    synthesize_with_piper,
+                    reply.text,
+                    settings,
+                    _realtime_artifact_dir(session_id),
+                )
+            else:
+                audio = await asyncio.to_thread(
+                    synthesize_with_tts_sidecar,
+                    reply.text,
+                    settings,
+                    _realtime_artifact_dir(session_id),
+                )
+            audio_path = str(audio.path)
+            db.log_model_run(
+                provider=tts_provider,
+                model=_realtime_tts_model(tts_provider),
+                task="realtime_tts",
+                input_ref=f"response:{response_id}",
+                output_ref=audio_path,
+                latency_ms=audio.latency_ms,
+            )
+            await _send_realtime_event(
+                websocket,
+                "response.audio.delta",
+                response_id=response_id,
+                delta=audio_delta_payload(audio.payload),
+                media_type=audio.media_type,
+            )
+            await _send_realtime_event(
+                websocket,
+                "response.audio.done",
+                response_id=response_id,
+                audio_path=audio_path,
+            )
+        except Exception as exc:  # noqa: BLE001 - TTS failure should not drop text response.
+            db.log_model_run(
+                provider=tts_provider,
+                model=_realtime_tts_model(tts_provider),
+                task="realtime_tts",
+                input_ref=f"response:{response_id}",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            await _send_realtime_event(
+                websocket,
+                "response.audio.failed",
+                response_id=response_id,
+                error={"message": _safe_realtime_error(exc)},
+            )
+    else:
+        await _send_realtime_event(
+            websocket,
+            "response.audio.done",
+            response_id=response_id,
+            status="skipped",
+        )
+
+    turn_id = db.add_assistant_turn(
+        session_id=session_id,
+        user_utterance_id=utterance_id,
+        text=reply.text,
+        audio_path=audio_path,
+        model=settings.llm_model,
+        latency_ms=reply.latency_ms,
+    )
+    db.log_model_run(
+        provider=provider,
+        model=settings.llm_model,
+        task="realtime_chat",
+        input_ref=f"utterance:{utterance_id}",
+        output_ref=f"assistant_turn:{turn_id}",
+        latency_ms=reply.latency_ms,
+        tokens_in=reply.tokens_in,
+        tokens_out=reply.tokens_out,
+    )
+    await _send_realtime_event(
+        websocket,
+        "response.done",
+        response={
+            "id": response_id,
+            "status": "completed",
+            "output": [{"type": "message", "text": reply.text}],
+            "turn_id": turn_id,
+        },
+    )
+
+
+async def _send_realtime_event(websocket: WebSocket, event_type: str, **payload: Any) -> None:
+    await websocket.send_json({"event_id": f"evt_{uuid.uuid4().hex}", "type": event_type, **payload})
+
+
+async def _send_realtime_error(
+    websocket: WebSocket,
+    message: str,
+    *,
+    event_type: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {"error": {"message": message}}
+    if event_type:
+        payload["error"]["event_type"] = event_type
+    await _send_realtime_event(websocket, "error", **payload)
+
+
+def _realtime_instructions() -> str:
+    profile = assistant_config.profiles.get("direct_voice", {})
+    instructions = profile.get("instructions") if isinstance(profile, dict) else None
+    return str(instructions or REALTIME_SYSTEM_PROMPT)
+
+
+def _updated_realtime_instructions(event: dict[str, Any], current: str) -> str:
+    session = event.get("session")
+    if isinstance(session, dict) and session.get("instructions"):
+        return str(session["instructions"])
+    if event.get("instructions"):
+        return str(event["instructions"])
+    return current
+
+
+def _realtime_tts_provider() -> str:
+    provider = normalize_tts_provider(settings.tts_provider)
+    if provider != "none":
+        return provider
+    profile = assistant_config.profiles.get("direct_voice", {})
+    if isinstance(profile, dict) and profile.get("enabled") is True:
+        return normalize_tts_provider(str(profile.get("tts_provider") or "none"))
+    return "none"
+
+
+def _tts_outputs_audio(tts_provider: str) -> bool:
+    return tts_provider == "piper" or is_tts_sidecar_provider(tts_provider)
+
+
+def _realtime_tts_model(tts_provider: str) -> str:
+    if tts_provider == "piper":
+        return settings.piper_voice or "piper"
+    if is_tts_sidecar_provider(tts_provider):
+        return settings.tts_model
+    return tts_provider
+
+
+def _realtime_artifact_dir(session_id: str) -> Path:
+    return settings.artifacts_dir / "realtime" / session_id
+
+
+def _safe_realtime_error(exc: Exception) -> str:
+    return str(exc).replace("\n", " ").replace("\r", " ")[:500]
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/status")
+def api_status() -> JSONResponse:
+    return JSONResponse(collect_runtime_status(settings, db, assistant_config))
+
+
+@app.get("/api/ambient/sessions")
+def api_ambient_sessions(limit: int = 20) -> JSONResponse:
+    safe_limit = min(max(limit, 1), 100)
+    return JSONResponse({"sessions": db.list_ambient_sessions(safe_limit)})
 
 
 # ---------------------------------------------------------------------------

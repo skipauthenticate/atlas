@@ -83,6 +83,73 @@ class DatabaseTests(unittest.TestCase):
             self.assertIsNone(summarize_job["started_at"])
             self.assertIsNone(summarize_job["finished_at"])
 
+    def test_realtime_session_persists_utterances_and_turns(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+
+            session_id = db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Realtime",
+            )
+            utterance_id = db.add_utterance(
+                session_id=session_id,
+                text="Hello Atlas",
+                source_provider="text",
+            )
+            turn_id = db.add_assistant_turn(
+                session_id=session_id,
+                user_utterance_id=utterance_id,
+                text="Hello back",
+                model="qwen-local",
+                latency_ms=12,
+            )
+            db.end_ambient_session(session_id)
+
+            session = db.get_ambient_session(session_id)
+            utterances = db.list_utterances(session_id)
+            turns = db.list_assistant_turns(session_id)
+
+            self.assertEqual(session["status"], "ended")
+            self.assertEqual(db.count_ambient_sessions(), 1)
+            self.assertEqual(db.count_ambient_sessions(status="ended"), 1)
+            self.assertEqual(db.list_ambient_sessions()[0]["utterance_count"], 1)
+            self.assertEqual(utterances[0]["id"], utterance_id)
+            self.assertEqual(utterances[0]["idx"], 0)
+            self.assertEqual(utterances[0]["text"], "Hello Atlas")
+            self.assertEqual(turns[0]["id"], turn_id)
+            self.assertEqual(turns[0]["user_utterance_id"], utterance_id)
+            self.assertEqual(turns[0]["tool_calls"], [])
+
+    def test_audit_tables_store_model_runs_and_privacy_events(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+
+            run_id = db.log_model_run(
+                provider="openai-compatible",
+                model="qwen-local",
+                task="summarize",
+                input_ref="recording:abc",
+                output_ref="summary:abc",
+                latency_ms=42,
+            )
+            event_id = db.log_privacy_event(
+                "privacy.audit_egress",
+                "Local-only status: ok",
+                metadata={"issue_count": 0},
+            )
+
+            self.assertGreater(run_id, 0)
+            self.assertGreater(event_id, 0)
+            model_run = db.list_model_runs()[0]
+            privacy_event = db.list_privacy_events()[0]
+            self.assertEqual(model_run["task"], "summarize")
+            self.assertEqual(model_run["latency_ms"], 42)
+            self.assertEqual(privacy_event["event_type"], "privacy.audit_egress")
+            self.assertEqual(privacy_event["metadata"], {"issue_count": 0})
+
 
 if __name__ == "__main__":
     unittest.main()
