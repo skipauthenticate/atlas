@@ -181,6 +181,65 @@ class WebTests(unittest.TestCase):
             self.assertIn("faster-qwen3-tts-0.6b", payload["components"]["tts"]["detail"])
             self.assertIn("tts", payload["issues"][0]["component"])
 
+    def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            ambient_id = web_app.db.create_ambient_session(
+                mode="ambient",
+                source="file",
+                title="Ambient",
+            )
+            direct_id = web_app.db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Realtime",
+            )
+            utterance_id = web_app.db.add_utterance(
+                session_id=direct_id,
+                text="Hello Atlas",
+                source_provider="text",
+            )
+            web_app.db.add_assistant_turn(
+                session_id=direct_id,
+                user_utterance_id=utterance_id,
+                text="Hello back",
+                model="qwen-local",
+                latency_ms=9,
+            )
+            web_app.db.end_ambient_session(ambient_id)
+            web_app.db.end_ambient_session(direct_id)
+            client = TestClient(web_app.app)
+
+            response = client.get("/api/assistant/sessions")
+            all_response = client.get("/api/assistant/sessions", params={"mode": "all"})
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["mode"], "direct_voice")
+            self.assertEqual([session["id"] for session in payload["sessions"]], [direct_id])
+            self.assertEqual(payload["sessions"][0]["utterance_count"], 1)
+            self.assertEqual(payload["sessions"][0]["assistant_turn_count"], 1)
+            self.assertEqual(all_response.status_code, 200)
+            self.assertEqual(
+                {session["id"] for session in all_response.json()["sessions"]},
+                {ambient_id, direct_id},
+            )
+
     def test_realtime_websocket_handles_text_and_persists_turn(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -644,6 +644,7 @@ class Database:
         limit: int = 20,
         *,
         status: str | None = None,
+        mode: str | None = None,
     ) -> list[dict[str, Any]]:
         query = """
             SELECT
@@ -655,9 +656,15 @@ class Database:
             LEFT JOIN assistant_turns t ON t.session_id = s.id
         """
         params: list[Any] = []
+        filters: list[str] = []
         if status:
-            query += " WHERE s.status = ?"
+            filters.append("s.status = ?")
             params.append(status)
+        if mode:
+            filters.append("s.mode = ?")
+            params.append(mode)
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
         query += " GROUP BY s.id ORDER BY s.started_at DESC LIMIT ?"
         params.append(limit)
         with self.connect() as conn:

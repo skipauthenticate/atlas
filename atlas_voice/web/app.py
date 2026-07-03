@@ -891,6 +891,26 @@ def api_assistant_health() -> JSONResponse:
     return JSONResponse(collect_assistant_health(settings, db, assistant_config))
 
 
+@app.get("/api/assistant/sessions")
+def api_assistant_sessions(
+    limit: int = 20,
+    mode: str = "direct_voice",
+    status: str | None = None,
+) -> JSONResponse:
+    safe_limit = min(max(limit, 1), 100)
+    normalized_mode = mode.strip().lower() if mode else "direct_voice"
+    session_mode = None if normalized_mode == "all" else normalized_mode
+    sessions = db.list_ambient_sessions(safe_limit, status=status, mode=session_mode)
+    return JSONResponse(
+        {
+            "sessions": sessions,
+            "mode": normalized_mode,
+            "limit": safe_limit,
+            "status": status,
+        }
+    )
+
+
 @app.get("/api/ambient/sessions")
 def api_ambient_sessions(limit: int = 20) -> JSONResponse:
     safe_limit = min(max(limit, 1), 100)

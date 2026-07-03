@@ -73,6 +73,7 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
 - `GET /api/recordings/{id}`: structured JSON export.
 - `GET /api/status`: local system, model, service, listener, and privacy status.
 - `GET /api/assistant/health`: focused assistant readiness and component health.
+- `GET /api/assistant/sessions`: direct voice session history.
 - `WebSocket /v1/realtime`: OpenAI-style local realtime session events.
 
 ## Assistant Foundation

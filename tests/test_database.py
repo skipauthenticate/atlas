@@ -122,6 +122,35 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(turns[0]["user_utterance_id"], utterance_id)
             self.assertEqual(turns[0]["tool_calls"], [])
 
+    def test_list_ambient_sessions_can_filter_by_mode(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            ambient_id = db.create_ambient_session(
+                mode="ambient",
+                source="file",
+                title="Ambient",
+            )
+            direct_id = db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Realtime",
+            )
+            db.add_utterance(
+                session_id=direct_id,
+                text="Hello Atlas",
+                source_provider="text",
+            )
+            db.end_ambient_session(ambient_id)
+            db.end_ambient_session(direct_id)
+
+            direct_sessions = db.list_ambient_sessions(mode="direct_voice")
+            all_sessions = db.list_ambient_sessions(mode=None)
+
+        self.assertEqual([session["id"] for session in direct_sessions], [direct_id])
+        self.assertEqual(direct_sessions[0]["utterance_count"], 1)
+        self.assertEqual({session["id"] for session in all_sessions}, {ambient_id, direct_id})
+
     def test_audit_tables_store_model_runs_and_privacy_events(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

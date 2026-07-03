@@ -113,6 +113,13 @@ Ambient mode stores sessions in `ambient_sessions` and transcripts in
 or `paused` modes when capture should be skipped and logged as a local privacy
 event.
 
+Recent direct voice sessions are available at:
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/assistant/sessions | python -m json.tool
+```
+
+Use `mode=all` to include ambient and meeting sessions in the same shape.
 Recent ambient sessions are available at:
 
 ```bash
