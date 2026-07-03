@@ -18,6 +18,7 @@ from .ambient import (
 )
 from .anythingllm import AnythingLLMError, sync_recording_to_anythingllm
 from .assistant_config import AssistantConfigError, load_assistant_config
+from .coaching import generate_daily_coaching_summary
 from .config import Settings
 from .database import Database
 from .exporter import export_recording
@@ -99,6 +100,16 @@ def build_parser() -> argparse.ArgumentParser:
     privacy_retention.add_argument("--limit", type=int, default=10000, help="Maximum sessions to scan")
     privacy_retention.add_argument("--yes", action="store_true", help="Actually apply retention")
     privacy_retention.set_defaults(func=cmd_privacy_retention)
+
+    coaching = subparsers.add_parser("coaching", help="Local coaching summaries and feedback")
+    coaching_subparsers = coaching.add_subparsers(dest="coaching_command", required=True)
+    coaching_daily = coaching_subparsers.add_parser(
+        "daily",
+        help="Dry-run or store a local daily coaching summary",
+    )
+    coaching_daily.add_argument("--date", help="Date to summarize as YYYY-MM-DD; defaults to today")
+    coaching_daily.add_argument("--yes", action="store_true", help="Actually store the summary")
+    coaching_daily.set_defaults(func=cmd_coaching_daily)
 
     memory = subparsers.add_parser("memory", help="Local memory extraction and retrieval")
     memory_subparsers = memory.add_subparsers(dest="memory_command", required=True)
@@ -430,6 +441,31 @@ def _privacy_report(event_type: str) -> tuple[Settings, Database, dict[str, obje
         },
     )
     return settings, db, report
+
+
+def cmd_coaching_daily(args: argparse.Namespace) -> int:
+    _settings, db = settings_and_db()
+    try:
+        result = generate_daily_coaching_summary(
+            db,
+            args.date,
+            dry_run=not args.yes,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if result.status == "existing":
+        print(f"coaching daily existing: event {result.event_id} for {result.day}")
+    elif result.dry_run:
+        print(
+            f"coaching daily dry run: {result.session_count} session(s), "
+            f"{result.utterance_count} utterance(s)"
+        )
+        print("dry run only; rerun with --yes to store the summary")
+    else:
+        print(f"coaching daily stored: event {result.event_id} for {result.day}")
+    print(result.message)
+    return 0
 
 
 def cmd_memory_extract_ambient(args: argparse.Namespace) -> int:

@@ -291,6 +291,18 @@ them independently. The `/voice` inspector shows recent memory items with inline
 edit and delete controls; edits update the local FTS index immediately. Vector
 search remains a separate follow-up item.
 
+Generate a local daily coaching summary from captured ambient and direct voice
+sessions with:
+
+```bash
+atlas-voice coaching daily --date 2026-07-03
+atlas-voice coaching daily --date 2026-07-03 --yes
+```
+
+The command is dry-run by default. Confirmed runs store one idempotent
+`coaching.daily_summary` feedback event per date with session counts, question
+ratio, commitment count, and a local suggested focus.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,

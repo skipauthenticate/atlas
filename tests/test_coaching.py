@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from atlas_voice.coaching import generate_daily_coaching_summary
+from atlas_voice.database import Database
+
+
+class CoachingSummaryTests(unittest.TestCase):
+    def test_daily_coaching_summary_dry_run_then_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            direct_id = _session(db, "direct_voice", "Morning check-in", "2026-07-03T09:00:00+00:00")
+            ambient_id = _session(db, "meeting", "Planning meeting", "2026-07-03T14:00:00+00:00")
+            db.add_utterance(
+                session_id=direct_id,
+                text="What should I clarify before the launch review?",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=direct_id,
+                text="I will send the follow-up note today.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=ambient_id,
+                text="We need a clearer owner for the demo.",
+                source_provider="text",
+            )
+
+            dry_run = generate_daily_coaching_summary(db, "2026-07-03", dry_run=True)
+
+            self.assertEqual(dry_run.status, "ok")
+            self.assertIsNone(dry_run.event_id)
+            self.assertEqual(dry_run.session_count, 2)
+            self.assertEqual(dry_run.utterance_count, 3)
+            self.assertIn("Daily Coaching Summary - 2026-07-03", dry_run.message)
+            self.assertIn("Question ratio", dry_run.message)
+            self.assertIn("Morning check-in", dry_run.message)
+            self.assertEqual(db.list_feedback_events(category="daily_summary"), [])
+
+            stored = generate_daily_coaching_summary(db, "2026-07-03", dry_run=False)
+
+            events = db.list_feedback_events(category="daily_summary")
+            self.assertEqual(stored.event_id, events[0]["id"])
+            self.assertEqual(events[0]["event_type"], "coaching.daily_summary")
+            self.assertEqual(events[0]["metadata"]["day"], "2026-07-03")
+            self.assertEqual(events[0]["metadata"]["session_count"], 2)
+            self.assertIn("follow-up note", events[0]["message"])
+
+    def test_daily_coaching_summary_is_idempotent_for_day(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            session_id = _session(db, "direct_voice", "Daily check-in", "2026-07-03T10:00:00+00:00")
+            db.add_utterance(
+                session_id=session_id,
+                text="I prefer asking one question before advice.",
+                source_provider="text",
+            )
+
+            first = generate_daily_coaching_summary(db, "2026-07-03", dry_run=False)
+            second = generate_daily_coaching_summary(db, "2026-07-03", dry_run=False)
+
+            events = db.list_feedback_events(category="daily_summary")
+            self.assertEqual(first.event_id, second.event_id)
+            self.assertEqual(second.status, "existing")
+            self.assertEqual(len(events), 1)
+
+
+def _session(db: Database, mode: str, title: str, started_at: str) -> str:
+    session_id = db.create_ambient_session(mode=mode, source="test", title=title)
+    db.end_ambient_session(session_id)
+    with db.connect() as conn:
+        conn.execute(
+            """
+            UPDATE ambient_sessions
+            SET started_at = ?, ended_at = ?, created_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (started_at, started_at, started_at, started_at, session_id),
+        )
+    return session_id
+
+
+if __name__ == "__main__":
+    unittest.main()

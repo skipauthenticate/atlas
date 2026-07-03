@@ -179,6 +179,49 @@ class PrivacyPurgeCliTests(unittest.TestCase):
                 self.assertIn("memory extraction applied", confirmed["stdout"])
                 self.assertEqual(len(db.list_memory_items()), 1)
 
+    def test_coaching_daily_summary_dry_run_and_confirmed_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+            }
+            with patch.dict(os.environ, env, clear=True):
+                settings = Settings.from_env()
+                settings.ensure_directories()
+                db = Database(settings.db_path)
+                db.initialize()
+                session_id = db.create_ambient_session(
+                    mode="direct_voice",
+                    source="websocket",
+                    title="Daily voice check",
+                )
+                db.add_utterance(
+                    session_id=session_id,
+                    text="What should I improve tomorrow?",
+                    source_provider="text",
+                )
+                db.end_ambient_session(session_id)
+
+                dry_run = _run_cli(["coaching", "daily", "--date", datetime.now(UTC).date().isoformat()])
+
+                self.assertEqual(dry_run["code"], 0)
+                self.assertIn("coaching daily dry run", dry_run["stdout"])
+                self.assertEqual(db.list_feedback_events(category="daily_summary"), [])
+
+                confirmed = _run_cli([
+                    "coaching",
+                    "daily",
+                    "--date",
+                    datetime.now(UTC).date().isoformat(),
+                    "--yes",
+                ])
+
+                self.assertEqual(confirmed["code"], 0)
+                self.assertIn("coaching daily stored", confirmed["stdout"])
+                self.assertEqual(len(db.list_feedback_events(category="daily_summary")), 1)
+
     def test_privacy_purge_requires_at_least_one_filter(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
