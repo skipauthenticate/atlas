@@ -317,8 +317,22 @@ def voice_console(request: Request) -> Response:
             "status": status,
             "assistant_enabled": settings.assistant_enabled,
             "sessions": sessions,
+            "voice_settings": _voice_settings_view(),
         },
     )
+
+
+def _voice_settings_view() -> dict[str, Any]:
+    tts_provider = _realtime_tts_provider()
+    return {
+        "realtime_host": f"{settings.host}:{settings.port}",
+        "websocket_path": "/v1/realtime",
+        "sample_rate": settings.realtime_audio_sample_rate,
+        "channels": settings.realtime_audio_channels,
+        "tts_provider": tts_provider,
+        "tts_model": _realtime_tts_model(tts_provider) if tts_provider != "none" else "none",
+        "tts_base_url": settings.tts_base_url if is_tts_sidecar_provider(tts_provider) else None,
+    }
 
 
 def _voice_session_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:

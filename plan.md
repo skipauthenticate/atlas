@@ -445,7 +445,7 @@ Status: remaining.
 - [x] Add `/voice` as the main assistant console.
 - [x] Add left rail: Home, Voice, Ambient, Memory, Coaching, Search, Settings.
 - [ ] Add center workbench: live conversation, transcript, waveform/call surface, typed prompt box.
-- [ ] Add right inspector: voice/model settings, session history, privacy state, memory toggles.
+- [x] Add right inspector: voice/model settings, session history, privacy state, memory toggles.
 - [ ] Add bottom transport: mic, pause/private mode, interrupt, playback, volume, session timer.
 - [ ] Add Voice Playground for testing text-to-speech.
 - [ ] Add Voice Playground for testing STT.

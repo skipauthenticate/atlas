@@ -972,12 +972,14 @@ code {
   font-size: 14px;
 }
 
+.voice-setting-list,
 .voice-model-list,
 .voice-session-list {
   display: grid;
   gap: 8px;
 }
 
+.voice-setting-list div,
 .voice-model-list div,
 .voice-session-row {
   display: grid;
@@ -990,6 +992,8 @@ code {
   text-decoration: none;
 }
 
+.voice-setting-list span,
+.voice-setting-list small,
 .voice-model-list span,
 .voice-model-list small,
 .voice-session-row small {
@@ -997,6 +1001,7 @@ code {
   font-size: 12px;
 }
 
+.voice-setting-list strong,
 .voice-model-list strong,
 .voice-session-row strong {
   overflow: hidden;

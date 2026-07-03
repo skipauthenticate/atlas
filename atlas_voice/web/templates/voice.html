@@ -72,6 +72,27 @@
       </section>
 
       <section id="voice-settings">
+        <h2>Voice Settings</h2>
+        <div class="voice-setting-list">
+          <div>
+            <span>Realtime Host</span>
+            <strong>{{ voice_settings.realtime_host }}</strong>
+            <small>{{ voice_settings.websocket_path }}</small>
+          </div>
+          <div>
+            <span>Input Audio</span>
+            <strong>{{ voice_settings.sample_rate }} Hz</strong>
+            <small>{{ voice_settings.channels }} channel{{ '' if voice_settings.channels == 1 else 's' }}</small>
+          </div>
+          <div>
+            <span>TTS</span>
+            <strong>{{ voice_settings.tts_model }}</strong>
+            <small>{{ voice_settings.tts_provider }}{% if voice_settings.tts_base_url %} · {{ voice_settings.tts_base_url }}{% endif %}</small>
+          </div>
+        </div>
+      </section>
+
+      <section>
         <h2>Local Models</h2>
         <div class="voice-model-list">
           {% for model in status.active_models %}
