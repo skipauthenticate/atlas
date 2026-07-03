@@ -110,6 +110,8 @@ class ConfigTests(unittest.TestCase):
                 "ATLAS_VOICE_AMBIENT_VAD_THRESHOLD=700\n"
                 "ATLAS_VOICE_AMBIENT_MIN_SPEECH_SECONDS=0.25\n"
                 "ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true\n"
+                "ATLAS_VOICE_AMBIENT_RAW_AUDIO_RETENTION_DAYS=2.5\n"
+                "ATLAS_VOICE_AMBIENT_TRANSCRIPT_RETENTION_DAYS=14\n"
             )
             with patch.dict(os.environ, {"ATLAS_VOICE_PORT": "7777"}, clear=True):
                 cwd = Path.cwd()
@@ -157,6 +159,22 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.ambient_vad_threshold, 700)
         self.assertEqual(settings.ambient_min_speech_seconds, 0.25)
         self.assertTrue(settings.ambient_retain_audio)
+        self.assertEqual(settings.ambient_raw_audio_retention_days, 2.5)
+        self.assertEqual(settings.ambient_transcript_retention_days, 14)
+
+    def test_ambient_transcript_retention_defaults_to_indefinite(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(settings.ambient_raw_audio_retention_days, 0)
+        self.assertIsNone(settings.ambient_transcript_retention_days)
 
     def test_assistant_config_loader_merges_yaml_with_defaults(self) -> None:
         with TemporaryDirectory() as tmp:

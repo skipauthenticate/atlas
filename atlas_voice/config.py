@@ -40,6 +40,11 @@ def _bool_from_env(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _optional_int_from_env(name: str) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw else None
+
+
 @dataclass(frozen=True)
 class Settings:
     host: str
@@ -102,6 +107,8 @@ class Settings:
     ambient_vad_threshold: float = 500.0
     ambient_min_speech_seconds: float = 0.4
     ambient_retain_audio: bool = False
+    ambient_raw_audio_retention_days: float = 0.0
+    ambient_transcript_retention_days: int | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -219,6 +226,13 @@ class Settings:
                 os.environ.get("ATLAS_VOICE_AMBIENT_MIN_SPEECH_SECONDS", "0.4")
             ),
             ambient_retain_audio=_bool_from_env("ATLAS_VOICE_AMBIENT_RETAIN_AUDIO", False),
+            ambient_raw_audio_retention_days=max(
+                float(os.environ.get("ATLAS_VOICE_AMBIENT_RAW_AUDIO_RETENTION_DAYS", "0")),
+                0.0,
+            ),
+            ambient_transcript_retention_days=_optional_int_from_env(
+                "ATLAS_VOICE_AMBIENT_TRANSCRIPT_RETENTION_DAYS"
+            ),
         )
 
     @property

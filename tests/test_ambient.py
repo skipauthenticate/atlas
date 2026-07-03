@@ -65,6 +65,31 @@ class AmbientTests(unittest.TestCase):
             self.assertEqual(model_run["task"], "ambient_transcribe")
             self.assertFalse((settings.artifacts_dir / "ambient" / result.session_id).exists())
 
+    def test_process_ambient_file_retains_audio_for_configured_window(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_path = root / "meeting.wav"
+            _write_test_wav(audio_path)
+            settings = replace(_settings(root), ambient_raw_audio_retention_days=1)
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+
+            result = process_ambient_file(
+                audio_path,
+                settings,
+                db,
+                mode="meeting",
+                retain_audio=None,
+                vad_threshold=1000,
+                min_speech_seconds=0.2,
+            )
+
+            session = db.get_ambient_session(result.session_id)
+
+            self.assertEqual(session["retention_policy"], "retain_audio_window")
+            self.assertTrue((settings.artifacts_dir / "ambient" / result.session_id).exists())
+
     def test_process_ambient_file_stores_speaker_from_speaker_aware_asr(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

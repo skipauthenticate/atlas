@@ -560,7 +560,7 @@ Status: CLI/API MVP complete; speaker-aware ambient utterance storage exists; UI
 - [x] Add privacy purge command.
 - [x] Add retention policy for raw-audio disablement.
 - [x] Default to transcript-only retention.
-- [ ] Add configurable retention windows.
+- [x] Add configurable retention windows.
 - [x] Surface recent ambient sessions in the UI timeline.
 - [x] Add `GET /api/ambient/sessions`.
 - [x] Add active ambient sessions/listeners to status reporting.

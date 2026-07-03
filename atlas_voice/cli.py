@@ -23,6 +23,7 @@ from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
 from .privacy import privacy_summary
+from .retention import apply_ambient_retention
 from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
 from .storage import is_audio_file
 from .worker import Worker
@@ -86,6 +87,13 @@ def build_parser() -> argparse.ArgumentParser:
     privacy_purge.add_argument("--limit", type=int, default=100, help="Maximum matching sessions")
     privacy_purge.add_argument("--yes", action="store_true", help="Actually delete matching sessions")
     privacy_purge.set_defaults(func=cmd_privacy_purge)
+    privacy_retention = privacy_subparsers.add_parser(
+        "retention",
+        help="Dry-run or apply configured ambient retention windows",
+    )
+    privacy_retention.add_argument("--limit", type=int, default=10000, help="Maximum sessions to scan")
+    privacy_retention.add_argument("--yes", action="store_true", help="Actually apply retention")
+    privacy_retention.set_defaults(func=cmd_privacy_retention)
 
     ambient = subparsers.add_parser("ambient", help="Run the ambient listener MVP")
     ambient.add_argument(
@@ -307,6 +315,39 @@ def cmd_privacy_purge(args: argparse.Namespace) -> int:
         f"{result['utterance_count']} utterance(s), "
         f"{result['assistant_turn_count']} assistant turn(s), "
         f"{artifact_count} artifact dir(s)"
+    )
+    return 0
+
+
+def cmd_privacy_retention(args: argparse.Namespace) -> int:
+    settings, db = settings_and_db()
+    result = apply_ambient_retention(
+        settings,
+        db,
+        dry_run=not args.yes,
+        limit=args.limit,
+    )
+    suffix = "dry run" if result.dry_run else "applied"
+    print(
+        f"privacy retention {suffix}: "
+        f"{result.audio_artifact_count} audio artifact dir(s), "
+        f"{result.session_count} session(s)"
+    )
+    if result.dry_run:
+        print("dry run only; rerun with --yes to apply configured retention windows")
+        return 0
+
+    db.log_privacy_event(
+        "privacy.retention",
+        "Applied configured ambient retention windows.",
+        severity="info",
+        metadata={
+            "audio_artifact_count": result.audio_artifact_count,
+            "session_count": result.session_count,
+            "session_ids": list(result.session_ids),
+            "ambient_raw_audio_retention_days": settings.ambient_raw_audio_retention_days,
+            "ambient_transcript_retention_days": settings.ambient_transcript_retention_days,
+        },
     )
     return 0
 

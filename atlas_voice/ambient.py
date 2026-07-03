@@ -79,11 +79,11 @@ def process_ambient_file(
     if not is_audio_file(source_path):
         raise ValueError(f"Unsupported ambient audio source: {source_path}")
 
-    retain = settings.ambient_retain_audio if retain_audio is None else retain_audio
+    retain = _retain_ambient_audio(settings, retain_audio)
     session_id = db.create_ambient_session(
         mode=mode,
         source=str(source_path),
-        retention_policy="retain_audio" if retain else "transcript_only",
+        retention_policy=_ambient_retention_policy(settings, retain_audio, retain),
         title=source_path.stem,
     )
     artifact_dir = settings.artifacts_dir / "ambient" / session_id
@@ -131,6 +131,24 @@ def process_ambient_file(
         if not retain:
             with suppress(FileNotFoundError):
                 shutil.rmtree(artifact_dir)
+
+
+def _retain_ambient_audio(settings: Settings, retain_audio: bool | None) -> bool:
+    if retain_audio is not None:
+        return retain_audio
+    return settings.ambient_retain_audio or settings.ambient_raw_audio_retention_days > 0
+
+
+def _ambient_retention_policy(
+    settings: Settings,
+    retain_audio: bool | None,
+    retain: bool,
+) -> str:
+    if not retain:
+        return "transcript_only"
+    if retain_audio is None and not settings.ambient_retain_audio:
+        return "retain_audio_window"
+    return "retain_audio"
 
 
 def process_ambient_path(

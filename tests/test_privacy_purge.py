@@ -1,4 +1,5 @@
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -55,6 +56,54 @@ class PrivacyPurgeCliTests(unittest.TestCase):
                 self.assertIn("purged 1 session", confirmed["stdout"])
                 self.assertIsNone(db.get_ambient_session(session_id))
                 self.assertEqual(db.list_privacy_events()[0]["event_type"], "privacy.purge")
+
+    def test_privacy_retention_dry_run_and_confirmed_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+                "ATLAS_VOICE_AMBIENT_RAW_AUDIO_RETENTION_DAYS": "1",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                settings = Settings.from_env()
+                settings.ensure_directories()
+                db = Database(settings.db_path)
+                db.initialize()
+                session_id = db.create_ambient_session(
+                    mode="ambient",
+                    source="mic",
+                    retention_policy="retain_audio",
+                    title="Expired audio",
+                )
+                db.end_ambient_session(session_id)
+                old_time = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+                with db.connect() as conn:
+                    conn.execute(
+                        """
+                        UPDATE ambient_sessions
+                        SET started_at = ?, ended_at = ?, created_at = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (old_time, old_time, old_time, old_time, session_id),
+                    )
+                artifact_dir = settings.artifacts_dir / "ambient" / session_id
+                artifact_dir.mkdir(parents=True)
+                (artifact_dir / "segment.wav").write_text("audio")
+
+                dry_run = _run_cli(["privacy", "retention"])
+
+                self.assertEqual(dry_run["code"], 0)
+                self.assertIn("privacy retention dry run", dry_run["stdout"])
+                self.assertTrue(artifact_dir.exists())
+
+                confirmed = _run_cli(["privacy", "retention", "--yes"])
+
+                self.assertEqual(confirmed["code"], 0)
+                self.assertIn("privacy retention applied", confirmed["stdout"])
+                self.assertFalse(artifact_dir.exists())
+                self.assertEqual(db.list_privacy_events()[0]["event_type"], "privacy.retention")
 
     def test_privacy_purge_requires_at_least_one_filter(self) -> None:
         with TemporaryDirectory() as tmp:

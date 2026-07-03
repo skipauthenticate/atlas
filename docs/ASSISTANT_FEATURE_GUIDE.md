@@ -232,7 +232,18 @@ diarization turns, the best available speaker label is stored on the utterance
 as `speaker`; providers without speaker metadata keep the default user label.
 Raw audio is deleted after
 transcription unless
-`ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true` or `--retain-audio` is set. Use `private`
+`ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true`, `--retain-audio`, or a positive
+`ATLAS_VOICE_AMBIENT_RAW_AUDIO_RETENTION_DAYS` value is set. Transcript
+retention is indefinite by default; set
+`ATLAS_VOICE_AMBIENT_TRANSCRIPT_RETENTION_DAYS` to purge older ambient sessions.
+Preview or apply configured retention windows with:
+
+```bash
+atlas-voice privacy retention
+atlas-voice privacy retention --yes
+```
+
+Use `private`
 or `paused` modes when capture should be skipped and logged as a local privacy
 event.
 
