@@ -333,6 +333,7 @@ def _voice_settings_view() -> dict[str, Any]:
         "tts_provider": tts_provider,
         "tts_model": _realtime_tts_model(tts_provider) if tts_provider != "none" else "none",
         "tts_base_url": settings.tts_base_url if is_tts_sidecar_provider(tts_provider) else None,
+        "llm_model": settings.llm_model,
     }
 
 
@@ -350,6 +351,55 @@ def _voice_session_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]
             }
         )
     return views
+
+
+@app.post("/api/voice/playground/model")
+def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required")
+    if not settings.assistant_enabled:
+        raise HTTPException(status_code=403, detail="Assistant runtime is disabled")
+
+    settings.ensure_directories()
+    db.initialize()
+    provider = "stub" if settings.stub_mode else "openai-compatible"
+    try:
+        reply = generate_realtime_reply(
+            text,
+            settings,
+            instructions=_realtime_instructions(),
+        )
+    except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
+        db.log_model_run(
+            provider=provider,
+            model=settings.llm_model,
+            task="voice_playground_model",
+            input_ref="voice_playground:text",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise HTTPException(status_code=502, detail=_safe_realtime_error(exc)) from exc
+
+    db.log_model_run(
+        provider=provider,
+        model=settings.llm_model,
+        task="voice_playground_model",
+        input_ref="voice_playground:text",
+        latency_ms=reply.latency_ms,
+        tokens_in=reply.tokens_in,
+        tokens_out=reply.tokens_out,
+    )
+    return JSONResponse(
+        {
+            "status": "ok",
+            "provider": provider,
+            "model": settings.llm_model,
+            "text": reply.text,
+            "latency_ms": reply.latency_ms,
+            "tokens_in": reply.tokens_in,
+            "tokens_out": reply.tokens_out,
+        }
+    )
 
 
 @app.post("/api/voice/playground/stt")

@@ -142,10 +142,11 @@ settings, privacy, local model state, session history, memory/coaching toggles,
 and bottom transport controls for mic state, pause/private mode, interrupt,
 playback state, volume, and session timer. The Voice Playground text-to-speech
 control calls `POST /api/voice/playground/tts`; the speech-to-text control uploads
-a local audio file to `POST /api/voice/playground/stt`. Both paths log latency in
-`model_runs` with tasks `voice_playground_tts` and `voice_playground_stt`. Browser
-mic audio streaming and backend response cancellation are still tracked
-separately in `plan.md`.
+a local audio file to `POST /api/voice/playground/stt`; the model response control
+calls `POST /api/voice/playground/model`. These paths log latency in `model_runs`
+with tasks `voice_playground_tts`, `voice_playground_stt`, and
+`voice_playground_model`. Browser mic audio streaming and backend response
+cancellation are still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 

@@ -78,6 +78,7 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
 - `GET /api/assistant/privacy`: focused local-only privacy status and controls.
 - `POST /api/voice/playground/tts`: local TTS playground synthesis and latency logging.
 - `POST /api/voice/playground/stt`: local STT playground upload and latency logging.
+- `POST /api/voice/playground/model`: local model response playground and latency logging.
 - `WebSocket /v1/realtime`: OpenAI-style local realtime session events.
 
 ## Assistant Foundation

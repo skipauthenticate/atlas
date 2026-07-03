@@ -89,6 +89,18 @@
         </form>
         <output data-stt-playground-result>{{ runtime.asr_provider }}</output>
       </section>
+
+      <section class="voice-playground" data-model-playground data-endpoint="/api/voice/playground/model">
+        <div class="section-heading compact">
+          <h2>Voice Playground</h2>
+          <small>Model Response</small>
+        </div>
+        <form class="voice-playground-form">
+          <input type="text" name="model_text" placeholder="Prompt the local model" {% if not assistant_enabled %}disabled{% endif %}>
+          <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Run</button>
+        </form>
+        <output data-model-playground-result>{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</output>
+      </section>
     </section>
 
     <aside class="voice-inspector" aria-label="Voice inspector">

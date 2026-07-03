@@ -449,7 +449,7 @@ Status: partial.
 - [x] Add bottom transport: mic, pause/private mode, interrupt, playback, volume, session timer.
 - [x] Add Voice Playground for testing text-to-speech.
 - [x] Add Voice Playground for testing STT.
-- [ ] Add Voice Playground for testing model response.
+- [x] Add Voice Playground for testing model response.
 - [ ] Add Voice Playground latency display.
 - [ ] Use restrained cards only for repeated items like sessions, memories, goals, and model runs.
 - [ ] Add ambient session timeline UI.

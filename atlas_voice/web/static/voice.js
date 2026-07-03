@@ -261,5 +261,33 @@
         }
       });
     }
+
+    const modelPlayground = root.querySelector('[data-model-playground]');
+    if (modelPlayground) {
+      const modelForm = modelPlayground.querySelector('form');
+      const modelInput = modelPlayground.querySelector('input[name="model_text"]');
+      const modelResult = modelPlayground.querySelector('[data-model-playground-result]');
+      const endpoint = modelPlayground.dataset.endpoint || '/api/voice/playground/model';
+
+      modelForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const text = modelInput?.value.trim();
+        if (!text || !modelResult) return;
+        modelResult.textContent = 'running';
+        try {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || 'Model failed');
+          const latency = payload.latency_ms == null ? 'latency unknown' : `${payload.latency_ms} ms`;
+          modelResult.textContent = `${payload.text || '(empty response)'} · ${latency}`;
+        } catch (error) {
+          modelResult.textContent = error.message || 'Model failed';
+        }
+      });
+    }
   });
 })();
