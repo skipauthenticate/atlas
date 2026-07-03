@@ -1130,3 +1130,73 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+
+.voice-timeline {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.voice-timeline-list {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-timeline-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  text-decoration: none;
+}
+
+.voice-timeline-row:hover {
+  border-color: var(--accent);
+}
+
+.voice-timeline-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.voice-timeline-meeting {
+  background: var(--info);
+}
+
+.voice-timeline-private,
+.voice-timeline-paused {
+  background: var(--warn);
+}
+
+.voice-timeline-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.voice-timeline-copy strong,
+.voice-timeline-copy small,
+.voice-timeline-copy em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-timeline-copy small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.voice-timeline-copy em {
+  color: var(--ink);
+  font-size: 13px;
+  font-style: normal;
+}

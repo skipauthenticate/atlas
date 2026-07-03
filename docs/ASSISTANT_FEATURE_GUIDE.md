@@ -146,8 +146,10 @@ a local audio file to `POST /api/voice/playground/stt`; the model response contr
 calls `POST /api/voice/playground/model`. These paths log latency in `model_runs`
 with tasks `voice_playground_tts`, `voice_playground_stt`, and
 `voice_playground_model`, and the workbench displays the returned latency next to
-each playground result. Browser mic audio streaming and backend response
-cancellation are still tracked separately in `plan.md`.
+each playground result. The Ambient Timeline on `/voice` surfaces recent ambient,
+meeting, private, and paused sessions with their latest utterance preview. Browser
+mic audio streaming and backend response cancellation are still tracked
+separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 

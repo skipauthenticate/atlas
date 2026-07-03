@@ -452,7 +452,7 @@ Status: partial.
 - [x] Add Voice Playground for testing model response.
 - [x] Add Voice Playground latency display.
 - [ ] Use restrained cards only for repeated items like sessions, memories, goals, and model runs.
-- [ ] Add ambient session timeline UI.
+- [x] Add ambient session timeline UI.
 - [x] Add browser realtime console UI for `/v1/realtime`.
 - [ ] Add desktop and mobile layout QA.
 
@@ -540,7 +540,7 @@ Status: CLI/API MVP complete; UI and richer privacy controls remain.
 - [x] Add retention policy for raw-audio disablement.
 - [x] Default to transcript-only retention.
 - [ ] Add configurable retention windows.
-- [ ] Surface recent ambient sessions in the UI timeline.
+- [x] Surface recent ambient sessions in the UI timeline.
 - [x] Add `GET /api/ambient/sessions`.
 - [x] Add active ambient sessions/listeners to status reporting.
 - [x] Add file source processing.

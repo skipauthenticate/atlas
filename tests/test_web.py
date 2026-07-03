@@ -301,6 +301,62 @@ class WebTests(unittest.TestCase):
             self.assertIn("Privacy", response.text)
             self.assertIn("Local Models", response.text)
 
+    def test_voice_console_shows_ambient_session_timeline(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            ambient_id = web_app.db.create_ambient_session(
+                mode="ambient",
+                source="mic",
+                title="Kitchen capture",
+            )
+            meeting_id = web_app.db.create_ambient_session(
+                mode="meeting",
+                source="file",
+                title="Planning meeting",
+            )
+            web_app.db.add_utterance(
+                session_id=ambient_id,
+                text="Remember to follow up on the launch note.",
+                source_provider="stub",
+            )
+            web_app.db.add_utterance(
+                session_id=meeting_id,
+                text="We discussed the roadmap risks.",
+                source_provider="stub",
+            )
+            web_app.db.end_ambient_session(ambient_id)
+            web_app.db.end_ambient_session(meeting_id)
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('data-ambient-timeline', response.text)
+            self.assertIn("Ambient Timeline", response.text)
+            self.assertIn("Kitchen capture", response.text)
+            self.assertIn("Planning meeting", response.text)
+            self.assertIn("Remember to follow up on the launch note.", response.text)
+            self.assertIn("We discussed the roadmap risks.", response.text)
+            self.assertIn("mic", response.text)
+            self.assertIn("file", response.text)
+
     def test_voice_console_inspector_shows_voice_settings(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -310,6 +310,7 @@ def dashboard(
 def voice_console(request: Request) -> Response:
     status = collect_runtime_status(settings, db, assistant_config)
     sessions = _voice_session_views(db.list_ambient_sessions(limit=8, mode="direct_voice"))
+    ambient_timeline = _ambient_timeline_views(db.list_ambient_sessions(limit=12, mode=None))
     return templates.TemplateResponse(
         request,
         "voice.html",
@@ -318,6 +319,7 @@ def voice_console(request: Request) -> Response:
             "status": status,
             "assistant_enabled": settings.assistant_enabled,
             "sessions": sessions,
+            "ambient_timeline": ambient_timeline,
             "voice_settings": _voice_settings_view(),
         },
     )
@@ -350,6 +352,26 @@ def _voice_session_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]
                 "last_reply": turns[-1]["text"] if turns else "",
             }
         )
+    return views
+
+
+def _ambient_timeline_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    views: list[dict[str, Any]] = []
+    for session in sessions:
+        if session.get("mode") == "direct_voice":
+            continue
+        utterances = db.list_utterances(str(session["id"]))
+        last_utterance = utterances[-1] if utterances else None
+        views.append(
+            {
+                **session,
+                "started_at_display": _timestamp_label(_parse_timestamp(session.get("started_at"))),
+                "last_utterance": last_utterance["text"] if last_utterance else "",
+                "last_speaker": last_utterance["speaker"] if last_utterance else "",
+            }
+        )
+        if len(views) >= 8:
+            break
     return views
 
 

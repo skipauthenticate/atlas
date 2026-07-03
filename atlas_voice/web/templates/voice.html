@@ -66,6 +66,29 @@
         <button id="voice-prompt-submit" type="submit" {% if not assistant_enabled %}disabled{% endif %}>Send</button>
       </form>
 
+      <section class="voice-timeline" data-ambient-timeline aria-label="Ambient session timeline">
+        <div class="section-heading compact">
+          <h2>Ambient Timeline</h2>
+          <small>{{ ambient_timeline | length }} recent sessions</small>
+        </div>
+        {% if ambient_timeline %}
+          <div class="voice-timeline-list">
+            {% for session in ambient_timeline %}
+              <a class="voice-timeline-row" href="/api/ambient/sessions">
+                <span class="voice-timeline-dot voice-timeline-{{ session.mode }}" aria-hidden="true"></span>
+                <span class="voice-timeline-copy">
+                  <strong>{{ session.title or session.mode }}</strong>
+                  <small>{{ session.started_at_display }} · {{ session.mode }} · {{ session.source }} · {{ session.utterance_count }} utterances</small>
+                  {% if session.last_utterance %}<em>{{ session.last_utterance }}</em>{% endif %}
+                </span>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="empty tight">No ambient sessions yet.</div>
+        {% endif %}
+      </section>
+
       <section class="voice-playground" data-tts-playground data-endpoint="/api/voice/playground/tts">
         <div class="section-heading compact">
           <h2>Voice Playground</h2>
