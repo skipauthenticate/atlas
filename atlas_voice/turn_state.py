@@ -1,7 +1,20 @@
 from __future__ import annotations
 
+import math
+import sys
+from array import array
 from dataclasses import dataclass, field
 from typing import Any
+
+
+@dataclass(frozen=True)
+class RealtimeVadResult:
+    analyzed: bool
+    speech_started: bool = False
+    end_of_turn: bool = False
+    speech_ms: int = 0
+    silence_ms: int = 0
+    rms: float = 0.0
 
 
 @dataclass
@@ -12,6 +25,9 @@ class RealtimeTurnState:
     response_in_progress: bool = False
     cancel_requested: bool = False
     audio_media_type: str | None = None
+    vad_speech_started: bool = False
+    vad_speech_ms: int = 0
+    vad_silence_ms: int = 0
     _audio_buffer: bytearray = field(default_factory=bytearray)
     _pending_text: str | None = None
 
@@ -32,6 +48,7 @@ class RealtimeTurnState:
     def clear_audio(self) -> None:
         self._audio_buffer.clear()
         self.audio_media_type = None
+        self.reset_realtime_vad()
 
     def commit_audio(self) -> bytes:
         payload, _media_type = self.commit_audio_with_media_type()
@@ -42,7 +59,65 @@ class RealtimeTurnState:
         media_type = self.audio_media_type
         self._audio_buffer.clear()
         self.audio_media_type = None
+        self.reset_realtime_vad()
         return payload, media_type
+
+    def update_realtime_vad(
+        self,
+        payload: bytes,
+        *,
+        enabled: bool = True,
+        media_type: str | None = None,
+        energy_threshold: float = 500.0,
+        min_speech_ms: int = 200,
+        silence_duration_ms: int = 600,
+    ) -> RealtimeVadResult:
+        if not enabled or not payload:
+            return RealtimeVadResult(analyzed=False)
+        if not _is_pcm_audio(media_type):
+            return RealtimeVadResult(analyzed=False)
+        if self.channels != 1:
+            return RealtimeVadResult(analyzed=False)
+
+        samples = array("h")
+        sample_bytes = payload[: len(payload) - (len(payload) % 2)]
+        if not sample_bytes:
+            return RealtimeVadResult(analyzed=False)
+        samples.frombytes(sample_bytes)
+        if sys.byteorder != "little":
+            samples.byteswap()
+        if not samples:
+            return RealtimeVadResult(analyzed=False)
+
+        rms = math.sqrt(sum(sample * sample for sample in samples) / len(samples))
+        duration_ms = int(round(len(samples) / max(self.sample_rate, 1) * 1000))
+        speech_started = False
+        end_of_turn = False
+        if rms >= energy_threshold:
+            self.vad_speech_ms += duration_ms
+            self.vad_silence_ms = 0
+            if not self.vad_speech_started and self.vad_speech_ms >= min_speech_ms:
+                self.vad_speech_started = True
+                speech_started = True
+        else:
+            if self.vad_speech_started:
+                self.vad_silence_ms += duration_ms
+                if self.vad_silence_ms >= silence_duration_ms:
+                    end_of_turn = True
+
+        return RealtimeVadResult(
+            analyzed=True,
+            speech_started=speech_started,
+            end_of_turn=end_of_turn,
+            speech_ms=self.vad_speech_ms,
+            silence_ms=self.vad_silence_ms,
+            rms=rms,
+        )
+
+    def reset_realtime_vad(self) -> None:
+        self.vad_speech_started = False
+        self.vad_speech_ms = 0
+        self.vad_silence_ms = 0
 
     def update_audio_format(self, event: dict[str, Any]) -> None:
         sample_rate = event.get("input_audio_sample_rate") or event.get("sample_rate")
@@ -81,3 +156,10 @@ class RealtimeTurnState:
 
 def _clean_media_type(value: str) -> str:
     return value.split(";", 1)[0].strip().lower() or "application/octet-stream"
+
+
+def _is_pcm_audio(media_type: str | None) -> bool:
+    if not media_type:
+        return True
+    cleaned = _clean_media_type(str(media_type))
+    return cleaned in {"audio/pcm", "audio/raw", "audio/wav", "audio/x-wav"}

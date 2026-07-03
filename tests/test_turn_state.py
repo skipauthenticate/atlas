@@ -1,4 +1,6 @@
+import math
 import unittest
+from array import array
 
 from atlas_voice.turn_state import RealtimeTurnState
 
@@ -41,6 +43,44 @@ class RealtimeTurnStateTests(unittest.TestCase):
         self.assertEqual(state.sample_rate, 8000)
         self.assertEqual(state.channels, 2)
 
+    def test_realtime_vad_detects_speech_then_end_of_turn(self) -> None:
+        state = RealtimeTurnState(sample_rate=16000, channels=1)
+        speech = _pcm_tone(16000, 0.2, amplitude=7000)
+        silence = _pcm_silence(16000, 0.15)
+
+        speech_result = state.update_realtime_vad(
+            speech,
+            enabled=True,
+            energy_threshold=1000,
+            min_speech_ms=100,
+            silence_duration_ms=100,
+        )
+        silence_result = state.update_realtime_vad(
+            silence,
+            enabled=True,
+            energy_threshold=1000,
+            min_speech_ms=100,
+            silence_duration_ms=100,
+        )
+
+        self.assertTrue(speech_result.speech_started)
+        self.assertFalse(speech_result.end_of_turn)
+        self.assertFalse(silence_result.speech_started)
+        self.assertTrue(silence_result.end_of_turn)
+        self.assertGreaterEqual(silence_result.silence_ms, 100)
+
+    def test_realtime_vad_ignores_container_audio(self) -> None:
+        state = RealtimeTurnState(sample_rate=16000, channels=1)
+
+        result = state.update_realtime_vad(
+            b"webm-container",
+            enabled=True,
+            media_type="audio/webm",
+        )
+
+        self.assertFalse(result.analyzed)
+        self.assertFalse(result.end_of_turn)
+
     def test_pending_text_and_response_lifecycle(self) -> None:
         state = RealtimeTurnState(sample_rate=24000, channels=1)
 
@@ -60,6 +100,19 @@ class RealtimeTurnStateTests(unittest.TestCase):
         self.assertIsNone(state.active_response_id)
         self.assertFalse(state.response_in_progress)
         self.assertFalse(state.cancel_requested)
+
+
+def _pcm_tone(sample_rate: int, seconds: float, *, amplitude: int) -> bytes:
+    samples = array("h")
+    for index in range(int(sample_rate * seconds)):
+        value = int(amplitude * math.sin(2 * math.pi * 440 * index / sample_rate))
+        samples.append(value)
+    return samples.tobytes()
+
+
+def _pcm_silence(sample_rate: int, seconds: float) -> bytes:
+    samples = array("h", [0] * int(sample_rate * seconds))
+    return samples.tobytes()
 
 
 if __name__ == "__main__":

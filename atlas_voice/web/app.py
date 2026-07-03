@@ -738,6 +738,13 @@ async def realtime_websocket(websocket: WebSocket) -> None:
             "modalities": ["text", "audio"],
             "input_audio_format": "pcm16",
             "output_audio_format": "wav" if _tts_outputs_audio(tts_provider) else "none",
+            "input_audio_vad": {
+                "enabled": settings.realtime_vad_enabled,
+                "type": "energy",
+                "threshold": settings.realtime_vad_threshold,
+                "min_speech_ms": settings.realtime_vad_min_speech_ms,
+                "silence_ms": settings.realtime_vad_silence_ms,
+            },
         },
     )
 
@@ -756,6 +763,54 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         )
         return True
 
+    async def commit_audio_buffer(event: dict[str, Any], *, event_type: str) -> None:
+        nonlocal active_response_task
+        committed, committed_media_type = state.commit_audio_with_media_type()
+        await _send_realtime_event(
+            websocket,
+            "input_audio_buffer.committed",
+            byte_count=len(committed),
+        )
+        text = extract_text_input(event)
+        if not text and committed:
+            try:
+                text, _audio_path = await asyncio.to_thread(
+                    transcribe_realtime_audio,
+                    committed,
+                    settings,
+                    _realtime_artifact_dir(session_id),
+                    sample_rate=state.sample_rate,
+                    channels=state.channels,
+                    media_type=event.get("media_type") or event.get("mime_type") or committed_media_type,
+                )
+            except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
+                await _send_realtime_error(
+                    websocket,
+                    f"Audio transcription failed: {_safe_realtime_error(exc)}",
+                    event_type=event_type,
+                )
+                return
+        if not text:
+            await _send_realtime_error(
+                websocket,
+                "input_audio_buffer.commit requires audio or transcript text",
+                event_type=event_type,
+            )
+            return
+        await cancel_active_response("barge_in")
+        active_response_task = asyncio.create_task(
+            _handle_realtime_user_text(
+                websocket,
+                session_id=session_id,
+                text=text,
+                source_provider=settings.asr_provider if committed else "text",
+                transcript_prefix="conversation.item.input_audio_transcription",
+                instructions=instructions,
+                tts_provider=tts_provider,
+                state=state,
+            )
+        )
+
     try:
         while True:
             event = await websocket.receive_json()
@@ -771,11 +826,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 continue
 
             if event_type == "input_audio_buffer.append":
+                media_type = event.get("media_type") or event.get("mime_type")
                 try:
-                    buffered_bytes = state.append_audio(
-                        decode_audio_delta(event),
-                        media_type=event.get("media_type") or event.get("mime_type"),
-                    )
+                    audio_payload = decode_audio_delta(event)
+                    buffered_bytes = state.append_audio(audio_payload, media_type=media_type)
                 except ValueError as exc:
                     await _send_realtime_error(websocket, str(exc), event_type=event_type)
                     continue
@@ -784,6 +838,27 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     "input_audio_buffer.appended",
                     byte_count=buffered_bytes,
                 )
+                vad = state.update_realtime_vad(
+                    audio_payload,
+                    enabled=settings.realtime_vad_enabled,
+                    media_type=media_type or state.audio_media_type,
+                    energy_threshold=settings.realtime_vad_threshold,
+                    min_speech_ms=settings.realtime_vad_min_speech_ms,
+                    silence_duration_ms=settings.realtime_vad_silence_ms,
+                )
+                if vad.speech_started:
+                    await _send_realtime_event(
+                        websocket,
+                        "input_audio_buffer.speech_started",
+                        audio_start_ms=max(vad.speech_ms - settings.realtime_vad_min_speech_ms, 0),
+                    )
+                if vad.end_of_turn:
+                    await _send_realtime_event(
+                        websocket,
+                        "input_audio_buffer.speech_stopped",
+                        silence_ms=vad.silence_ms,
+                    )
+                    await commit_audio_buffer({"type": "input_audio_buffer.commit"}, event_type=event_type)
                 continue
 
             if event_type == "input_audio_buffer.clear":
@@ -799,51 +874,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 continue
 
             if event_type == "input_audio_buffer.commit":
-                committed, committed_media_type = state.commit_audio_with_media_type()
-                await _send_realtime_event(
-                    websocket,
-                    "input_audio_buffer.committed",
-                    byte_count=len(committed),
-                )
-                text = extract_text_input(event)
-                if not text and committed:
-                    try:
-                        text, _audio_path = await asyncio.to_thread(
-                            transcribe_realtime_audio,
-                            committed,
-                            settings,
-                            _realtime_artifact_dir(session_id),
-                            sample_rate=state.sample_rate,
-                            channels=state.channels,
-                            media_type=event.get("media_type") or event.get("mime_type") or committed_media_type,
-                        )
-                    except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
-                        await _send_realtime_error(
-                            websocket,
-                            f"Audio transcription failed: {_safe_realtime_error(exc)}",
-                            event_type=event_type,
-                        )
-                        continue
-                if not text:
-                    await _send_realtime_error(
-                        websocket,
-                        "input_audio_buffer.commit requires audio or transcript text",
-                        event_type=event_type,
-                    )
-                    continue
-                await cancel_active_response("barge_in")
-                active_response_task = asyncio.create_task(
-                    _handle_realtime_user_text(
-                        websocket,
-                        session_id=session_id,
-                        text=text,
-                        source_provider=settings.asr_provider if committed else "text",
-                        transcript_prefix="conversation.item.input_audio_transcription",
-                        instructions=instructions,
-                        tts_provider=tts_provider,
-                        state=state,
-                    )
-                )
+                await commit_audio_buffer(event, event_type=event_type)
                 continue
 
             if event_type in {"input_text", "input.text", "message"}:

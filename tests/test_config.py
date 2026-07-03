@@ -98,6 +98,10 @@ class ConfigTests(unittest.TestCase):
                 "ATLAS_VOICE_PIPER_VOICE=/models/voice.onnx\n"
                 "ATLAS_VOICE_REALTIME_AUDIO_SAMPLE_RATE=16000\n"
                 "ATLAS_VOICE_REALTIME_AUDIO_CHANNELS=2\n"
+                "ATLAS_VOICE_REALTIME_VAD_ENABLED=false\n"
+                "ATLAS_VOICE_REALTIME_VAD_THRESHOLD=1200\n"
+                "ATLAS_VOICE_REALTIME_VAD_MIN_SPEECH_MS=150\n"
+                "ATLAS_VOICE_REALTIME_VAD_SILENCE_MS=350\n"
                 "ATLAS_VOICE_AMBIENT_SOURCE=./ambient-inbox\n"
                 "ATLAS_VOICE_AMBIENT_MODE=meeting\n"
                 "ATLAS_VOICE_AMBIENT_CHUNK_SECONDS=3.5\n"
@@ -141,6 +145,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.piper_voice, "/models/voice.onnx")
         self.assertEqual(settings.realtime_audio_sample_rate, 16000)
         self.assertEqual(settings.realtime_audio_channels, 2)
+        self.assertFalse(settings.realtime_vad_enabled)
+        self.assertEqual(settings.realtime_vad_threshold, 1200)
+        self.assertEqual(settings.realtime_vad_min_speech_ms, 150)
+        self.assertEqual(settings.realtime_vad_silence_ms, 350)
         self.assertEqual(settings.ambient_source, "./ambient-inbox")
         self.assertEqual(settings.ambient_mode, "meeting")
         self.assertEqual(settings.ambient_chunk_seconds, 3.5)

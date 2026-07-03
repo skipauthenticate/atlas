@@ -90,6 +90,10 @@ class Settings:
     piper_voice: str | None = None
     realtime_audio_sample_rate: int = 24000
     realtime_audio_channels: int = 1
+    realtime_vad_enabled: bool = True
+    realtime_vad_threshold: float = 500.0
+    realtime_vad_min_speech_ms: int = 200
+    realtime_vad_silence_ms: int = 600
     ambient_source: str = "mic"
     ambient_mode: str = "ambient"
     ambient_chunk_seconds: float = 15.0
@@ -191,6 +195,16 @@ class Settings:
                 os.environ.get("ATLAS_VOICE_REALTIME_AUDIO_SAMPLE_RATE", "24000")
             ),
             realtime_audio_channels=int(os.environ.get("ATLAS_VOICE_REALTIME_AUDIO_CHANNELS", "1")),
+            realtime_vad_enabled=_bool_from_env("ATLAS_VOICE_REALTIME_VAD_ENABLED", True),
+            realtime_vad_threshold=float(
+                os.environ.get("ATLAS_VOICE_REALTIME_VAD_THRESHOLD", "500")
+            ),
+            realtime_vad_min_speech_ms=int(
+                os.environ.get("ATLAS_VOICE_REALTIME_VAD_MIN_SPEECH_MS", "200")
+            ),
+            realtime_vad_silence_ms=int(
+                os.environ.get("ATLAS_VOICE_REALTIME_VAD_SILENCE_MS", "600")
+            ),
             ambient_source=os.environ.get("ATLAS_VOICE_AMBIENT_SOURCE", "mic"),
             ambient_mode=os.environ.get("ATLAS_VOICE_AMBIENT_MODE", "ambient").strip().lower(),
             ambient_chunk_seconds=float(

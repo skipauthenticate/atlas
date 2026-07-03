@@ -130,8 +130,24 @@ transport Mic button to request browser microphone access, stream
 the transport Play button to enable or pause assistant audio playback and the
 Volume slider to set playback level. Realtime sessions use an internal turn state
 module to track buffered audio, browser audio media type, pending text, audio
-format, and active responses. Every assistant text turn and TTS run is logged in
-SQLite `model_runs` for latency review.
+format, lightweight PCM16 VAD state, and active responses. Every assistant
+text turn and TTS run is logged in SQLite `model_runs` for latency review.
+
+Realtime end-of-turn detection is enabled by default for raw PCM16 audio sent
+through `input_audio_buffer.append`. It emits
+`input_audio_buffer.speech_started` after enough voiced audio and automatically
+commits the buffer after trailing silence by emitting
+`input_audio_buffer.speech_stopped` and `input_audio_buffer.committed`. Browser
+`MediaRecorder` container audio such as WebM is still accepted, but it requires
+explicit `input_audio_buffer.commit` until decoded container VAD is added. Tune
+the energy detector with:
+
+```bash
+export ATLAS_VOICE_REALTIME_VAD_ENABLED=true
+export ATLAS_VOICE_REALTIME_VAD_THRESHOLD=500
+export ATLAS_VOICE_REALTIME_VAD_MIN_SPEECH_MS=200
+export ATLAS_VOICE_REALTIME_VAD_SILENCE_MS=600
+```
 
 A minimal text event looks like:
 
