@@ -235,5 +235,31 @@
         }
       });
     }
+
+    const sttPlayground = root.querySelector('[data-stt-playground]');
+    if (sttPlayground) {
+      const sttForm = sttPlayground.querySelector('form');
+      const sttInput = sttPlayground.querySelector('input[name="stt_audio"]');
+      const sttResult = sttPlayground.querySelector('[data-stt-playground-result]');
+      const endpoint = sttPlayground.dataset.endpoint || '/api/voice/playground/stt';
+
+      sttForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const file = sttInput?.files?.[0];
+        if (!file || !sttResult) return;
+        sttResult.textContent = 'transcribing';
+        const body = new FormData();
+        body.append('file', file);
+        try {
+          const response = await fetch(endpoint, { method: 'POST', body });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.detail || 'STT failed');
+          const latency = payload.latency_ms == null ? 'latency unknown' : `${payload.latency_ms} ms`;
+          sttResult.textContent = `${payload.text || '(empty transcript)'} · ${latency}`;
+        } catch (error) {
+          sttResult.textContent = error.message || 'STT failed';
+        }
+      });
+    }
   });
 })();

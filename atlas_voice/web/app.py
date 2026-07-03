@@ -4,6 +4,7 @@ import asyncio
 import os
 import shutil
 import subprocess
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -349,6 +350,55 @@ def _voice_session_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]
             }
         )
     return views
+
+
+@app.post("/api/voice/playground/stt")
+async def api_voice_playground_stt(file: UploadFile = File(...)) -> JSONResponse:
+    if not settings.assistant_enabled:
+        raise HTTPException(status_code=403, detail="Assistant runtime is disabled")
+    audio = await file.read()
+    if not audio:
+        raise HTTPException(status_code=400, detail="Audio file is required")
+
+    settings.ensure_directories()
+    db.initialize()
+    output_dir = settings.artifacts_dir / "voice-playground"
+    provider = settings.asr_provider
+    model = _effective_asr_model(settings)
+    started = time.perf_counter()
+    try:
+        text, audio_path = transcribe_realtime_audio(audio, settings, output_dir)
+    except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        db.log_model_run(
+            provider=provider,
+            model=model,
+            task="voice_playground_stt",
+            input_ref=file.filename or "voice_playground:audio",
+            latency_ms=latency_ms,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise HTTPException(status_code=502, detail=_safe_realtime_error(exc)) from exc
+
+    latency_ms = int((time.perf_counter() - started) * 1000)
+    db.log_model_run(
+        provider=provider,
+        model=model,
+        task="voice_playground_stt",
+        input_ref=file.filename or "voice_playground:audio",
+        output_ref=str(audio_path),
+        latency_ms=latency_ms,
+    )
+    return JSONResponse(
+        {
+            "status": "ok",
+            "provider": provider,
+            "model": model,
+            "text": text,
+            "audio_path": str(audio_path),
+            "latency_ms": latency_ms,
+        }
+    )
 
 
 @app.post("/api/voice/playground/tts")
