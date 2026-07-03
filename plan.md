@@ -38,7 +38,7 @@ Original product phases:
 
 - [x] Phase 0: Baseline And Safety
 - [ ] Phase 1: TTS Sidecar Spike
-- [x] Phase 2: Assistant Core, partially complete as local assistant foundation
+- [x] Phase 2: Assistant Core
 - [ ] Phase 3: ElevenLabs-Inspired Voice UI
 - [x] Phase 4: Direct Voice MVP, backend complete
 - [ ] Phase 5: Microphone Voice Mode, ambient mic CLI only
@@ -418,7 +418,7 @@ Status: partial. Atlas-side client, health, logging, and tests exist; external s
 
 ### Phase 2: Assistant Core
 
-Status: partially complete.
+Status: complete.
 
 - [x] Add modular assistant services for realtime sessions.
 - [x] Add local LLM call path for realtime turns.
