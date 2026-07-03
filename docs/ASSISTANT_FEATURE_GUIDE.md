@@ -123,12 +123,15 @@ when the direct voice profile requires confirmation, shown in the `/voice`
 transcript, and persisted on the assistant turn. Local tool execution and the
 full tool registry remain separate planned items. When TTS is configured, assistant
 audio is returned as `response.audio.delta`, queued in the browser playback
-control on `/voice`, and
-stored under `data/artifacts/realtime/`. Use the transport Play button to enable
-or pause assistant audio playback and the Volume slider to set playback level.
-Realtime sessions use an internal turn state module to track buffered audio,
-pending text, audio format, and active responses. Every assistant text turn and
-TTS run is logged in SQLite `model_runs` for latency review.
+control on `/voice`, and stored under `data/artifacts/realtime/`. Use the
+transport Mic button to request browser microphone access, stream
+`MediaRecorder` audio chunks to
+`input_audio_buffer.append`, and commit the buffer when the mic is stopped. Use
+the transport Play button to enable or pause assistant audio playback and the
+Volume slider to set playback level. Realtime sessions use an internal turn state
+module to track buffered audio, browser audio media type, pending text, audio
+format, and active responses. Every assistant text turn and TTS run is logged in
+SQLite `model_runs` for latency review.
 
 A minimal text event looks like:
 
@@ -166,8 +169,8 @@ workbench keeps card framing restrained to repeated row items such as sessions,
 models, and timeline entries; playground sections remain unframed inside the main
 work surface. The desktop/tablet/mobile layout is covered by static QA checks
 for bounded workbench columns, stacked narrow-screen controls, readable transport
-controls, and reduced mobile waveform density. Browser mic audio streaming and
-local tool execution are still tracked separately in `plan.md`.
+controls, and reduced mobile waveform density. Realtime VAD/end-of-turn behavior
+and local tool execution are still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 

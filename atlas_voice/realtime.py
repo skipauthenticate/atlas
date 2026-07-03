@@ -94,11 +94,17 @@ def write_realtime_audio(
     *,
     sample_rate: int = 24000,
     channels: int = 1,
+    media_type: str | None = None,
 ) -> Path:
     if not audio:
         raise ValueError("audio buffer is empty")
     output_dir.mkdir(parents=True, exist_ok=True)
     audio_id = uuid.uuid4().hex
+    container_extension = _input_audio_extension(audio, media_type)
+    if container_extension:
+        output_path = output_dir / f"input-{audio_id}.{container_extension}"
+        output_path.write_bytes(audio)
+        return output_path
     if audio.startswith(b"RIFF"):
         output_path = output_dir / f"input-{audio_id}.wav"
         output_path.write_bytes(audio)
@@ -120,12 +126,14 @@ def transcribe_realtime_audio(
     *,
     sample_rate: int | None = None,
     channels: int | None = None,
+    media_type: str | None = None,
 ) -> tuple[str, Path]:
     audio_path = write_realtime_audio(
         audio,
         output_dir,
         sample_rate=sample_rate or settings.realtime_audio_sample_rate,
         channels=channels or settings.realtime_audio_channels,
+        media_type=media_type,
     )
     if settings.stub_mode:
         return "Audio input received.", audio_path
@@ -381,6 +389,19 @@ def _clean_media_type(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         return "audio/wav"
     return value.split(";", 1)[0].strip().lower() or "audio/wav"
+
+
+def _input_audio_extension(audio: bytes, media_type: str | None) -> str | None:
+    clean_type = _clean_media_type(media_type) if media_type else ""
+    if clean_type in {"audio/webm", "video/webm"} or audio.startswith(b"\x1aE\xdf\xa3"):
+        return "webm"
+    if clean_type == "audio/ogg" or audio.startswith(b"OggS"):
+        return "ogg"
+    if clean_type in {"audio/mp4", "audio/m4a", "audio/x-m4a"}:
+        return "m4a"
+    if clean_type == "audio/mpeg" or audio.startswith(b"ID3"):
+        return "mp3"
+    return None
 
 
 def _audio_extension(media_type: str, response_format: str | None) -> str:

@@ -37,6 +37,23 @@
     return URL.createObjectURL(blob);
   }
 
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => {
+        const value = String(reader.result || '');
+        resolve(value.includes(',') ? value.split(',', 2)[1] : value);
+      });
+      reader.addEventListener('error', () => reject(reader.error || new Error('audio read failed')));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function browserRecorderMimeType() {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg'];
+    return candidates.find((type) => MediaRecorder.isTypeSupported?.(type)) || '';
+  }
+
   window.addEventListener('DOMContentLoaded', () => {
     const root = document.querySelector('[data-voice-console="true"]');
     if (!root) return;
@@ -173,6 +190,15 @@
       return socket;
     }
 
+    function sendRealtimeEvent(message) {
+      const activeSocket = connect();
+      if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
+        activeSocket.send(JSON.stringify(message));
+      } else {
+        pending.push(message);
+      }
+    }
+
     form.addEventListener('submit', (event) => {
       event.preventDefault();
       const text = input.value.trim();
@@ -180,13 +206,7 @@
 
       appendMessage(transcript, 'User', text);
       input.value = '';
-      const message = { type: 'input_text', text };
-      const activeSocket = connect();
-      if (activeSocket && activeSocket.readyState === WebSocket.OPEN) {
-        activeSocket.send(JSON.stringify(message));
-      } else {
-        pending.push(message);
-      }
+      sendRealtimeEvent({ type: 'input_text', text });
     });
 
     const transport = root.querySelector('[data-voice-transport]');
@@ -205,6 +225,10 @@
       let paused = false;
       let privateMode = false;
       let micEnabled = false;
+      let micStream = null;
+      let mediaRecorder = null;
+      let micChunkReads = 0;
+      let micStopPending = false;
 
       const formatElapsed = () => {
         if (!sessionStartedAt) return '00:00';
@@ -238,13 +262,85 @@
         submit.disabled = blocked;
       };
 
-      controls.get('mic')?.addEventListener('click', () => {
-        micEnabled = !micEnabled;
-        togglePressed(controls.get('mic'), micEnabled);
-        if (micEnabled) {
-          connect();
-          startTimer();
+      const stopMicTracks = () => {
+        micStream?.getTracks().forEach((track) => track.stop());
+        micStream = null;
+      };
+
+      const commitMicAudio = () => {
+        if (micChunkReads > 0) {
+          micStopPending = true;
+          return;
+        }
+        micStopPending = false;
+        sendRealtimeEvent({ type: 'input_audio_buffer.commit' });
+      };
+
+      const sendMicChunk = async (blob) => {
+        if (!blob || blob.size === 0) return;
+        micChunkReads += 1;
+        try {
+          const audio = await blobToBase64(blob);
+          sendRealtimeEvent({
+            type: 'input_audio_buffer.append',
+            audio,
+            media_type: blob.type || mediaRecorder?.mimeType || 'audio/webm',
+          });
+        } catch (error) {
+          appendMessage(transcript, 'Atlas', error.message || 'Microphone audio read failed');
+        } finally {
+          micChunkReads -= 1;
+          if (micStopPending && micChunkReads === 0) commitMicAudio();
+        }
+      };
+
+      const startMicStreaming = async () => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+          throw new Error('Browser microphone recording is unavailable');
+        }
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = browserRecorderMimeType();
+        mediaRecorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined);
+        mediaRecorder.addEventListener('dataavailable', (event) => {
+          sendMicChunk(event.data);
+        });
+        mediaRecorder.addEventListener('stop', () => {
+          stopMicTracks();
+          commitMicAudio();
+        });
+        mediaRecorder.start(750);
+        sendRealtimeEvent({ type: 'session.update', media_type: mediaRecorder.mimeType || 'audio/webm' });
+      };
+
+      const stopMicStreaming = () => {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
         } else {
+          stopMicTracks();
+        }
+        mediaRecorder = null;
+      };
+
+      controls.get('mic')?.addEventListener('click', async () => {
+        if (!micEnabled) {
+          try {
+            connect();
+            await startMicStreaming();
+            micEnabled = true;
+            togglePressed(controls.get('mic'), true);
+            setConnection(connection, 'listening', 'status-done');
+            startTimer();
+          } catch (error) {
+            micEnabled = false;
+            togglePressed(controls.get('mic'), false);
+            stopMicTracks();
+            setConnection(connection, 'mic error', 'status-failed');
+            appendMessage(transcript, 'Atlas', error.message || 'Microphone unavailable');
+          }
+        } else {
+          micEnabled = false;
+          togglePressed(controls.get('mic'), false);
+          stopMicStreaming();
           stopTimer();
         }
       });

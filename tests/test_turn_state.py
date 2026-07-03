@@ -18,6 +18,16 @@ class RealtimeTurnStateTests(unittest.TestCase):
 
         self.assertEqual(state.commit_audio(), b"")
 
+    def test_audio_buffer_tracks_browser_media_type(self) -> None:
+        state = RealtimeTurnState(sample_rate=24000, channels=1)
+
+        state.append_audio(b"webm", media_type="audio/webm;codecs=opus")
+        payload, media_type = state.commit_audio_with_media_type()
+
+        self.assertEqual(payload, b"webm")
+        self.assertEqual(media_type, "audio/webm")
+        self.assertIsNone(state.audio_media_type)
+
     def test_session_audio_format_updates_from_event(self) -> None:
         state = RealtimeTurnState(sample_rate=24000, channels=1)
 

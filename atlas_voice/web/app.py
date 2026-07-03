@@ -768,7 +768,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
 
             if event_type == "input_audio_buffer.append":
                 try:
-                    buffered_bytes = state.append_audio(decode_audio_delta(event))
+                    buffered_bytes = state.append_audio(
+                        decode_audio_delta(event),
+                        media_type=event.get("media_type") or event.get("mime_type"),
+                    )
                 except ValueError as exc:
                     await _send_realtime_error(websocket, str(exc), event_type=event_type)
                     continue
@@ -792,7 +795,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 continue
 
             if event_type == "input_audio_buffer.commit":
-                committed = state.commit_audio()
+                committed, committed_media_type = state.commit_audio_with_media_type()
                 await _send_realtime_event(
                     websocket,
                     "input_audio_buffer.committed",
@@ -808,6 +811,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                             _realtime_artifact_dir(session_id),
                             sample_rate=state.sample_rate,
                             channels=state.channels,
+                            media_type=event.get("media_type") or event.get("mime_type") or committed_media_type,
                         )
                     except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
                         await _send_realtime_error(

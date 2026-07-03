@@ -46,6 +46,17 @@ class RealtimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "base64"):
             decode_audio_delta({"audio": "not base64"})
 
+    def test_write_realtime_audio_preserves_browser_container_audio(self) -> None:
+        with TemporaryDirectory() as tmp:
+            output = write_realtime_audio(
+                b"\x1aE\xdf\xa3webm",
+                Path(tmp),
+                media_type="audio/webm;codecs=opus",
+            )
+
+            self.assertEqual(output.suffix, ".webm")
+            self.assertEqual(output.read_bytes(), b"\x1aE\xdf\xa3webm")
+
     def test_write_realtime_audio_wraps_pcm16_as_wav(self) -> None:
         with TemporaryDirectory() as tmp:
             output = write_realtime_audio(

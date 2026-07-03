@@ -503,7 +503,7 @@ Implemented event paths:
 
 Status: not complete as browser realtime voice mode. Mic capture exists for ambient CLI.
 
-- [ ] Stream browser mic audio to the realtime endpoint.
+- [x] Stream browser mic audio to the realtime endpoint.
 - [ ] Use Hyprwhspr first if its local socket/CLI is reliable.
 - [ ] Fallback to local Whisper/faster-whisper.
 - [x] Add VAD for ambient file/mic chunks.

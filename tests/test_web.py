@@ -571,6 +571,18 @@ class WebTests(unittest.TestCase):
             self.assertIn('preload="none"', response.text)
             self.assertIn('data-playback-status', response.text)
 
+    def test_voice_static_script_streams_browser_mic_audio(self) -> None:
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+
+        self.assertIn("navigator.mediaDevices.getUserMedia", script)
+        self.assertIn("new MediaRecorder", script)
+        self.assertIn("input_audio_buffer.append", script)
+        self.assertIn("input_audio_buffer.commit", script)
+        self.assertIn("media_type", script)
+        self.assertIn("FileReader", script)
+        self.assertIn("readAsDataURL", script)
+        self.assertIn("audio/webm", script)
+
     def test_voice_static_script_handles_transport_state(self) -> None:
         script = Path("atlas_voice/web/static/voice.js").read_text()
 
