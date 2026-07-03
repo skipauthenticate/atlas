@@ -640,6 +640,38 @@ class WebTests(unittest.TestCase):
             self.assertEqual(model_runs[0]["provider"], "stub")
             self.assertEqual(model_runs[0]["model"], "qwen-local")
 
+    def test_voice_playground_outputs_have_latency_display_hooks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
+            os.environ["ATLAS_VOICE_PIPER_VOICE"] = "/models/voice.onnx"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('data-playground-latency="tts"', response.text)
+            self.assertIn('data-playground-latency="stt"', response.text)
+            self.assertIn('data-playground-latency="model"', response.text)
+            script = Path("atlas_voice/web/static/voice.js").read_text()
+            self.assertGreaterEqual(script.count("payload.latency_ms"), 3)
+
     def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

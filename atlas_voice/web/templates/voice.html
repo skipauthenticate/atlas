@@ -75,7 +75,7 @@
           <input type="text" name="tts_text" placeholder="Text to synthesize" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>
           <button type="submit" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>Test</button>
         </form>
-        <output data-tts-playground-result>{{ voice_settings.tts_provider }}</output>
+        <output data-tts-playground-result data-playground-latency="tts">{{ voice_settings.tts_provider }}</output>
       </section>
 
       <section class="voice-playground" data-stt-playground data-endpoint="/api/voice/playground/stt">
@@ -87,7 +87,7 @@
           <input type="file" name="stt_audio" accept="audio/*" {% if not assistant_enabled %}disabled{% endif %}>
           <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Transcribe</button>
         </form>
-        <output data-stt-playground-result>{{ runtime.asr_provider }}</output>
+        <output data-stt-playground-result data-playground-latency="stt">{{ runtime.asr_provider }}</output>
       </section>
 
       <section class="voice-playground" data-model-playground data-endpoint="/api/voice/playground/model">
@@ -99,7 +99,7 @@
           <input type="text" name="model_text" placeholder="Prompt the local model" {% if not assistant_enabled %}disabled{% endif %}>
           <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Run</button>
         </form>
-        <output data-model-playground-result>{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</output>
+        <output data-model-playground-result data-playground-latency="model">{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</output>
       </section>
     </section>
 
