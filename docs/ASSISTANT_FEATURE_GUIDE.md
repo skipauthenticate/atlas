@@ -260,14 +260,20 @@ Recent ambient sessions are available at:
 curl -fsS http://127.0.0.1:8787/api/ambient/sessions | python -m json.tool
 ```
 
-## Phase 7: Coaching Storage Groundwork
+## Phase 7: Coaching And Memory Storage Groundwork
 
-Atlas now has local SQLite storage for coaching goals and feedback events. This
-is an internal API for the upcoming coaching engine and dashboard rather than a
-user-facing workflow yet. Goal records keep title, description, status, target
-date, metric, metadata, and completion timestamps. Feedback events can link to a
-goal and ambient/direct voice session, with category, score, evidence reference,
-message, metadata, and timestamps in the local database.
+Atlas now has local SQLite storage for coaching goals, feedback events, and
+long-term memory items. This is an internal API for the upcoming coaching engine,
+memory retrieval, and dashboard rather than a user-facing workflow yet. Goal
+records keep title, description, status, target date, metric, metadata, and
+completion timestamps. Feedback events can link to a goal and ambient/direct
+voice session, with category, score, evidence reference, message, metadata, and
+timestamps in the local database. Memory items keep kind, title, text, source
+type/id, importance, confidence, validity timestamps, and local audit timestamps.
+
+Programmatic memory storage is available through `Database.create_memory_item`,
+`Database.get_memory_item`, and `Database.list_memory_items`. Search and UI
+workflows are intentionally still separate follow-up items.
 
 ## Jetson Operating Notes
 

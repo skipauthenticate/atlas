@@ -200,6 +200,34 @@ class DatabaseTests(unittest.TestCase):
             self.assertIsNone(db.get_ambient_session(alice_id))
             self.assertIsNotNone(db.get_ambient_session(bob_id))
 
+    def test_memory_items_can_be_created_retrieved_and_listed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+
+            memory_id = db.create_memory_item(
+                kind="preference",
+                title="Meeting preference",
+                text="The user prefers concise meeting summaries with action items.",
+                source_type="manual",
+                source_id="seed",
+                importance=0.8,
+                confidence=0.9,
+            )
+
+            memory = db.get_memory_item(memory_id)
+            memories = db.list_memory_items()
+
+            self.assertEqual(memory["id"], memory_id)
+            self.assertEqual(memory["kind"], "preference")
+            self.assertEqual(memory["title"], "Meeting preference")
+            self.assertEqual(memory["source_type"], "manual")
+            self.assertEqual(memory["source_id"], "seed")
+            self.assertEqual(memory["importance"], 0.8)
+            self.assertEqual(memory["confidence"], 0.9)
+            self.assertIsNone(memory["valid_until"])
+            self.assertEqual([item["id"] for item in memories], [memory_id])
+
     def test_coaching_goals_can_be_created_listed_and_completed(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

@@ -248,6 +248,28 @@ class Database:
                     ON feedback_events(session_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_feedback_events_category
                     ON feedback_events(category, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS memory_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_id TEXT,
+                    importance REAL NOT NULL DEFAULT 0.0,
+                    confidence REAL NOT NULL DEFAULT 0.0,
+                    valid_from TEXT,
+                    valid_until TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_items_kind
+                    ON memory_items(kind, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_memory_items_source
+                    ON memory_items(source_type, source_id);
+                CREATE INDEX IF NOT EXISTS idx_memory_items_valid_until
+                    ON memory_items(valid_until);
                 """
             )
 
@@ -977,6 +999,77 @@ class Database:
                 item["tool_calls"] = []
             turns.append(item)
         return turns
+
+    def create_memory_item(
+        self,
+        *,
+        kind: str,
+        title: str,
+        text: str,
+        source_type: str,
+        source_id: str | None = None,
+        importance: float = 0.0,
+        confidence: float = 0.0,
+        valid_from: str | None = None,
+        valid_until: str | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO memory_items (
+                    kind, title, text, source_type, source_id, importance, confidence,
+                    valid_from, valid_until, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    kind,
+                    title,
+                    text,
+                    source_type,
+                    source_id,
+                    importance,
+                    confidence,
+                    valid_from,
+                    valid_until,
+                    now,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def get_memory_item(self, memory_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memory_items WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_memory_items(
+        self,
+        *,
+        kind: str | None = None,
+        source_type: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM memory_items"
+        params: list[Any] = []
+        filters: list[str] = []
+        if kind:
+            filters.append("kind = ?")
+            params.append(kind)
+        if source_type:
+            filters.append("source_type = ?")
+            params.append(source_type)
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params.append(max(min(limit, 500), 1))
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
 
     def create_coaching_goal(
         self,
