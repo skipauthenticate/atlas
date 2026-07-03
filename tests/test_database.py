@@ -200,6 +200,40 @@ class DatabaseTests(unittest.TestCase):
             self.assertIsNone(db.get_ambient_session(alice_id))
             self.assertIsNotNone(db.get_ambient_session(bob_id))
 
+    def test_coaching_goals_can_be_created_listed_and_completed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+
+            goal_id = db.create_coaching_goal(
+                title="Ask better follow-up questions",
+                description="Practice one reflective question per conversation.",
+                target_date="2026-08-01",
+                metric="reflection_ratio",
+                metadata={"value": "curiosity", "next_action": "review daily summary"},
+            )
+            archived_id = db.create_coaching_goal(
+                title="Archived goal",
+                status="archived",
+            )
+
+            active_goals = db.list_coaching_goals(status="active")
+            all_goals = db.list_coaching_goals(status=None)
+            goal = db.get_coaching_goal(goal_id)
+
+            self.assertEqual([item["id"] for item in active_goals], [goal_id])
+            self.assertEqual({item["id"] for item in all_goals}, {goal_id, archived_id})
+            self.assertEqual(goal["title"], "Ask better follow-up questions")
+            self.assertEqual(goal["metric"], "reflection_ratio")
+            self.assertEqual(goal["metadata"], {"value": "curiosity", "next_action": "review daily summary"})
+            self.assertIsNone(goal["completed_at"])
+
+            db.update_coaching_goal(goal_id, status="completed")
+            completed = db.get_coaching_goal(goal_id)
+
+            self.assertEqual(completed["status"], "completed")
+            self.assertIsNotNone(completed["completed_at"])
+
     def test_audit_tables_store_model_runs_and_privacy_events(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

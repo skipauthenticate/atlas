@@ -206,6 +206,24 @@ class Database:
                     ON privacy_events(created_at DESC, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_privacy_events_type
                     ON privacy_events(event_type, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS coaching_goals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    target_date TEXT,
+                    metric TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    completed_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_coaching_goals_status
+                    ON coaching_goals(status, target_date, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_coaching_goals_updated
+                    ON coaching_goals(updated_at DESC, id DESC);
                 """
             )
 
@@ -935,6 +953,104 @@ class Database:
                 item["tool_calls"] = []
             turns.append(item)
         return turns
+
+    def create_coaching_goal(
+        self,
+        *,
+        title: str,
+        description: str | None = None,
+        status: str = "active",
+        target_date: str | None = None,
+        metric: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        now = utc_now()
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO coaching_goals (
+                    title, description, status, target_date, metric, metadata_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    title,
+                    description,
+                    status,
+                    target_date,
+                    metric,
+                    json.dumps(metadata or {}, sort_keys=True),
+                    now,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def update_coaching_goal(self, goal_id: int, **fields: Any) -> bool:
+        allowed = {
+            "title": "title",
+            "description": "description",
+            "status": "status",
+            "target_date": "target_date",
+            "metric": "metric",
+            "completed_at": "completed_at",
+            "metadata": "metadata_json",
+        }
+        updates: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key not in allowed:
+                raise ValueError(f"Unsupported coaching goal field: {key}")
+            updates[allowed[key]] = json.dumps(value or {}, sort_keys=True) if key == "metadata" else value
+        if not updates:
+            return False
+        now = utc_now()
+        if updates.get("status") == "completed" and "completed_at" not in updates:
+            updates["completed_at"] = now
+        updates["updated_at"] = now
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [goal_id]
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE coaching_goals SET {assignments} WHERE id = ?",
+                values,
+            )
+            return cursor.rowcount > 0
+
+    def get_coaching_goal(self, goal_id: int) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM coaching_goals WHERE id = ?",
+                (goal_id,),
+            ).fetchone()
+        return self._coaching_goal_from_row(row)
+
+    def list_coaching_goals(
+        self,
+        *,
+        status: str | None = "active",
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM coaching_goals"
+        params: list[Any] = []
+        if status:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += " ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params.append(max(min(limit, 500), 1))
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._coaching_goal_from_row(row) for row in rows]
+
+    @staticmethod
+    def _coaching_goal_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        item = dict(row)
+        try:
+            item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+        except json.JSONDecodeError:
+            item["metadata"] = {}
+        return item
 
     def log_model_run(
         self,

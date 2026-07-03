@@ -435,7 +435,7 @@ Status: partially complete.
 - [x] Add DB storage for turns.
 - [x] Add DB storage for model runs.
 - [x] Add DB storage for privacy events.
-- [ ] Add DB storage for coaching goals.
+- [x] Add DB storage for coaching goals.
 - [ ] Add DB storage for feedback events.
 
 ### Phase 3: ElevenLabs-Inspired Voice UI
@@ -637,7 +637,7 @@ Database status:
 - [x] `assistant_turns`
 - [ ] `memory_items`
 - [ ] `feedback_events`
-- [ ] `coaching_goals`
+- [x] `coaching_goals`
 - [ ] `skill_scores`
 - [x] `model_runs`
 - [x] `privacy_events`

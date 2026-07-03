@@ -159,6 +159,13 @@ Recent ambient sessions are available at:
 curl -fsS http://127.0.0.1:8787/api/ambient/sessions | python -m json.tool
 ```
 
+## Phase 7: Coaching Storage Groundwork
+
+Atlas now has local SQLite storage for coaching goals. This is an internal API
+for the upcoming coaching engine and dashboard rather than a user-facing workflow
+yet. Goal records keep title, description, status, target date, metric,
+metadata, and completion timestamps in the local database.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,
