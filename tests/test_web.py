@@ -1007,6 +1007,65 @@ class WebTests(unittest.TestCase):
             self.assertEqual(web_app.db.list_assistant_turns(session_id), [])
             self.assertEqual(web_app.db.list_model_runs(), [])
 
+    def test_realtime_websocket_barge_in_cancels_active_response_and_starts_new_turn(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            first_started = threading.Event()
+            release_first = threading.Event()
+
+            def reply_for_barge_in(text: str, *_args, **_kwargs) -> RealtimeReply:
+                if text == "First request":
+                    first_started.set()
+                    release_first.wait(2.0)
+                    return RealtimeReply(text="Stale reply", latency_ms=200, tokens_in=2, tokens_out=2)
+                return RealtimeReply(text=f"Fresh reply: {text}", latency_ms=5, tokens_in=2, tokens_out=3)
+
+            with patch.object(web_app, "generate_realtime_reply", side_effect=reply_for_barge_in):
+                with client.websocket_connect("/v1/realtime") as websocket:
+                    created = websocket.receive_json()
+                    session_id = created["session"]["id"]
+                    websocket.send_json({"type": "input_text", "text": "First request"})
+                    first_events = _receive_until(websocket, "response.created")
+                    first_response_id = first_events[-1]["response"]["id"]
+                    self.assertTrue(first_started.wait(1.0))
+                    websocket.send_json({"type": "input_text", "text": "Second request"})
+                    barge_events = _receive_until(websocket, "response.done")
+                    release_first.set()
+
+            event_types = [event["type"] for event in barge_events]
+            cancelled = next(event for event in barge_events if event["type"] == "response.cancelled")
+            done = barge_events[-1]
+            utterances = web_app.db.list_utterances(session_id)
+            assistant_turns = web_app.db.list_assistant_turns(session_id)
+            model_runs = web_app.db.list_model_runs()
+
+            self.assertEqual(cancelled["response"]["id"], first_response_id)
+            self.assertEqual(cancelled["reason"], "barge_in")
+            self.assertIn("conversation.item.input_text.done", event_types)
+            self.assertEqual(done["type"], "response.done")
+            self.assertEqual(done["response"]["output"][0]["text"], "Fresh reply: Second request")
+            self.assertEqual([utterance["text"] for utterance in utterances], ["First request", "Second request"])
+            self.assertEqual([turn["text"] for turn in assistant_turns], ["Fresh reply: Second request"])
+            self.assertEqual(len(model_runs), 1)
+            self.assertEqual(model_runs[0]["input_ref"], f"utterance:{utterances[1]['id']}")
+
     def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

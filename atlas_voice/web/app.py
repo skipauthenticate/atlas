@@ -737,6 +737,21 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         },
     )
 
+    async def cancel_active_response(reason: str) -> bool:
+        nonlocal active_response_task
+        if not active_response_task or active_response_task.done():
+            return False
+        active_response_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await active_response_task
+        active_response_task = None
+        await _handle_realtime_response_cancel(
+            websocket,
+            state=state,
+            event={"reason": reason},
+        )
+        return True
+
     try:
         while True:
             event = await websocket.receive_json()
@@ -771,11 +786,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
 
             if event_type in {"response.cancel", "response.interrupt", "input_audio_buffer.interrupt"}:
                 if active_response_task and not active_response_task.done():
-                    active_response_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await active_response_task
-                    active_response_task = None
-                    await _handle_realtime_response_cancel(websocket, state=state, event=event)
+                    await cancel_active_response(str(event.get("reason") or "client_cancelled"))
                 else:
                     await _handle_realtime_interrupt(websocket, state=state, event=event)
                 continue
@@ -812,13 +823,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         event_type=event_type,
                     )
                     continue
-                if active_response_task and not active_response_task.done():
-                    await _send_realtime_error(
-                        websocket,
-                        "response already in progress; cancel it before starting another response",
-                        event_type=event_type,
-                    )
-                    continue
+                await cancel_active_response("barge_in")
                 active_response_task = asyncio.create_task(
                     _handle_realtime_user_text(
                         websocket,
@@ -842,13 +847,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         event_type=event_type,
                     )
                     continue
-                if active_response_task and not active_response_task.done():
-                    await _send_realtime_error(
-                        websocket,
-                        "response already in progress; cancel it before starting another response",
-                        event_type=event_type,
-                    )
-                    continue
+                await cancel_active_response("barge_in")
                 active_response_task = asyncio.create_task(
                     _handle_realtime_user_text(
                         websocket,
@@ -881,13 +880,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         event_type=event_type,
                     )
                     continue
-                if active_response_task and not active_response_task.done():
-                    await _send_realtime_error(
-                        websocket,
-                        "response already in progress; cancel it before starting another response",
-                        event_type=event_type,
-                    )
-                    continue
+                await cancel_active_response("barge_in")
                 active_response_task = asyncio.create_task(
                     _handle_realtime_user_text(
                         websocket,
