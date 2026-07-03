@@ -76,13 +76,17 @@ a {
 
 input[type="search"],
 input[type="text"],
+input[type="number"],
 input[type="file"],
+textarea,
 select {
   max-width: 100%;
 }
 
 input[type="search"],
 input[type="text"],
+input[type="number"],
+textarea,
 select {
   width: 100%;
   padding: 8px 10px;
@@ -90,6 +94,11 @@ select {
   border-radius: 6px;
   background: #fff;
   color: var(--ink);
+}
+
+textarea {
+  min-height: 68px;
+  resize: vertical;
 }
 
 input[type="search"] {
@@ -1009,6 +1018,60 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
+}
+
+.voice-memory-list {
+  display: grid;
+  gap: 10px;
+}
+
+.voice-memory-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.voice-memory-form,
+.voice-memory-delete {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.voice-memory-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.voice-memory-fields label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.voice-memory-fields span,
+.voice-memory-form small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.voice-memory-form button,
+.voice-memory-delete button {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.voice-memory-delete button {
+  background: #b42318;
+}
+
+.voice-memory-delete button:hover {
+  background: #912018;
 }
 
 .voice-toggle {

@@ -263,8 +263,7 @@ curl -fsS http://127.0.0.1:8787/api/ambient/sessions | python -m json.tool
 ## Phase 7: Coaching And Memory Storage Groundwork
 
 Atlas now has local SQLite storage for coaching goals, feedback events, and
-long-term memory items. This is an internal API for the upcoming coaching engine,
-memory retrieval, and dashboard rather than a user-facing workflow yet. Goal
+long-term memory items. Goal
 records keep title, description, status, target date, metric, metadata, and
 completion timestamps. Feedback events can link to a goal and ambient/direct
 voice session, with category, score, evidence reference, message, metadata, and
@@ -287,9 +286,10 @@ atlas-voice memory extract-direct --session <session_id> --yes
 
 The commands are dry-run by default and currently store explicit cues such as
 `remember that ...` and `I prefer ...` as local memory items. Ambient and direct
-voice memories use separate source types so future UI and retention controls can
-filter them independently. Vector search and UI workflows are intentionally still
-separate follow-up items.
+voice memories use separate source types so future retention controls can filter
+them independently. The `/voice` inspector shows recent memory items with inline
+edit and delete controls; edits update the local FTS index immediately. Vector
+search remains a separate follow-up item.
 
 ## Jetson Operating Notes
 

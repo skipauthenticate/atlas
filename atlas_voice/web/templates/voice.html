@@ -183,7 +183,47 @@
 
       <section id="voice-memory">
         <h2>Memory</h2>
-        <label class="voice-toggle"><input type="checkbox" disabled> Local memory</label>
+        <div class="voice-memory-list" data-memory-list>
+          {% for memory in memory_items %}
+            <article class="voice-memory-item">
+              <form action="/memory/{{ memory.id }}/edit" method="post" class="voice-memory-form">
+                <div class="voice-memory-fields">
+                  <label>
+                    <span>Kind</span>
+                    <input type="text" name="kind" value="{{ memory.kind }}" required>
+                  </label>
+                  <label>
+                    <span>Title</span>
+                    <input type="text" name="title" value="{{ memory.title }}" required>
+                  </label>
+                  <label class="voice-memory-text">
+                    <span>Text</span>
+                    <textarea name="text" rows="3" required>{{ memory.text }}</textarea>
+                  </label>
+                  <label>
+                    <span>Importance</span>
+                    <input type="number" name="importance" min="0" max="1" step="0.05" value="{{ memory.importance_value }}">
+                  </label>
+                  <label>
+                    <span>Confidence</span>
+                    <input type="number" name="confidence" min="0" max="1" step="0.05" value="{{ memory.confidence_value }}">
+                  </label>
+                  <label>
+                    <span>Valid Until</span>
+                    <input type="text" name="valid_until" value="{{ memory.valid_until_value }}" placeholder="optional ISO time">
+                  </label>
+                </div>
+                <small>{{ memory.source_type }}{% if memory.source_id %} · {{ memory.source_id }}{% endif %} · updated {{ memory.updated_at_display }}</small>
+                <button type="submit">Save</button>
+              </form>
+              <form action="/memory/{{ memory.id }}/delete" method="post" class="voice-memory-delete">
+                <button type="submit">Delete</button>
+              </form>
+            </article>
+          {% else %}
+            <div class="empty tight">No memory items.</div>
+          {% endfor %}
+        </div>
       </section>
 
       <section id="voice-coaching">

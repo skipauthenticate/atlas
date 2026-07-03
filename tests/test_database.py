@@ -228,6 +228,36 @@ class DatabaseTests(unittest.TestCase):
             self.assertIsNone(memory["valid_until"])
             self.assertEqual([item["id"] for item in memories], [memory_id])
 
+    def test_memory_items_can_be_updated_deleted_and_reindexed(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            memory_id = db.create_memory_item(
+                kind="preference",
+                title="Original title",
+                text="The user prefers long answers.",
+                source_type="manual",
+            )
+
+            self.assertTrue(
+                db.update_memory_item(
+                    memory_id,
+                    title="Reply preference",
+                    text="The user prefers concise answers first.",
+                    kind="preference",
+                )
+            )
+
+            updated = db.get_memory_item(memory_id)
+            self.assertEqual(updated["title"], "Reply preference")
+            self.assertEqual(updated["text"], "The user prefers concise answers first.")
+            self.assertEqual(db.search_memory_items("concise")[0]["id"], memory_id)
+            self.assertEqual(db.search_memory_items("long"), [])
+
+            self.assertTrue(db.delete_memory_item(memory_id))
+            self.assertIsNone(db.get_memory_item(memory_id))
+            self.assertEqual(db.search_memory_items("concise"), [])
+
     def test_search_memory_items_uses_fts_and_ignores_expired_items(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

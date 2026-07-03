@@ -360,6 +360,71 @@ class WebTests(unittest.TestCase):
             self.assertIn("mic", response.text)
             self.assertIn("file", response.text)
 
+    def test_voice_console_memory_ui_can_edit_and_delete_items(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            memory_id = web_app.db.create_memory_item(
+                kind="preference",
+                title="Reply preference",
+                text="The user prefers concise answers first.",
+                source_type="direct_voice_session",
+                source_id="session-1",
+                importance=0.8,
+                confidence=0.9,
+            )
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('data-memory-list', response.text)
+            self.assertIn("Reply preference", response.text)
+            self.assertIn("The user prefers concise answers first.", response.text)
+            self.assertIn(f'/memory/{memory_id}/edit', response.text)
+            self.assertIn(f'/memory/{memory_id}/delete', response.text)
+
+            edited = client.post(
+                f"/memory/{memory_id}/edit",
+                data={
+                    "kind": "preference",
+                    "title": "Response style",
+                    "text": "The user prefers concise answers with rationale second.",
+                    "importance": "0.7",
+                    "confidence": "0.85",
+                    "valid_until": "",
+                },
+                follow_redirects=False,
+            )
+
+            self.assertEqual(edited.status_code, 303)
+            updated = web_app.db.get_memory_item(memory_id)
+            self.assertEqual(updated["title"], "Response style")
+            self.assertIn("rationale second", updated["text"])
+            self.assertEqual(web_app.db.search_memory_items("rationale")[0]["id"], memory_id)
+
+            deleted = client.post(f"/memory/{memory_id}/delete", follow_redirects=False)
+
+            self.assertEqual(deleted.status_code, 303)
+            self.assertIsNone(web_app.db.get_memory_item(memory_id))
+            self.assertEqual(web_app.db.search_memory_items("rationale"), [])
+
     def test_voice_console_inspector_shows_voice_settings(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -1096,6 +1096,54 @@ class Database:
             rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
 
+    def update_memory_item(self, memory_id: int, **fields: Any) -> bool:
+        allowed = {
+            "kind",
+            "title",
+            "text",
+            "importance",
+            "confidence",
+            "valid_from",
+            "valid_until",
+        }
+        updates: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key not in allowed:
+                raise ValueError(f"Unsupported memory item field: {key}")
+            updates[key] = value
+        if not updates:
+            return False
+        updates["updated_at"] = utc_now()
+        assignments = ", ".join(f"{key} = ?" for key in updates)
+        values = list(updates.values()) + [memory_id]
+        with self.connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE memory_items SET {assignments} WHERE id = ?",
+                values,
+            )
+            if cursor.rowcount <= 0:
+                return False
+            row = conn.execute(
+                "SELECT kind, title, text FROM memory_items WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+            conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+            if row is not None:
+                conn.execute(
+                    """
+                    INSERT INTO memory_fts (memory_id, kind, title, text)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (memory_id, row["kind"], row["title"], row["text"]),
+                )
+            return True
+
+    def delete_memory_item(self, memory_id: int) -> bool:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+            cursor = conn.execute("DELETE FROM memory_items WHERE id = ?", (memory_id,))
+            return cursor.rowcount > 0
+
     def search_memory_items(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         match = self._fts_query(query)
         if not match:

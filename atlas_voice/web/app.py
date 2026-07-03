@@ -325,8 +325,33 @@ def voice_console(request: Request) -> Response:
             "sessions": sessions,
             "ambient_timeline": ambient_timeline,
             "voice_settings": _voice_settings_view(),
+            "memory_items": _memory_item_views(db.list_memory_items(limit=8)),
         },
     )
+
+
+def _memory_item_views(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    views: list[dict[str, Any]] = []
+    for item in items:
+        views.append(
+            {
+                **item,
+                "created_at_display": _timestamp_label(_parse_timestamp(item.get("created_at"))),
+                "updated_at_display": _timestamp_label(_parse_timestamp(item.get("updated_at"))),
+                "importance_value": _compact_float(item.get("importance")),
+                "confidence_value": _compact_float(item.get("confidence")),
+                "valid_until_value": item.get("valid_until") or "",
+            }
+        )
+    return views
+
+
+def _compact_float(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "0"
+    return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
 def _voice_settings_view() -> dict[str, Any]:
@@ -658,6 +683,42 @@ def retry_recording(recording_id: str) -> Response:
         raise HTTPException(status_code=404, detail="Recording not found")
     db.retry_recording(recording_id)
     return RedirectResponse(f"/recordings/{recording_id}", status_code=303)
+
+
+@app.post("/memory/{memory_id}/edit")
+def edit_memory_item(
+    memory_id: int,
+    kind: str = Form(...),
+    title: str = Form(...),
+    text: str = Form(...),
+    importance: float = Form(0.0),
+    confidence: float = Form(0.0),
+    valid_until: str = Form(""),
+) -> Response:
+    if db.get_memory_item(memory_id) is None:
+        raise HTTPException(status_code=404, detail="Memory item not found")
+    clean_title = title.strip()
+    clean_text = text.strip()
+    clean_kind = kind.strip().lower()
+    if not clean_title or not clean_text or not clean_kind:
+        raise HTTPException(status_code=400, detail="Memory kind, title, and text are required")
+    db.update_memory_item(
+        memory_id,
+        kind=clean_kind,
+        title=clean_title,
+        text=clean_text,
+        importance=max(min(importance, 1.0), 0.0),
+        confidence=max(min(confidence, 1.0), 0.0),
+        valid_until=valid_until.strip() or None,
+    )
+    return RedirectResponse("/voice#voice-memory", status_code=303)
+
+
+@app.post("/memory/{memory_id}/delete")
+def delete_memory_item(memory_id: int) -> Response:
+    if not db.delete_memory_item(memory_id):
+        raise HTTPException(status_code=404, detail="Memory item not found")
+    return RedirectResponse("/voice#voice-memory", status_code=303)
 
 
 @app.get("/search", response_class=HTMLResponse)
