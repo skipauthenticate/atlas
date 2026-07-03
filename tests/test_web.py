@@ -246,6 +246,61 @@ class WebTests(unittest.TestCase):
             self.assertFalse(payload["local_only"])
             self.assertIn("llm_base_url", {issue["check"] for issue in payload["issues"]})
 
+    def test_voice_console_renders_workbench_with_recent_sessions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            session_id = web_app.db.create_ambient_session(
+                mode="direct_voice",
+                source="websocket",
+                title="Realtime coaching check-in",
+            )
+            utterance_id = web_app.db.add_utterance(
+                session_id=session_id,
+                text="How direct was my update?",
+                source_provider="text",
+            )
+            web_app.db.add_assistant_turn(
+                session_id=session_id,
+                user_utterance_id=utterance_id,
+                text="Your update was direct and specific.",
+                model="qwen-local",
+                latency_ms=11,
+            )
+            web_app.db.end_ambient_session(session_id)
+            client = TestClient(web_app.app)
+
+            response = client.get("/voice")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('class="voice-workbench"', response.text)
+            self.assertIn("Voice", response.text)
+            self.assertIn("Ambient", response.text)
+            self.assertIn("Memory", response.text)
+            self.assertIn("Coaching", response.text)
+            self.assertIn("Realtime coaching check-in", response.text)
+            self.assertIn("How direct was my update?", response.text)
+            self.assertIn("Your update was direct and specific.", response.text)
+            self.assertIn("Transport", response.text)
+            self.assertIn("Privacy", response.text)
+            self.assertIn("Local Models", response.text)
+
     def test_assistant_sessions_api_lists_direct_voice_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

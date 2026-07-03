@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Voice - Atlas Voice{% endblock %}
+
+{% block content %}
+  <div class="voice-workbench">
+    <nav class="voice-rail" aria-label="Voice workspace">
+      <a href="/">Home</a>
+      <a href="/voice" class="active">Voice</a>
+      <a href="/api/ambient/sessions">Ambient</a>
+      <a href="#voice-memory">Memory</a>
+      <a href="#voice-coaching">Coaching</a>
+      <a href="/search">Search</a>
+      <a href="#voice-settings">Settings</a>
+    </nav>
+
+    <section class="voice-main" aria-label="Voice console">
+      <div class="voice-titlebar">
+        <div>
+          <h1>Voice</h1>
+          <p>{{ "Realtime enabled" if assistant_enabled else "Realtime disabled" }}</p>
+        </div>
+        <span class="status {{ 'status-done' if assistant_enabled else 'status-queued' }}">
+          {{ 'online' if assistant_enabled else 'off' }}
+        </span>
+      </div>
+
+      <div class="voice-call-surface" aria-label="Realtime call surface">
+        <div class="voice-waveform" aria-hidden="true">
+          {% for _ in range(24) %}<span></span>{% endfor %}
+        </div>
+        <div class="voice-call-meta">
+          <strong>{{ runtime.asr_model }}</strong>
+          <small>{{ runtime.asr_provider }} · {{ runtime.accelerator }} · {{ status.realtime.transport if status.realtime is defined else 'websocket' }}</small>
+        </div>
+      </div>
+
+      <section class="voice-transcript" aria-label="Conversation transcript">
+        <div class="section-heading compact">
+          <h2>Conversation</h2>
+          <small>{{ sessions | length }} recent sessions</small>
+        </div>
+        {% if sessions %}
+          {% set latest = sessions[0] %}
+          {% if latest.last_utterance %}
+            <div class="voice-message user">
+              <span>User</span>
+              <p>{{ latest.last_utterance }}</p>
+            </div>
+          {% endif %}
+          {% if latest.last_reply %}
+            <div class="voice-message assistant">
+              <span>Atlas</span>
+              <p>{{ latest.last_reply }}</p>
+            </div>
+          {% endif %}
+        {% else %}
+          <div class="empty">No direct voice sessions yet.</div>
+        {% endif %}
+      </section>
+
+      <form class="voice-prompt" aria-label="Typed prompt">
+        <input type="text" name="prompt" placeholder="Message Atlas" disabled>
+        <button type="button" disabled>Send</button>
+      </form>
+    </section>
+
+    <aside class="voice-inspector" aria-label="Voice inspector">
+      <section>
+        <h2>Privacy</h2>
+        <strong class="privacy-state privacy-{{ status.privacy.status }}">{{ status.privacy.status }}</strong>
+        <small>{{ status.privacy.issue_count }} local-only issues</small>
+      </section>
+
+      <section id="voice-settings">
+        <h2>Local Models</h2>
+        <div class="voice-model-list">
+          {% for model in status.active_models %}
+            <div>
+              <span>{{ model.role }}</span>
+              <strong>{{ model.model }}</strong>
+              <small>{{ model.provider }}</small>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section>
+        <h2>Session History</h2>
+        <div class="voice-session-list">
+          {% for session in sessions %}
+            <a href="/api/assistant/sessions?mode=direct_voice" class="voice-session-row">
+              <strong>{{ session.title or session.id }}</strong>
+              <small>{{ session.started_at_display }} · {{ session.utterance_count }} turns</small>
+            </a>
+          {% else %}
+            <div class="empty tight">No sessions.</div>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section id="voice-memory">
+        <h2>Memory</h2>
+        <label class="voice-toggle"><input type="checkbox" disabled> Local memory</label>
+      </section>
+
+      <section id="voice-coaching">
+        <h2>Coaching</h2>
+        <label class="voice-toggle"><input type="checkbox" disabled> Feedback events</label>
+      </section>
+    </aside>
+
+    <footer class="voice-transport" aria-label="Transport">
+      <h2>Transport</h2>
+      <button type="button" disabled>Mic</button>
+      <button type="button" disabled>Pause</button>
+      <button type="button" disabled>Private</button>
+      <button type="button" disabled>Interrupt</button>
+      <button type="button" disabled>Play</button>
+      <label><span>Volume</span><input type="range" min="0" max="100" value="70" disabled></label>
+      <time>00:00</time>
+    </footer>
+  </div>
+{% endblock %}

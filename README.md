@@ -71,6 +71,7 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
   into an AnythingLLM workspace.
 - `GET /search?q=...`: full-text transcript and summary search.
 - `GET /api/recordings/{id}`: structured JSON export.
+- `GET /voice`: assistant workbench console.
 - `GET /api/status`: local system, model, service, listener, and privacy status.
 - `GET /api/assistant/health`: focused assistant readiness and component health.
 - `GET /api/assistant/sessions`: direct voice session history.
@@ -92,6 +93,11 @@ their services are installed. The dashboard and `atlas-voice privacy status`
 show local-only validation, RAM/swap/GPU status, active models, active listeners,
 and service health. Audit tables for `model_runs` and `privacy_events` are stored
 in the existing SQLite database.
+
+Open `/voice` for the assistant workbench console. It shows the voice rail,
+conversation surface, recent direct voice sessions, local model status, privacy
+state, memory/coaching placeholders, and transport controls for the browser voice
+path.
 
 Enable direct realtime sessions explicitly with `ATLAS_ASSISTANT_ENABLED=true`.
 `ATLAS_REALTIME_HOST=127.0.0.1` is the default bind-host alias for the realtime

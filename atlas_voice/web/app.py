@@ -305,6 +305,38 @@ def dashboard(
     )
 
 
+@app.get("/voice", response_class=HTMLResponse)
+def voice_console(request: Request) -> Response:
+    status = collect_runtime_status(settings, db, assistant_config)
+    sessions = _voice_session_views(db.list_ambient_sessions(limit=8, mode="direct_voice"))
+    return templates.TemplateResponse(
+        request,
+        "voice.html",
+        {
+            "runtime": runtime_info(settings),
+            "status": status,
+            "assistant_enabled": settings.assistant_enabled,
+            "sessions": sessions,
+        },
+    )
+
+
+def _voice_session_views(sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    views: list[dict[str, Any]] = []
+    for session in sessions:
+        utterances = db.list_utterances(str(session["id"]))
+        turns = db.list_assistant_turns(str(session["id"]))
+        views.append(
+            {
+                **session,
+                "started_at_display": _timestamp_label(_parse_timestamp(session.get("started_at"))),
+                "last_utterance": utterances[-1]["text"] if utterances else "",
+                "last_reply": turns[-1]["text"] if turns else "",
+            }
+        )
+    return views
+
+
 @app.post("/settings/runtime")
 def update_runtime_settings(
     asr_provider: str = Form(...),

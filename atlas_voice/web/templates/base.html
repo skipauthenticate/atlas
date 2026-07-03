@@ -9,7 +9,10 @@
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/">Atlas Voice</a>
+      <div class="brand-group">
+        <a class="brand" href="/">Atlas Voice</a>
+        <a class="topbar-link" href="/voice">Voice</a>
+      </div>
       <div class="topbar-tools">
         {% if runtime is defined %}
           <div class="runtime-pill" title="{{ runtime.asr_provider }} · {{ runtime.asr_model }}">

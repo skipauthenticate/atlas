@@ -128,6 +128,19 @@ For development without local models, set:
 export ATLAS_VOICE_STUB_MODE=true
 ```
 
+## Phase 3: Voice Workbench Console
+
+Open the assistant console at:
+
+```text
+http://127.0.0.1:8787/voice
+```
+
+The workbench includes the voice rail, realtime call surface, recent conversation
+transcript preview, right inspector with privacy and local model state, session
+history, memory/coaching toggles, and a bottom transport surface. Browser mic
+streaming and live transport actions are still tracked separately in `plan.md`.
+
 ## Phase 6: Ambient Listener MVP
 
 Process one file:
