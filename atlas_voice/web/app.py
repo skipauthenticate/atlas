@@ -768,6 +768,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 await _send_realtime_event(websocket, "input_audio_buffer.cleared")
                 continue
 
+            if event_type in {"response.cancel", "response.interrupt", "input_audio_buffer.interrupt"}:
+                await _handle_realtime_interrupt(websocket, state=state, event=event)
+                continue
+
             if event_type == "input_audio_buffer.commit":
                 committed = state.commit_audio()
                 await _send_realtime_event(
@@ -872,6 +876,36 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         pass
     finally:
         db.end_ambient_session(session_id)
+
+
+async def _handle_realtime_interrupt(
+    websocket: WebSocket,
+    *,
+    state: RealtimeTurnState,
+    event: dict[str, Any],
+) -> None:
+    response_id = state.active_response_id
+    response_was_active = state.response_in_progress
+    cleared_audio_bytes = state.buffered_audio_bytes
+    cleared_pending_text = state.pop_pending_text() is not None
+    state.clear_audio()
+    state.cancel_response()
+    if response_was_active:
+        state.complete_response()
+
+    reason = str(event.get("reason") or "client_interrupt").strip() or "client_interrupt"
+    response: dict[str, Any] = {"status": "interrupted"}
+    if response_id:
+        response["id"] = response_id
+    await _send_realtime_event(
+        websocket,
+        "response.interrupted",
+        response=response,
+        reason=reason[:120],
+        cleared_audio_bytes=cleared_audio_bytes,
+        cleared_pending_text=cleared_pending_text,
+        active_response=response_was_active,
+    )
 
 
 async def _handle_realtime_user_text(

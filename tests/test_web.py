@@ -857,6 +857,59 @@ class WebTests(unittest.TestCase):
             self.assertEqual(web_app.db.list_model_runs()[0]["task"], "realtime_chat")
 
 
+    def test_realtime_websocket_accepts_interrupt_event_and_clears_pending_input(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            audio = base64.b64encode(b"\0\0" * 12).decode("ascii")
+
+            with client.websocket_connect("/v1/realtime") as websocket:
+                created = websocket.receive_json()
+                websocket.send_json(
+                    {
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "content": [{"type": "input_text", "text": "Never send"}],
+                        },
+                    }
+                )
+                item_created = websocket.receive_json()
+                websocket.send_json({"type": "input_audio_buffer.append", "audio": audio})
+                appended = websocket.receive_json()
+                websocket.send_json({"type": "response.cancel", "reason": "user_interrupt"})
+                interrupted = websocket.receive_json()
+                websocket.send_json({"type": "response.create"})
+                error = websocket.receive_json()
+
+            self.assertEqual(created["type"], "session.created")
+            self.assertEqual(item_created["type"], "conversation.item.created")
+            self.assertEqual(appended["type"], "input_audio_buffer.appended")
+            self.assertEqual(interrupted["type"], "response.interrupted")
+            self.assertEqual(interrupted["reason"], "user_interrupt")
+            self.assertEqual(interrupted["cleared_audio_bytes"], 24)
+            self.assertTrue(interrupted["cleared_pending_text"])
+            self.assertEqual(interrupted["response"]["status"], "interrupted")
+            self.assertEqual(error["type"], "error")
+            self.assertIn("no pending user text", error["error"]["message"])
+            self.assertEqual(web_app.db.list_utterances(created["session"]["id"]), [])
+
     def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -466,7 +466,7 @@ Status: backend MVP complete; UI and richer realtime behavior remain.
 - [x] Add user audio buffer append/commit events.
 - [x] Add assistant text deltas.
 - [x] Add assistant audio events when TTS is configured.
-- [ ] Add interruption events.
+- [x] Add interruption events.
 - [x] Add error events.
 - [x] First support typed user input -> local Qwen-compatible LLM -> local TTS path.
 - [ ] Add browser playback UI.
@@ -485,6 +485,8 @@ Implemented event paths:
 - [x] `input_audio_buffer.append`
 - [x] `input_audio_buffer.commit`
 - [x] `input_audio_buffer.clear`
+- [x] `response.cancel` / `response.interrupt`
+- [x] `response.interrupted`
 - [x] `response.created`
 - [x] `response.text.delta`
 - [x] `response.text.done`

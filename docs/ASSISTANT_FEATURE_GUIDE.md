@@ -110,11 +110,14 @@ ws://127.0.0.1:8787/v1/realtime
 
 Supported event paths include `input_text`, `conversation.item.create` plus
 `response.create`, and `input_audio_buffer.append` / `input_audio_buffer.commit`.
-When TTS is configured, assistant audio is returned as `response.audio.delta` and
-stored under `data/artifacts/realtime/`. Realtime sessions use an internal turn
-state module to track buffered audio, pending text, audio format, and active
-responses. Every assistant text turn and TTS run is logged in SQLite `model_runs`
-for latency review.
+The interrupt control sends `response.cancel`, which the backend accepts as an
+interruption signal and acknowledges with `response.interrupted` after clearing
+pending text and buffered audio. Mid-generation response cancellation remains a
+separate planned item. When TTS is configured, assistant audio is returned as
+`response.audio.delta` and stored under `data/artifacts/realtime/`. Realtime
+sessions use an internal turn state module to track buffered audio, pending text,
+audio format, and active responses. Every assistant text turn and TTS run is
+logged in SQLite `model_runs` for latency review.
 
 A minimal text event looks like:
 
@@ -153,7 +156,7 @@ models, and timeline entries; playground sections remain unframed inside the mai
 work surface. The desktop/tablet/mobile layout is covered by static QA checks
 for bounded workbench columns, stacked narrow-screen controls, readable transport
 controls, and reduced mobile waveform density. Browser mic audio streaming and
-backend response cancellation are still tracked separately in `plan.md`.
+mid-generation response cancellation is still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 
