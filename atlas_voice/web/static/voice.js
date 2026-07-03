@@ -229,6 +229,9 @@
       let mediaRecorder = null;
       let micChunkReads = 0;
       let micStopPending = false;
+      let micDiscardPending = false;
+      let micStopShouldCommit = true;
+      let micStreamGeneration = 0;
 
       const formatElapsed = () => {
         if (!sessionStartedAt) return '00:00';
@@ -268,6 +271,7 @@
       };
 
       const commitMicAudio = () => {
+        if (micDiscardPending) return;
         if (micChunkReads > 0) {
           micStopPending = true;
           return;
@@ -276,18 +280,28 @@
         sendRealtimeEvent({ type: 'input_audio_buffer.commit' });
       };
 
-      const sendMicChunk = async (blob) => {
+      const discardMicAudio = () => {
+        micDiscardPending = true;
+        micStopPending = false;
+        micStreamGeneration += 1;
+        sendRealtimeEvent({ type: 'input_audio_buffer.clear' });
+      };
+
+      const sendMicChunk = async (blob, generation) => {
         if (!blob || blob.size === 0) return;
         micChunkReads += 1;
         try {
           const audio = await blobToBase64(blob);
+          if (micDiscardPending || generation !== micStreamGeneration) return;
           sendRealtimeEvent({
             type: 'input_audio_buffer.append',
             audio,
             media_type: blob.type || mediaRecorder?.mimeType || 'audio/webm',
           });
         } catch (error) {
-          appendMessage(transcript, 'Atlas', error.message || 'Microphone audio read failed');
+          if (!micDiscardPending) {
+            appendMessage(transcript, 'Atlas', error.message || 'Microphone audio read failed');
+          }
         } finally {
           micChunkReads -= 1;
           if (micStopPending && micChunkReads === 0) commitMicAudio();
@@ -298,25 +312,35 @@
         if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
           throw new Error('Browser microphone recording is unavailable');
         }
+        micDiscardPending = false;
+        micStopPending = false;
+        micStopShouldCommit = true;
+        micStreamGeneration += 1;
+        const generation = micStreamGeneration;
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const mimeType = browserRecorderMimeType();
         mediaRecorder = new MediaRecorder(micStream, mimeType ? { mimeType } : undefined);
         mediaRecorder.addEventListener('dataavailable', (event) => {
-          sendMicChunk(event.data);
+          sendMicChunk(event.data, generation);
         });
         mediaRecorder.addEventListener('stop', () => {
+          const shouldCommit = micStopShouldCommit;
+          micStopShouldCommit = true;
           stopMicTracks();
-          commitMicAudio();
+          if (shouldCommit) commitMicAudio();
         });
         mediaRecorder.start(750);
         sendRealtimeEvent({ type: 'session.update', media_type: mediaRecorder.mimeType || 'audio/webm' });
       };
 
-      const stopMicStreaming = () => {
+      const stopMicStreaming = ({ commit = true } = {}) => {
+        micStopShouldCommit = commit;
+        if (!commit) discardMicAudio();
         if (mediaRecorder && mediaRecorder.state !== 'inactive') {
           mediaRecorder.stop();
         } else {
           stopMicTracks();
+          if (commit && micChunkReads > 0) commitMicAudio();
         }
         mediaRecorder = null;
       };
@@ -361,6 +385,12 @@
 
       controls.get('interrupt')?.addEventListener('click', () => {
         pending.length = 0;
+        if (micEnabled) {
+          micEnabled = false;
+          togglePressed(controls.get('mic'), false);
+          stopMicStreaming({ commit: false });
+          stopTimer();
+        }
         if (socket && socket.readyState === WebSocket.OPEN) {
           socket.send(JSON.stringify({ type: 'response.cancel' }));
         }

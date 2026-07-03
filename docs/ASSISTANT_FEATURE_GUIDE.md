@@ -117,7 +117,9 @@ or committed audio that arrives while a response is active is treated as barge-i
 the active response is cancelled with reason `barge_in`, then the new turn starts.
 If no response is active, `response.cancel` is treated as an interruption signal
 and acknowledged with `response.interrupted` after clearing pending text and
-buffered audio. OpenAI-style model `tool_calls` are normalized, emitted as
+buffered audio. In the browser console, Interrupt also stops an active mic
+recording, discards queued mic chunks with `input_audio_buffer.clear`, and avoids
+committing partial speech. OpenAI-style model `tool_calls` are normalized, emitted as
 `response.tool_call.created`, gated with `response.tool_call.requires_confirmation`
 when the direct voice profile requires confirmation, shown in the `/voice`
 transcript, and persisted on the assistant turn. Local tool execution and the

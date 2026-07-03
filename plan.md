@@ -501,14 +501,14 @@ Implemented event paths:
 
 ### Phase 5: Microphone Voice Mode
 
-Status: not complete as browser realtime voice mode. Browser mic capture, optional Hyprwhspr-first routing, local faster-whisper fallback, and PCM16 realtime VAD/end-of-turn exist; browser container VAD and real mic ASR validation remain open.
+Status: not complete as browser realtime voice mode. Browser mic capture, optional Hyprwhspr-first routing, local faster-whisper fallback, PCM16 realtime VAD/end-of-turn, and mic interruption exist; browser container VAD and real mic ASR validation remain open.
 
 - [x] Stream browser mic audio to the realtime endpoint.
 - [x] Use Hyprwhspr first if its local socket/CLI is reliable.
 - [x] Fallback to local Whisper/faster-whisper.
 - [x] Add VAD for ambient file/mic chunks.
 - [x] Add realtime VAD/end-of-turn detection.
-- [ ] Add interruption.
+- [x] Add interruption.
 - [x] Default: discard raw audio for ambient mode.
 - [x] Default: keep transcript unless retention is disabled.
 - [x] Detect Logitech BRIO ALSA device as `plughw:2,0`.

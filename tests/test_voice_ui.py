@@ -67,6 +67,14 @@ class VoiceUiStaticTests(unittest.TestCase):
         self.assertIn("width: 100%", mobile_transport_range_group)
         self.assertIn("grid-template-columns: repeat(12, minmax(3px, 1fr))", mobile_waveform)
 
+
+    def test_interrupt_transport_discards_active_microphone_audio(self) -> None:
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+
+        self.assertIn("input_audio_buffer.clear", script)
+        self.assertIn("stopMicStreaming({ commit: false })", script)
+        self.assertIn("micDiscardPending", script)
+
     def test_voice_playground_sections_are_not_card_framed(self) -> None:
         css = Path("atlas_voice/web/static/app.css").read_text()
         playground = self._css_block(css, ".voice-playground")
