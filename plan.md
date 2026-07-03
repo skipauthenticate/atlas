@@ -575,7 +575,7 @@ Status: CLI/API MVP complete; speaker-aware ambient utterance storage exists; UI
 Status: remaining, except basic observability, durable memory item storage, SQLite FTS memory retrieval, ambient/direct voice memory extraction, memory inspect/edit/delete UI, daily/weekly local coaching summaries, conversation signal tracking, writing signal tracking, progress dashboards, coaching goals dashboard, and privacy events UI exist.
 
 - [x] Use SQLite FTS first for memory retrieval.
-- [ ] Add `sqlite-vec` later for semantic memory if needed.
+- [x] Add `sqlite-vec` later for semantic memory if needed.
 - [x] Add `memory_items` table.
 - [x] Add memory extraction from ambient sessions.
 - [x] Add memory extraction from direct voice sessions.
@@ -665,9 +665,9 @@ Database status:
 
 Vector retrieval plan:
 
-- [ ] Add local vector search with `sqlite-vec`.
+- [x] Add local vector search with `sqlite-vec`.
 - [x] Keep SQLite as the default memory/search store because Atlas already uses SQLite and FTS5.
-- [ ] Avoid Qdrant/Chroma unless memory scale outgrows SQLite.
+- [x] Avoid Qdrant/Chroma unless memory scale outgrows SQLite.
 
 Reference:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 import uuid
@@ -288,6 +289,18 @@ class Database:
                     ON memory_items(source_type, source_id);
                 CREATE INDEX IF NOT EXISTS idx_memory_items_valid_until
                     ON memory_items(valid_until);
+
+                CREATE TABLE IF NOT EXISTS memory_vectors (
+                    memory_id INTEGER PRIMARY KEY,
+                    model TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    embedding_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (memory_id) REFERENCES memory_items(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_memory_vectors_model
+                    ON memory_vectors(model, dimensions);
 
                 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
                     memory_id UNINDEXED,
@@ -1159,8 +1172,86 @@ class Database:
     def delete_memory_item(self, memory_id: int) -> bool:
         with self.connect() as conn:
             conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+            conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
             cursor = conn.execute("DELETE FROM memory_items WHERE id = ?", (memory_id,))
             return cursor.rowcount > 0
+
+    def upsert_memory_vector(
+        self,
+        memory_id: int,
+        embedding: list[float],
+        *,
+        model: str,
+    ) -> None:
+        clean_embedding = _clean_embedding(embedding)
+        if not clean_embedding:
+            raise ValueError("Memory vector embedding must not be empty")
+        now = utc_now()
+        with self.connect() as conn:
+            if conn.execute("SELECT 1 FROM memory_items WHERE id = ?", (memory_id,)).fetchone() is None:
+                raise ValueError(f"Unknown memory item: {memory_id}")
+            conn.execute(
+                """
+                INSERT INTO memory_vectors (
+                    memory_id, model, dimensions, embedding_json, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(memory_id) DO UPDATE SET
+                    model = excluded.model,
+                    dimensions = excluded.dimensions,
+                    embedding_json = excluded.embedding_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    memory_id,
+                    model,
+                    len(clean_embedding),
+                    json.dumps(clean_embedding),
+                    now,
+                ),
+            )
+
+    def search_memory_items_by_vector(
+        self,
+        embedding: list[float],
+        *,
+        model: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        query_embedding = _clean_embedding(embedding)
+        if not query_embedding:
+            return []
+        now = utc_now()
+        sql = """
+            SELECT
+                m.*,
+                v.model AS vector_model,
+                v.embedding_json AS vector_embedding_json
+            FROM memory_vectors v
+            JOIN memory_items m ON m.id = v.memory_id
+            WHERE v.dimensions = ?
+                AND (m.valid_from IS NULL OR m.valid_from <= ?)
+                AND (m.valid_until IS NULL OR m.valid_until >= ?)
+        """
+        params: list[Any] = [len(query_embedding), now, now]
+        if model is not None:
+            sql += " AND v.model = ?"
+            params.append(model)
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        scored: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            try:
+                candidate_embedding = json.loads(str(item.pop("vector_embedding_json") or "[]"))
+            except json.JSONDecodeError:
+                continue
+            score = _cosine_similarity(query_embedding, _clean_embedding(candidate_embedding))
+            if score is None:
+                continue
+            item["vector_score"] = score
+            scored.append(item)
+        scored.sort(key=lambda item: (item["vector_score"], item.get("importance") or 0.0), reverse=True)
+        return scored[: max(min(limit, 100), 1)]
 
     def search_memory_items(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         match = self._fts_query(query)
@@ -1565,3 +1656,29 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     if row is None:
         return None
     return {key: row[key] for key in row.keys()}
+
+
+def _clean_embedding(embedding: list[float] | tuple[float, ...]) -> list[float]:
+    clean: list[float] = []
+    for value in embedding:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("Memory vector embedding values must be numeric") from None
+        if not math.isfinite(number):
+            raise ValueError("Memory vector embedding values must be finite")
+        clean.append(number)
+    return clean
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float | None:
+    if len(left) != len(right) or not left:
+        return None
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return None
+    score = sum(left_value * right_value for left_value, right_value in zip(left, right)) / (
+        left_norm * right_norm
+    )
+    return round(score, 6)

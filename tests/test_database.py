@@ -292,6 +292,46 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(results[0]["title"], "Summary preference")
             self.assertIn("[concise]", results[0]["snippet"].lower())
 
+    def test_memory_vectors_can_be_searched_and_follow_memory_lifecycle(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            close_id = db.create_memory_item(
+                kind="preference",
+                title="Concise replies",
+                text="Prefer concise replies with actions first.",
+                source_type="manual",
+            )
+            far_id = db.create_memory_item(
+                kind="fact",
+                title="Office color",
+                text="The office wall is blue.",
+                source_type="manual",
+            )
+            expired_id = db.create_memory_item(
+                kind="fact",
+                title="Expired concise memory",
+                text="Expired memory about concise answers.",
+                source_type="manual",
+                valid_until="2020-01-01T00:00:00+00:00",
+            )
+
+            db.upsert_memory_vector(close_id, [1.0, 0.0, 0.0], model="test-3d")
+            db.upsert_memory_vector(far_id, [0.0, 1.0, 0.0], model="test-3d")
+            db.upsert_memory_vector(expired_id, [0.99, 0.0, 0.0], model="test-3d")
+
+            results = db.search_memory_items_by_vector([0.9, 0.1, 0.0], model="test-3d", limit=5)
+
+            self.assertEqual([item["id"] for item in results], [close_id, far_id])
+            self.assertGreater(results[0]["vector_score"], results[1]["vector_score"])
+            self.assertEqual(results[0]["vector_model"], "test-3d")
+
+            self.assertTrue(db.delete_memory_item(close_id))
+
+            remaining = db.search_memory_items_by_vector([1.0, 0.0, 0.0], model="test-3d", limit=5)
+            self.assertNotIn(close_id, [item["id"] for item in remaining])
+
+
     def test_coaching_goals_can_be_created_listed_and_completed(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

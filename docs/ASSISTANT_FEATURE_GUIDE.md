@@ -273,9 +273,14 @@ type/id, importance, confidence, validity timestamps, and local audit timestamps
 Programmatic memory storage is available through `Database.create_memory_item`,
 `Database.get_memory_item`, and `Database.list_memory_items`. Local retrieval uses
 SQLite FTS5 through `Database.search_memory_items`, filtering out memories outside
-their validity window and ranking matches locally without an external vector
-service. Ambient, meeting, and direct voice sessions can extract explicit durable
-memory cues locally without calling a large LLM for every utterance:
+their validity window and ranking matches locally without an external service.
+Optional local vector retrieval is available through
+`Database.upsert_memory_vector(...)` and
+`Database.search_memory_items_by_vector(...)`; install `atlas-voice[vector]` to
+make deployments ready for native `sqlite-vec` acceleration while retaining the
+portable SQLite fallback used by tests and lightweight Jetson setups. Ambient,
+meeting, and direct voice sessions can extract explicit durable memory cues
+locally without calling a large LLM for every utterance:
 
 ```bash
 atlas-voice memory extract-ambient --session <session_id>
@@ -288,8 +293,9 @@ The commands are dry-run by default and currently store explicit cues such as
 `remember that ...` and `I prefer ...` as local memory items. Ambient and direct
 voice memories use separate source types so future retention controls can filter
 them independently. The `/voice` inspector shows recent memory items with inline
-edit and delete controls; edits update the local FTS index immediately. Vector
-search remains a separate follow-up item.
+edit and delete controls; edits update the local FTS index immediately, and
+programmatic vector upserts can keep semantic retrieval in sync with the same
+local memory lifecycle.
 
 Generate local daily or weekly coaching summaries from captured ambient and
 direct voice sessions with:
