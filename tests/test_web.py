@@ -598,6 +598,14 @@ class WebTests(unittest.TestCase):
         self.assertIn("response.interrupted", script)
         self.assertIn("response.cancelled", script)
 
+    def test_voice_static_script_surfaces_tool_call_events(self) -> None:
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+
+        self.assertIn("response.tool_call.created", script)
+        self.assertIn("response.tool_call.requires_confirmation", script)
+        self.assertIn("Tool call requested", script)
+        self.assertIn("Tool confirmation required", script)
+
     def test_voice_console_exposes_stt_playground(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1065,6 +1073,63 @@ class WebTests(unittest.TestCase):
             self.assertEqual([turn["text"] for turn in assistant_turns], ["Fresh reply: Second request"])
             self.assertEqual(len(model_runs), 1)
             self.assertEqual(model_runs[0]["input_ref"], f"utterance:{utterances[1]['id']}")
+
+    def test_realtime_websocket_emits_confirmation_gated_tool_call_events(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            reply = RealtimeReply(
+                text="I can search locally.",
+                latency_ms=8,
+                tokens_in=2,
+                tokens_out=4,
+                tool_calls=[
+                    {
+                        "id": "call_search",
+                        "name": "search_recordings",
+                        "arguments": {"query": "Atlas"},
+                        "mutating": False,
+                    }
+                ],
+            )
+
+            with patch.object(web_app, "generate_realtime_reply", return_value=reply):
+                with client.websocket_connect("/v1/realtime") as websocket:
+                    created = websocket.receive_json()
+                    session_id = created["session"]["id"]
+                    websocket.send_json({"type": "input_text", "text": "Find Atlas"})
+                    events = _receive_until(websocket, "response.done")
+
+            event_types = [event["type"] for event in events]
+            created_call = next(event for event in events if event["type"] == "response.tool_call.created")
+            confirmation = next(
+                event for event in events if event["type"] == "response.tool_call.requires_confirmation"
+            )
+            turn = web_app.db.list_assistant_turns(session_id)[0]
+
+            self.assertIn("response.tool_call.created", event_types)
+            self.assertIn("response.tool_call.requires_confirmation", event_types)
+            self.assertEqual(created_call["tool_call"]["id"], "call_search")
+            self.assertEqual(created_call["tool_call"]["name"], "search_recordings")
+            self.assertEqual(confirmation["tool_call"]["status"], "requires_confirmation")
+            self.assertEqual(turn["tool_calls"][0]["status"], "requires_confirmation")
+            self.assertEqual(turn["tool_calls"][0]["arguments"], {"query": "Atlas"})
 
     def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -1038,6 +1038,12 @@ async def _handle_realtime_user_text(
         text=reply.text,
     )
 
+    tool_calls = await _emit_realtime_tool_calls(
+        websocket,
+        response_id=response_id,
+        tool_calls=reply.tool_calls,
+    )
+
     audio_path: str | None = None
     if _tts_outputs_audio(tts_provider):
         try:
@@ -1106,6 +1112,7 @@ async def _handle_realtime_user_text(
         audio_path=audio_path,
         model=settings.llm_model,
         latency_ms=reply.latency_ms,
+        tool_calls=tool_calls,
     )
     db.log_model_run(
         provider=provider,
@@ -1128,6 +1135,47 @@ async def _handle_realtime_user_text(
         },
     )
     state.complete_response()
+
+
+async def _emit_realtime_tool_calls(
+    websocket: WebSocket,
+    *,
+    response_id: str,
+    tool_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    stored: list[dict[str, Any]] = []
+    require_confirmation = _realtime_requires_tool_confirmation()
+    for call in tool_calls:
+        safe_call = {
+            "id": str(call.get("id") or f"call_{uuid.uuid4().hex}"),
+            "name": str(call.get("name") or "unknown"),
+            "arguments": call.get("arguments") if isinstance(call.get("arguments"), dict) else {},
+            "mutating": bool(call.get("mutating", False)),
+        }
+        needs_confirmation = require_confirmation or safe_call["mutating"]
+        safe_call["status"] = "requires_confirmation" if needs_confirmation else "ready"
+        stored.append(safe_call)
+        await _send_realtime_event(
+            websocket,
+            "response.tool_call.created",
+            response_id=response_id,
+            tool_call=safe_call,
+        )
+        if needs_confirmation:
+            await _send_realtime_event(
+                websocket,
+                "response.tool_call.requires_confirmation",
+                response_id=response_id,
+                tool_call=safe_call,
+            )
+        else:
+            await _send_realtime_event(
+                websocket,
+                "response.tool_call.ready",
+                response_id=response_id,
+                tool_call=safe_call,
+            )
+    return stored
 
 
 async def _send_realtime_event(websocket: WebSocket, event_type: str, **payload: Any) -> None:
@@ -1169,6 +1217,14 @@ def _realtime_tts_provider() -> str:
     if isinstance(profile, dict) and profile.get("enabled") is True:
         return normalize_tts_provider(str(profile.get("tts_provider") or "none"))
     return "none"
+
+
+def _realtime_requires_tool_confirmation() -> bool:
+    profile = assistant_config.profiles.get("direct_voice", {})
+    value = profile.get("require_tool_confirmation", True) if isinstance(profile, dict) else True
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(value)
 
 
 def _tts_outputs_audio(tts_provider: str) -> bool:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import shutil
 import subprocess
 import time
 import uuid
 import wave
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ class RealtimeReply:
     latency_ms: int
     tokens_in: int | None = None
     tokens_out: int | None = None
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -189,13 +191,15 @@ def generate_realtime_reply(
         response.raise_for_status()
         payload = response.json()
 
-    reply = payload["choices"][0]["message"]["content"].strip()
+    message = payload["choices"][0]["message"]
+    reply = _clean_text(message.get("content")) or ""
     usage = payload.get("usage") if isinstance(payload, dict) else None
     return RealtimeReply(
         text=reply,
         latency_ms=_elapsed_ms(started),
         tokens_in=usage.get("prompt_tokens") if isinstance(usage, dict) else None,
         tokens_out=usage.get("completion_tokens") if isinstance(usage, dict) else None,
+        tool_calls=_extract_tool_calls(message.get("tool_calls")),
     )
 
 
@@ -339,6 +343,38 @@ def chunk_text(text: str, *, chunk_size: int = 48) -> list[str]:
 
 def audio_delta_payload(audio: bytes) -> str:
     return base64.b64encode(audio).decode("ascii")
+
+
+def _extract_tool_calls(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    calls: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        function = item.get("function") if isinstance(item.get("function"), dict) else {}
+        name = _clean_text(function.get("name") or item.get("name"))
+        if not name:
+            continue
+        arguments = function.get("arguments", item.get("arguments", {}))
+        if isinstance(arguments, str):
+            try:
+                parsed_arguments = json.loads(arguments) if arguments.strip() else {}
+            except json.JSONDecodeError:
+                parsed_arguments = {"raw": arguments}
+        elif isinstance(arguments, dict):
+            parsed_arguments = arguments
+        else:
+            parsed_arguments = {}
+        calls.append(
+            {
+                "id": str(item.get("id") or f"call_{uuid.uuid4().hex}"),
+                "name": name,
+                "arguments": parsed_arguments,
+                "mutating": bool(item.get("mutating", False)),
+            }
+        )
+    return calls
 
 
 def _clean_media_type(value: object) -> str:

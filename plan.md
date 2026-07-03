@@ -119,7 +119,7 @@ Target lifecycle:
 - [x] Server emits transcript deltas.
 - [x] Server emits assistant text deltas.
 - [x] Server emits assistant audio events when TTS is configured.
-- [ ] Server emits tool call events.
+- [x] Server emits tool call events.
 - [ ] Browser/mobile WebRTC transport.
 - [x] Raw server-side WebSocket transport.
 
@@ -474,7 +474,7 @@ Status: backend MVP complete; UI and richer realtime behavior remain.
 - [x] Persist every model run with enough metadata to debug latency and quality.
 - [x] Add response cancellation.
 - [x] Add barge-in.
-- [ ] Add tool-call event handling.
+- [x] Add tool-call event handling.
 
 Implemented event paths:
 
@@ -489,6 +489,8 @@ Implemented event paths:
 - [x] `response.interrupted`
 - [x] `response.cancelled`
 - [x] Barge-in via `input_text`, `conversation.item.create` + `response.create`, or `input_audio_buffer.commit` while a response is active
+- [x] `response.tool_call.created`
+- [x] `response.tool_call.requires_confirmation`
 - [x] `response.created`
 - [x] `response.text.delta`
 - [x] `response.text.done`

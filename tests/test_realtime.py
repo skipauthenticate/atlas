@@ -15,6 +15,7 @@ from atlas_voice.realtime import (
     chunk_text,
     decode_audio_delta,
     extract_text_input,
+    generate_realtime_reply,
     normalize_tts_provider,
     synthesize_with_tts_sidecar,
     transcript_text,
@@ -107,6 +108,58 @@ class RealtimeTests(unittest.TestCase):
         self.assertEqual(audio.media_type, "audio/wav")
         self.assertEqual(audio.path.suffix, ".wav")
         self.assertIsNotNone(audio.latency_ms)
+
+    def test_generate_realtime_reply_extracts_openai_style_tool_calls(self) -> None:
+        settings = SimpleNamespace(
+            stub_mode=False,
+            llm_base_url="http://llm.test/v1/chat/completions",
+            llm_model="qwen-local",
+            llm_temperature=0.2,
+            llm_max_tokens=256,
+        )
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "I can search locally.",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_search",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "search_recordings",
+                                            "arguments": '{"query": "Atlas"}',
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+                },
+            )
+
+        real_client = httpx.Client
+        transport = httpx.MockTransport(handler)
+        with patch("httpx.Client", lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs)):
+            reply = generate_realtime_reply("Find Atlas", settings)
+
+        self.assertEqual(reply.text, "I can search locally.")
+        self.assertEqual(
+            reply.tool_calls,
+            [
+                {
+                    "id": "call_search",
+                    "name": "search_recordings",
+                    "arguments": {"query": "Atlas"},
+                    "mutating": False,
+                }
+            ],
+        )
 
     def test_check_tts_sidecar_health_uses_configured_health_url(self) -> None:
         settings = SimpleNamespace(

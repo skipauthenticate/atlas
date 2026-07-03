@@ -124,6 +124,16 @@
           assistantText.textContent = payload.text || assistantText.textContent;
           return;
         }
+        if (payload.type === 'response.tool_call.created') {
+          const name = payload.tool_call?.name || 'local tool';
+          appendMessage(transcript, 'Atlas', `Tool call requested: ${name}`);
+          return;
+        }
+        if (payload.type === 'response.tool_call.requires_confirmation') {
+          const name = payload.tool_call?.name || 'local tool';
+          appendMessage(transcript, 'Atlas', `Tool confirmation required: ${name}`);
+          return;
+        }
         if (payload.type === 'response.audio.delta' && payload.delta) {
           playbackQueue.push(audioUrlFromDelta(payload.delta, payload.media_type));
           setPlaybackStatus('audio queued');

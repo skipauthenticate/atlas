@@ -117,8 +117,13 @@ or committed audio that arrives while a response is active is treated as barge-i
 the active response is cancelled with reason `barge_in`, then the new turn starts.
 If no response is active, `response.cancel` is treated as an interruption signal
 and acknowledged with `response.interrupted` after clearing pending text and
-buffered audio. When TTS is configured, assistant audio is returned as
-`response.audio.delta`, queued in the browser playback control on `/voice`, and
+buffered audio. OpenAI-style model `tool_calls` are normalized, emitted as
+`response.tool_call.created`, gated with `response.tool_call.requires_confirmation`
+when the direct voice profile requires confirmation, shown in the `/voice`
+transcript, and persisted on the assistant turn. Local tool execution and the
+full tool registry remain separate planned items. When TTS is configured, assistant
+audio is returned as `response.audio.delta`, queued in the browser playback
+control on `/voice`, and
 stored under `data/artifacts/realtime/`. Use the transport Play button to enable
 or pause assistant audio playback and the Volume slider to set playback level.
 Realtime sessions use an internal turn state module to track buffered audio,
@@ -162,7 +167,7 @@ models, and timeline entries; playground sections remain unframed inside the mai
 work surface. The desktop/tablet/mobile layout is covered by static QA checks
 for bounded workbench columns, stacked narrow-screen controls, readable transport
 controls, and reduced mobile waveform density. Browser mic audio streaming and
-tool-call handling are still tracked separately in `plan.md`.
+local tool execution are still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 
