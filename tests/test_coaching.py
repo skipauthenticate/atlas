@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from atlas_voice.coaching import generate_daily_coaching_summary
+from atlas_voice.coaching import generate_daily_coaching_summary, generate_weekly_coaching_summary
 from atlas_voice.database import Database
 
 
@@ -66,6 +66,70 @@ class CoachingSummaryTests(unittest.TestCase):
             second = generate_daily_coaching_summary(db, "2026-07-03", dry_run=False)
 
             events = db.list_feedback_events(category="daily_summary")
+            self.assertEqual(first.event_id, second.event_id)
+            self.assertEqual(second.status, "existing")
+            self.assertEqual(len(events), 1)
+
+    def test_weekly_coaching_summary_dry_run_then_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            monday = _session(db, "direct_voice", "Monday check-in", "2026-07-06T09:00:00+00:00")
+            friday = _session(db, "meeting", "Friday retro", "2026-07-10T16:00:00+00:00")
+            outside = _session(db, "direct_voice", "Outside week", "2026-07-13T09:00:00+00:00")
+            db.add_utterance(
+                session_id=monday,
+                text="What should I clarify before the roadmap review?",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=friday,
+                text="We should document the launch owner and follow through next week.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=outside,
+                text="This should not be included in this weekly summary.",
+                source_provider="text",
+            )
+
+            dry_run = generate_weekly_coaching_summary(db, "2026-07-06", dry_run=True)
+
+            self.assertEqual(dry_run.status, "ok")
+            self.assertIsNone(dry_run.event_id)
+            self.assertEqual(dry_run.week_start, "2026-07-06")
+            self.assertEqual(dry_run.week_end, "2026-07-12")
+            self.assertEqual(dry_run.session_count, 2)
+            self.assertEqual(dry_run.utterance_count, 2)
+            self.assertIn("Weekly Coaching Summary - 2026-07-06 to 2026-07-12", dry_run.message)
+            self.assertIn("Monday check-in", dry_run.message)
+            self.assertNotIn("Outside week", dry_run.message)
+            self.assertEqual(db.list_feedback_events(category="weekly_summary"), [])
+
+            stored = generate_weekly_coaching_summary(db, "2026-07-06", dry_run=False)
+
+            events = db.list_feedback_events(category="weekly_summary")
+            self.assertEqual(stored.event_id, events[0]["id"])
+            self.assertEqual(events[0]["event_type"], "coaching.weekly_summary")
+            self.assertEqual(events[0]["metadata"]["week_start"], "2026-07-06")
+            self.assertEqual(events[0]["metadata"]["week_end"], "2026-07-12")
+            self.assertEqual(events[0]["metadata"]["session_count"], 2)
+
+    def test_weekly_coaching_summary_is_idempotent_for_week(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            session_id = _session(db, "direct_voice", "Weekly check-in", "2026-07-08T10:00:00+00:00")
+            db.add_utterance(
+                session_id=session_id,
+                text="I will ask clearer questions this week.",
+                source_provider="text",
+            )
+
+            first = generate_weekly_coaching_summary(db, "2026-07-06", dry_run=False)
+            second = generate_weekly_coaching_summary(db, "2026-07-06", dry_run=False)
+
+            events = db.list_feedback_events(category="weekly_summary")
             self.assertEqual(first.event_id, second.event_id)
             self.assertEqual(second.status, "existing")
             self.assertEqual(len(events), 1)
