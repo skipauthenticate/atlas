@@ -23,6 +23,7 @@ from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
 from .privacy import privacy_summary
+from .memory import extract_memories_from_ambient_session
 from .retention import apply_ambient_retention
 from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
 from .storage import is_audio_file
@@ -94,6 +95,17 @@ def build_parser() -> argparse.ArgumentParser:
     privacy_retention.add_argument("--limit", type=int, default=10000, help="Maximum sessions to scan")
     privacy_retention.add_argument("--yes", action="store_true", help="Actually apply retention")
     privacy_retention.set_defaults(func=cmd_privacy_retention)
+
+    memory = subparsers.add_parser("memory", help="Local memory extraction and retrieval")
+    memory_subparsers = memory.add_subparsers(dest="memory_command", required=True)
+    memory_extract_ambient = memory_subparsers.add_parser(
+        "extract-ambient",
+        help="Dry-run or store memory candidates from an ambient or meeting session",
+    )
+    memory_extract_ambient.add_argument("--session", required=True, help="Ambient session id")
+    memory_extract_ambient.add_argument("--limit", type=int, default=20, help="Maximum candidates")
+    memory_extract_ambient.add_argument("--yes", action="store_true", help="Actually store candidates")
+    memory_extract_ambient.set_defaults(func=cmd_memory_extract_ambient)
 
     ambient = subparsers.add_parser("ambient", help="Run the ambient listener MVP")
     ambient.add_argument(
@@ -406,6 +418,33 @@ def _privacy_report(event_type: str) -> tuple[Settings, Database, dict[str, obje
         },
     )
     return settings, db, report
+
+
+def cmd_memory_extract_ambient(args: argparse.Namespace) -> int:
+    _settings, db = settings_and_db()
+    try:
+        result = extract_memories_from_ambient_session(
+            db,
+            args.session,
+            dry_run=not args.yes,
+            max_items=args.limit,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    suffix = "dry run" if result.dry_run else "applied"
+    print(
+        f"memory extraction {suffix}: "
+        f"{len(result.candidates)} candidate(s), "
+        f"{len(result.created_ids)} created, "
+        f"{result.skipped_duplicates} duplicate(s) skipped"
+    )
+    if result.status == "skipped":
+        print("session mode is not eligible for ambient memory extraction")
+    elif result.dry_run:
+        print("dry run only; rerun with --yes to store memory candidates")
+    return 0
 
 
 def cmd_ambient(args: argparse.Namespace) -> int:

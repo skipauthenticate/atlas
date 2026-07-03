@@ -105,6 +105,43 @@ class PrivacyPurgeCliTests(unittest.TestCase):
                 self.assertFalse(artifact_dir.exists())
                 self.assertEqual(db.list_privacy_events()[0]["event_type"], "privacy.retention")
 
+    def test_memory_extract_ambient_dry_run_and_confirmed_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+            }
+            with patch.dict(os.environ, env, clear=True):
+                settings = Settings.from_env()
+                settings.ensure_directories()
+                db = Database(settings.db_path)
+                db.initialize()
+                session_id = db.create_ambient_session(
+                    mode="ambient",
+                    source="mic",
+                    title="Ambient",
+                )
+                db.add_utterance(
+                    session_id=session_id,
+                    text="Remember that the desk mic is quieter than the BRIO.",
+                    source_provider="text",
+                )
+                db.end_ambient_session(session_id)
+
+                dry_run = _run_cli(["memory", "extract-ambient", "--session", session_id])
+
+                self.assertEqual(dry_run["code"], 0)
+                self.assertIn("memory extraction dry run", dry_run["stdout"])
+                self.assertEqual(db.list_memory_items(), [])
+
+                confirmed = _run_cli(["memory", "extract-ambient", "--session", session_id, "--yes"])
+
+                self.assertEqual(confirmed["code"], 0)
+                self.assertIn("memory extraction applied", confirmed["stdout"])
+                self.assertEqual(len(db.list_memory_items()), 1)
+
     def test_privacy_purge_requires_at_least_one_filter(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
