@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -722,6 +722,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         sample_rate=settings.realtime_audio_sample_rate,
         channels=settings.realtime_audio_channels,
     )
+    active_response_task: asyncio.Task[None] | None = None
 
     await _send_realtime_event(
         websocket,
@@ -769,7 +770,14 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 continue
 
             if event_type in {"response.cancel", "response.interrupt", "input_audio_buffer.interrupt"}:
-                await _handle_realtime_interrupt(websocket, state=state, event=event)
+                if active_response_task and not active_response_task.done():
+                    active_response_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await active_response_task
+                    active_response_task = None
+                    await _handle_realtime_response_cancel(websocket, state=state, event=event)
+                else:
+                    await _handle_realtime_interrupt(websocket, state=state, event=event)
                 continue
 
             if event_type == "input_audio_buffer.commit":
@@ -804,15 +812,24 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         event_type=event_type,
                     )
                     continue
-                await _handle_realtime_user_text(
-                    websocket,
-                    session_id=session_id,
-                    text=text,
-                    source_provider=settings.asr_provider if committed else "text",
-                    transcript_prefix="conversation.item.input_audio_transcription",
-                    instructions=instructions,
-                    tts_provider=tts_provider,
-                    state=state,
+                if active_response_task and not active_response_task.done():
+                    await _send_realtime_error(
+                        websocket,
+                        "response already in progress; cancel it before starting another response",
+                        event_type=event_type,
+                    )
+                    continue
+                active_response_task = asyncio.create_task(
+                    _handle_realtime_user_text(
+                        websocket,
+                        session_id=session_id,
+                        text=text,
+                        source_provider=settings.asr_provider if committed else "text",
+                        transcript_prefix="conversation.item.input_audio_transcription",
+                        instructions=instructions,
+                        tts_provider=tts_provider,
+                        state=state,
+                    )
                 )
                 continue
 
@@ -825,15 +842,24 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         event_type=event_type,
                     )
                     continue
-                await _handle_realtime_user_text(
-                    websocket,
-                    session_id=session_id,
-                    text=text,
-                    source_provider="text",
-                    transcript_prefix="conversation.item.input_text",
-                    instructions=instructions,
-                    tts_provider=tts_provider,
-                    state=state,
+                if active_response_task and not active_response_task.done():
+                    await _send_realtime_error(
+                        websocket,
+                        "response already in progress; cancel it before starting another response",
+                        event_type=event_type,
+                    )
+                    continue
+                active_response_task = asyncio.create_task(
+                    _handle_realtime_user_text(
+                        websocket,
+                        session_id=session_id,
+                        text=text,
+                        source_provider="text",
+                        transcript_prefix="conversation.item.input_text",
+                        instructions=instructions,
+                        tts_provider=tts_provider,
+                        state=state,
+                    )
                 )
                 continue
 
@@ -855,15 +881,24 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         event_type=event_type,
                     )
                     continue
-                await _handle_realtime_user_text(
-                    websocket,
-                    session_id=session_id,
-                    text=text,
-                    source_provider="text",
-                    transcript_prefix="conversation.item.input_text",
-                    instructions=instructions,
-                    tts_provider=tts_provider,
-                    state=state,
+                if active_response_task and not active_response_task.done():
+                    await _send_realtime_error(
+                        websocket,
+                        "response already in progress; cancel it before starting another response",
+                        event_type=event_type,
+                    )
+                    continue
+                active_response_task = asyncio.create_task(
+                    _handle_realtime_user_text(
+                        websocket,
+                        session_id=session_id,
+                        text=text,
+                        source_provider="text",
+                        transcript_prefix="conversation.item.input_text",
+                        instructions=instructions,
+                        tts_provider=tts_provider,
+                        state=state,
+                    )
                 )
                 continue
 
@@ -875,7 +910,32 @@ async def realtime_websocket(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if active_response_task and not active_response_task.done():
+            active_response_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await active_response_task
         db.end_ambient_session(session_id)
+
+
+async def _handle_realtime_response_cancel(
+    websocket: WebSocket,
+    *,
+    state: RealtimeTurnState,
+    event: dict[str, Any],
+) -> None:
+    response_id = state.active_response_id
+    state.cancel_response()
+    response: dict[str, Any] = {"status": "cancelled"}
+    if response_id:
+        response["id"] = response_id
+    state.complete_response()
+    reason = str(event.get("reason") or "client_cancelled").strip() or "client_cancelled"
+    await _send_realtime_event(
+        websocket,
+        "response.cancelled",
+        response=response,
+        reason=reason[:120],
+    )
 
 
 async def _handle_realtime_interrupt(

@@ -110,10 +110,12 @@ ws://127.0.0.1:8787/v1/realtime
 
 Supported event paths include `input_text`, `conversation.item.create` plus
 `response.create`, and `input_audio_buffer.append` / `input_audio_buffer.commit`.
-The interrupt control sends `response.cancel`, which the backend accepts as an
-interruption signal and acknowledges with `response.interrupted` after clearing
-pending text and buffered audio. Mid-generation response cancellation remains a
-separate planned item. When TTS is configured, assistant audio is returned as
+The interrupt control sends `response.cancel`; if a response is in progress, the
+backend cancels the active response task and acknowledges with `response.cancelled`
+without persisting an assistant turn or model run. If no response is active, the
+same event is treated as an interruption signal and acknowledged with
+`response.interrupted` after clearing pending text and buffered audio. When TTS is
+configured, assistant audio is returned as
 `response.audio.delta`, queued in the browser playback control on `/voice`, and
 stored under `data/artifacts/realtime/`. Use the transport Play button to enable
 or pause assistant audio playback and the Volume slider to set playback level.
@@ -157,8 +159,8 @@ workbench keeps card framing restrained to repeated row items such as sessions,
 models, and timeline entries; playground sections remain unframed inside the main
 work surface. The desktop/tablet/mobile layout is covered by static QA checks
 for bounded workbench columns, stacked narrow-screen controls, readable transport
-controls, and reduced mobile waveform density. Browser mic audio streaming and
-mid-generation response cancellation is still tracked separately in `plan.md`.
+controls, and reduced mobile waveform density. Browser mic audio streaming,
+barge-in, and tool-call handling are still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP
 

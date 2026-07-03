@@ -135,11 +135,11 @@
           else if (!currentAudioUrl && playbackQueue.length === 0) setPlaybackStatus('audio ready');
           return;
         }
-        if (payload.type === 'response.interrupted') {
+        if (payload.type === 'response.interrupted' || payload.type === 'response.cancelled') {
           playbackQueue.length = 0;
           audio?.pause();
           revokeCurrentAudioUrl();
-          setPlaybackStatus('playback interrupted');
+          setPlaybackStatus(payload.type === 'response.cancelled' ? 'playback cancelled' : 'playback interrupted');
           return;
         }
         if (payload.type === 'response.done') {

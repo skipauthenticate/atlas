@@ -3,12 +3,13 @@ import base64
 from tempfile import TemporaryDirectory
 import importlib
 import os
+import threading
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from atlas_voice.realtime import RealtimeAudio
+from atlas_voice.realtime import RealtimeAudio, RealtimeReply
 
 
 class WebTests(unittest.TestCase):
@@ -595,6 +596,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("audio.volume =", script)
         self.assertIn("response.audio.done", script)
         self.assertIn("response.interrupted", script)
+        self.assertIn("response.cancelled", script)
 
     def test_voice_console_exposes_stt_playground(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -954,6 +956,56 @@ class WebTests(unittest.TestCase):
             self.assertEqual(error["type"], "error")
             self.assertIn("no pending user text", error["error"]["message"])
             self.assertEqual(web_app.db.list_utterances(created["session"]["id"]), [])
+
+    def test_realtime_websocket_cancels_in_progress_response(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            started = threading.Event()
+            release = threading.Event()
+
+            def slow_reply(*_args, **_kwargs) -> RealtimeReply:
+                started.set()
+                release.wait(2.0)
+                return RealtimeReply(text="Too late", latency_ms=200, tokens_in=1, tokens_out=2)
+
+            with patch.object(web_app, "generate_realtime_reply", side_effect=slow_reply):
+                with client.websocket_connect("/v1/realtime") as websocket:
+                    created = websocket.receive_json()
+                    session_id = created["session"]["id"]
+                    websocket.send_json({"type": "input_text", "text": "Cancel this"})
+                    events = _receive_until(websocket, "response.created")
+                    self.assertTrue(started.wait(1.0))
+                    response_id = events[-1]["response"]["id"]
+                    websocket.send_json({"type": "response.cancel", "response_id": response_id})
+                    cancelled = websocket.receive_json()
+                    release.set()
+
+            event_types = [event["type"] for event in events]
+            self.assertIn("conversation.item.input_text.done", event_types)
+            self.assertEqual(cancelled["type"], "response.cancelled")
+            self.assertEqual(cancelled["response"]["id"], response_id)
+            self.assertEqual(cancelled["response"]["status"], "cancelled")
+            self.assertEqual(cancelled["reason"], "client_cancelled")
+            self.assertEqual(web_app.db.list_utterances(session_id)[0]["text"], "Cancel this")
+            self.assertEqual(web_app.db.list_assistant_turns(session_id), [])
+            self.assertEqual(web_app.db.list_model_runs(), [])
 
     def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -472,7 +472,7 @@ Status: backend MVP complete; UI and richer realtime behavior remain.
 - [x] Add browser playback UI.
 - [x] Persist every turn.
 - [x] Persist every model run with enough metadata to debug latency and quality.
-- [ ] Add response cancellation.
+- [x] Add response cancellation.
 - [ ] Add barge-in.
 - [ ] Add tool-call event handling.
 
@@ -487,6 +487,7 @@ Implemented event paths:
 - [x] `input_audio_buffer.clear`
 - [x] `response.cancel` / `response.interrupt`
 - [x] `response.interrupted`
+- [x] `response.cancelled`
 - [x] `response.created`
 - [x] `response.text.delta`
 - [x] `response.text.done`
