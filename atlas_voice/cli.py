@@ -22,6 +22,7 @@ from .coaching import (
     generate_daily_coaching_summary,
     generate_weekly_coaching_summary,
     track_conversation_signals,
+    track_writing_signals,
 )
 from .config import Settings
 from .database import Database
@@ -131,6 +132,16 @@ def build_parser() -> argparse.ArgumentParser:
     coaching_signals.add_argument("--session", required=True, help="Ambient or direct voice session id")
     coaching_signals.add_argument("--yes", action="store_true", help="Actually store the signals")
     coaching_signals.set_defaults(func=cmd_coaching_signals)
+    coaching_writing = coaching_subparsers.add_parser(
+        "writing",
+        help="Dry-run or store local writing signal metrics",
+    )
+    writing_source = coaching_writing.add_mutually_exclusive_group(required=True)
+    writing_source.add_argument("--text", help="Text to analyze")
+    writing_source.add_argument("--file", type=Path, help="UTF-8 text file to analyze")
+    coaching_writing.add_argument("--label", help="Optional label for idempotent storage")
+    coaching_writing.add_argument("--yes", action="store_true", help="Actually store the signals")
+    coaching_writing.set_defaults(func=cmd_coaching_writing)
 
     memory = subparsers.add_parser("memory", help="Local memory extraction and retrieval")
     memory_subparsers = memory.add_subparsers(dest="memory_command", required=True)
@@ -532,6 +543,30 @@ def cmd_coaching_signals(args: argparse.Namespace) -> int:
         print("dry run only; rerun with --yes to store the signals")
     else:
         print(f"coaching signals stored: event {result.event_id} for {result.session_id}")
+    print(result.message)
+    return 0
+
+
+def cmd_coaching_writing(args: argparse.Namespace) -> int:
+    _settings, db = settings_and_db()
+    try:
+        writing_text = args.text if args.text is not None else args.file.read_text(encoding="utf-8")
+        result = track_writing_signals(
+            db,
+            writing_text,
+            label=args.label,
+            dry_run=not args.yes,
+        )
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if result.status == "existing":
+        print(f"coaching writing existing: event {result.event_id} for {result.label or result.text_hash[:12]}")
+    elif result.dry_run:
+        print(f"coaching writing dry run: {result.metrics['word_count']} word(s)")
+        print("dry run only; rerun with --yes to store the signals")
+    else:
+        print(f"coaching writing stored: event {result.event_id} for {result.label or result.text_hash[:12]}")
     print(result.message)
     return 0
 

@@ -297,6 +297,49 @@ class PrivacyPurgeCliTests(unittest.TestCase):
                 self.assertIn("coaching signals stored", confirmed["stdout"])
                 self.assertEqual(len(db.list_feedback_events(category="conversation_signals")), 1)
 
+    def test_coaching_writing_dry_run_and_confirmed_apply(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+            }
+            with patch.dict(os.environ, env, clear=True):
+                settings = Settings.from_env()
+                settings.ensure_directories()
+                db = Database(settings.db_path)
+                db.initialize()
+                writing_file = root / "note.txt"
+                writing_file.write_text("Please approve the launch plan by Friday. The owner is Alice.")
+
+                dry_run = _run_cli([
+                    "coaching",
+                    "writing",
+                    "--file",
+                    str(writing_file),
+                    "--label",
+                    "Launch note",
+                ])
+
+                self.assertEqual(dry_run["code"], 0)
+                self.assertIn("coaching writing dry run", dry_run["stdout"])
+                self.assertEqual(db.list_feedback_events(category="writing_signals"), [])
+
+                confirmed = _run_cli([
+                    "coaching",
+                    "writing",
+                    "--file",
+                    str(writing_file),
+                    "--label",
+                    "Launch note",
+                    "--yes",
+                ])
+
+                self.assertEqual(confirmed["code"], 0)
+                self.assertIn("coaching writing stored", confirmed["stdout"])
+                self.assertEqual(len(db.list_feedback_events(category="writing_signals")), 1)
+
     def test_privacy_purge_requires_at_least_one_filter(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

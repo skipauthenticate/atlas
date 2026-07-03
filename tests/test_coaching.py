@@ -8,6 +8,7 @@ from atlas_voice.coaching import (
     generate_daily_coaching_summary,
     generate_weekly_coaching_summary,
     track_conversation_signals,
+    track_writing_signals,
 )
 from atlas_voice.database import Database
 
@@ -195,6 +196,57 @@ class CoachingSummaryTests(unittest.TestCase):
             second = track_conversation_signals(db, session_id, dry_run=False)
 
             events = db.list_feedback_events(category="conversation_signals")
+            self.assertEqual(first.event_id, second.event_id)
+            self.assertEqual(second.status, "existing")
+            self.assertEqual(len(events), 1)
+
+    def test_tracks_writing_signals_dry_run_then_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            text = "\n\n".join(
+                [
+                    "Hi team,",
+                    "We need a launch owner by Friday. Please review the checklist and send blockers.",
+                    "I think maybe the timeline could be clearer, but the ask is to approve the plan.",
+                ]
+            )
+
+            dry_run = track_writing_signals(db, text, label="Launch note", dry_run=True)
+
+            self.assertEqual(dry_run.status, "ok")
+            self.assertIsNone(dry_run.event_id)
+            self.assertEqual(dry_run.label, "Launch note")
+            self.assertEqual(dry_run.metrics["paragraph_count"], 3)
+            self.assertGreater(dry_run.metrics["clarity"], 0)
+            self.assertGreater(dry_run.metrics["concision"], 0)
+            self.assertGreater(dry_run.metrics["structure"], 0)
+            self.assertGreater(dry_run.metrics["specificity"], 0)
+            self.assertGreater(dry_run.metrics["audience_fit"], 0)
+            self.assertGreater(dry_run.metrics["ask_action_clarity"], 0)
+            self.assertEqual(dry_run.metrics["hedging_count"], 3)
+            self.assertEqual(db.list_feedback_events(category="writing_signals"), [])
+
+            stored = track_writing_signals(db, text, label="Launch note", dry_run=False)
+
+            events = db.list_feedback_events(category="writing_signals")
+            self.assertEqual(stored.event_id, events[0]["id"])
+            self.assertEqual(events[0]["event_type"], "coaching.writing_signals")
+            self.assertEqual(events[0]["metadata"]["label"], "Launch note")
+            self.assertEqual(events[0]["metadata"]["signals"]["clarity"], stored.metrics["clarity"])
+            self.assertNotIn(text, events[0]["message"])
+            self.assertIn("Writing Signals", events[0]["message"])
+
+    def test_writing_signals_are_idempotent_per_text_and_label(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            text = "Please approve the launch plan by Friday. The owner is Alice."
+
+            first = track_writing_signals(db, text, label="Approval note", dry_run=False)
+            second = track_writing_signals(db, text, label="Approval note", dry_run=False)
+
+            events = db.list_feedback_events(category="writing_signals")
             self.assertEqual(first.event_id, second.event_id)
             self.assertEqual(second.status, "existing")
             self.assertEqual(len(events), 1)

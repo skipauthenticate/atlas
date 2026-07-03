@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -15,6 +16,17 @@ class ConversationSignalResult:
     dry_run: bool
     message: str
     metrics: dict[str, float | int | None]
+    event_id: int | None = None
+
+
+@dataclass(frozen=True)
+class WritingSignalResult:
+    text_hash: str
+    label: str | None
+    status: str
+    dry_run: bool
+    message: str
+    metrics: dict[str, float | int]
     event_id: int | None = None
 
 
@@ -84,6 +96,57 @@ def track_conversation_signals(
 
     return ConversationSignalResult(
         session_id=session_id,
+        status="ok",
+        dry_run=dry_run,
+        message=message,
+        metrics=metrics,
+        event_id=event_id,
+    )
+
+
+def track_writing_signals(
+    db: Database,
+    text: str,
+    *,
+    label: str | None = None,
+    dry_run: bool = True,
+) -> WritingSignalResult:
+    normalized_text = _normalize_writing_text(text)
+    if not normalized_text:
+        raise ValueError("Writing text is empty")
+    normalized_label = label.strip() if label and label.strip() else None
+    text_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+    existing = _existing_writing_signals(db, text_hash, normalized_label)
+    if existing is not None:
+        return WritingSignalResult(
+            text_hash=text_hash,
+            label=normalized_label,
+            status="existing",
+            dry_run=dry_run,
+            message=str(existing["message"]),
+            metrics=dict(existing["metadata"].get("signals") or {}),
+            event_id=int(existing["id"]),
+        )
+
+    metrics = _writing_signal_metrics(normalized_text)
+    message = _writing_signal_message(normalized_label, metrics)
+    event_id: int | None = None
+    if not dry_run:
+        event_id = db.log_feedback_event(
+            event_type="coaching.writing_signals",
+            category="writing_signals",
+            message=message,
+            score=float(metrics.get("clarity") or 0.0),
+            metadata={
+                "text_hash": text_hash,
+                "label": normalized_label,
+                "signals": metrics,
+            },
+        )
+
+    return WritingSignalResult(
+        text_hash=text_hash,
+        label=normalized_label,
         status="ok",
         dry_run=dry_run,
         message=message,
@@ -244,6 +307,18 @@ def _existing_conversation_signals(db: Database, session_id: str) -> dict[str, A
     return None
 
 
+def _existing_writing_signals(db: Database, text_hash: str, label: str | None) -> dict[str, Any] | None:
+    for event in db.list_feedback_events(category="writing_signals", limit=500):
+        metadata = event.get("metadata") or {}
+        if (
+            event.get("event_type") == "coaching.writing_signals"
+            and metadata.get("text_hash") == text_hash
+            and metadata.get("label") == label
+        ):
+            return event
+    return None
+
+
 def _existing_daily_summary(db: Database, day: str) -> dict[str, Any] | None:
     for event in db.list_feedback_events(category="daily_summary", limit=500):
         if event.get("event_type") == "coaching.daily_summary" and event.get("metadata", {}).get("day") == day:
@@ -318,6 +393,91 @@ def _conversation_signal_message(
     else:
         lines.append("Interruptions: unavailable")
     return "\n".join(lines)
+
+
+def _writing_signal_metrics(text: str) -> dict[str, float | int]:
+    words = re.findall(r"[A-Za-z0-9']+", text)
+    word_count = len(words)
+    sentences = _writing_sentences(text)
+    sentence_count = len(sentences)
+    paragraphs = [item.strip() for item in re.split(r"\n\s*\n", text) if item.strip()]
+    paragraph_count = len(paragraphs)
+    avg_sentence_words = word_count / sentence_count if sentence_count else 0.0
+    hedging_count = _pattern_count(text, r"\b(maybe|perhaps|possibly|kind of|sort of|i think|i guess|might|could)\b")
+    action_count = _pattern_count(text, r"\b(please|need|approve|review|send|schedule|decide|owner|by \w+)\b")
+    specificity_count = _pattern_count(text, r"\b(by \w+|today|tomorrow|monday|tuesday|wednesday|thursday|friday|owner|alice|bob|[0-9]+)\b")
+    audience_count = _pattern_count(text, r"\b(hi|hello|team|you|your|please|thanks|thank you)\b")
+    tone_count = _pattern_count(text, r"\b(please|thanks|thank you|could you|would you|appreciate)\b")
+    repeated_phrases = _repeated_phrase_count(words)
+    concise_sentences = sum(1 for sentence in sentences if 0 < _word_count(sentence) <= 24)
+    clear_sentences = sum(1 for sentence in sentences if _is_clear_text(sentence))
+    structured_units = min(paragraph_count, 3)
+    return {
+        "word_count": word_count,
+        "sentence_count": sentence_count,
+        "paragraph_count": paragraph_count,
+        "average_sentence_words": round(avg_sentence_words, 1),
+        "clarity": round(clear_sentences / sentence_count, 3) if sentence_count else 0.0,
+        "concision": round(concise_sentences / sentence_count, 3) if sentence_count else 0.0,
+        "structure": round(structured_units / 3, 3) if paragraph_count else 0.0,
+        "specificity": round(min(specificity_count / max(sentence_count, 1), 1.0), 3),
+        "audience_fit": round(min(audience_count / max(paragraph_count, 1), 1.0), 3),
+        "ask_action_clarity": round(min(action_count / max(sentence_count, 1), 1.0), 3),
+        "tone": round(min(tone_count / max(sentence_count, 1), 1.0), 3),
+        "hedging_count": hedging_count,
+        "repeated_phrasing": repeated_phrases,
+    }
+
+
+def _writing_signal_message(label: str | None, metrics: dict[str, float | int]) -> str:
+    title = label or "untitled writing"
+    return "\n".join(
+        [
+            f"Writing Signals - {title}",
+            "",
+            f"Clarity: {metrics['clarity']}",
+            f"Concision: {metrics['concision']}",
+            f"Structure: {metrics['structure']}",
+            f"Specificity: {metrics['specificity']}",
+            f"Audience fit: {metrics['audience_fit']}",
+            f"Ask/action clarity: {metrics['ask_action_clarity']}",
+            f"Tone: {metrics['tone']}",
+            f"Hedging: {metrics['hedging_count']}",
+            f"Repeated phrasing: {metrics['repeated_phrasing']}",
+        ]
+    )
+
+
+def _normalize_writing_text(text: str) -> str:
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.replace("\r\n", "\n").split("\n")]
+    normalized_lines: list[str] = []
+    blank_pending = False
+    for line in lines:
+        if line:
+            if blank_pending and normalized_lines:
+                normalized_lines.append("")
+            normalized_lines.append(line)
+            blank_pending = False
+        else:
+            blank_pending = True
+    return "\n".join(normalized_lines).strip()
+
+
+def _writing_sentences(text: str) -> list[str]:
+    return [item.strip() for item in re.split(r"(?<=[.!?])\s+", text) if item.strip()]
+
+
+def _pattern_count(text: str, pattern: str) -> int:
+    return len(re.findall(pattern, text, re.I))
+
+
+def _repeated_phrase_count(words: list[str]) -> int:
+    lowered = [word.lower() for word in words]
+    phrases = [tuple(lowered[index : index + 3]) for index in range(max(len(lowered) - 2, 0))]
+    counts: dict[tuple[str, str, str], int] = {}
+    for phrase in phrases:
+        counts[phrase] = counts.get(phrase, 0) + 1
+    return sum(1 for count in counts.values() if count > 1)
 
 
 def _summary_message(

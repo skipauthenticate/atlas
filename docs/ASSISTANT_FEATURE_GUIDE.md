@@ -320,6 +320,20 @@ per session with clarity, concision, question ratio, follow-through, commitment,
 interruption, and actionable-next-step metrics derived locally from utterance
 text.
 
+Track local writing signals from pasted text or a UTF-8 text file with:
+
+```bash
+atlas-voice coaching writing --text "Please approve the launch plan by Friday."
+atlas-voice coaching writing --file ./note.txt --label "Launch note"
+atlas-voice coaching writing --file ./note.txt --label "Launch note" --yes
+```
+
+Confirmed runs store one idempotent `coaching.writing_signals` feedback event
+per normalized text hash and optional label. Metrics include clarity, concision,
+structure, specificity, audience fit, ask/action clarity, tone, hedging, and
+repeated phrasing. The stored metadata keeps the hash, label, and signal scores;
+it does not duplicate the full analyzed text.
+
 ## Jetson Operating Notes
 
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,
