@@ -22,7 +22,7 @@ fi
 case "${1:-}" in
   web)
     exec "${VENV_DIR}/bin/uvicorn" atlas_voice.web.app:app \
-      --host "${ATLAS_VOICE_HOST:-127.0.0.1}" \
+      --host "${ATLAS_REALTIME_HOST:-${ATLAS_VOICE_HOST:-127.0.0.1}}" \
       --port "${ATLAS_VOICE_PORT:-8787}"
     ;;
   worker)

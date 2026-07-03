@@ -430,7 +430,7 @@ Status: partially complete.
 - [x] Add config flags or equivalents for local assistant runtime.
 - [x] Add exact original config flag: `ATLAS_ASSISTANT_ENABLED=false`.
 - [x] Add exact original config flag: `ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech`.
-- [ ] Add exact original config flag: `ATLAS_REALTIME_HOST=127.0.0.1`.
+- [x] Add exact original config flag: `ATLAS_REALTIME_HOST=127.0.0.1`.
 - [x] Add DB storage for voice sessions.
 - [x] Add DB storage for turns.
 - [x] Add DB storage for model runs.

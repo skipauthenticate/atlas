@@ -34,6 +34,23 @@ class ConfigTests(unittest.TestCase):
 
         self.assertTrue(settings.assistant_enabled)
 
+    def test_exact_realtime_host_flag_overrides_voice_host(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_REALTIME_HOST": "127.0.0.1",
+                "ATLAS_VOICE_HOST": "0.0.0.0",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+
+        self.assertEqual(settings.host, "127.0.0.1")
+
     def test_exact_tts_base_url_flag_overrides_namespaced_alias(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

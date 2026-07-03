@@ -95,7 +95,12 @@ Realtime voice is opt-in. Enable it before connecting:
 
 ```bash
 export ATLAS_ASSISTANT_ENABLED=true
+export ATLAS_REALTIME_HOST=127.0.0.1
 ```
+
+`ATLAS_REALTIME_HOST` takes precedence over `ATLAS_VOICE_HOST` for the local
+service bind host. Keep it on `127.0.0.1` unless a local LAN listener has been
+explicitly reviewed and allowed.
 
 Run the web app, then connect to the websocket:
 

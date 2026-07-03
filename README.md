@@ -94,8 +94,10 @@ and service health. Audit tables for `model_runs` and `privacy_events` are store
 in the existing SQLite database.
 
 Enable direct realtime sessions explicitly with `ATLAS_ASSISTANT_ENABLED=true`.
-When disabled, `/v1/realtime` returns a clear policy error and does not create a
-session or probe optional TTS services.
+`ATLAS_REALTIME_HOST=127.0.0.1` is the default bind-host alias for the realtime
+service and takes precedence over `ATLAS_VOICE_HOST`. When disabled,
+`/v1/realtime` returns a clear policy error and does not create a session or
+probe optional TTS services.
 
 The realtime endpoint accepts `input_text`, `conversation.item.create` plus
 `response.create`, and `input_audio_buffer.append` / `commit` JSON events. Audio

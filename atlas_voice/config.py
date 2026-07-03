@@ -97,7 +97,10 @@ class Settings:
     def from_env(cls) -> "Settings":
         load_dotenv()
         return cls(
-            host=os.environ.get("ATLAS_VOICE_HOST", "127.0.0.1"),
+            host=os.environ.get(
+                "ATLAS_REALTIME_HOST",
+                os.environ.get("ATLAS_VOICE_HOST", "127.0.0.1"),
+            ),
             port=int(os.environ.get("ATLAS_VOICE_PORT", "8787")),
             data_dir=_path_from_env("ATLAS_VOICE_DATA_DIR", "./data"),
             models_dir=_path_from_env("ATLAS_VOICE_MODELS_DIR", "./models"),
