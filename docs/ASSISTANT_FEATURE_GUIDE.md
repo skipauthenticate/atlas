@@ -254,10 +254,16 @@ ASR returns an empty transcript. Use
 `--allow-stub` only for command smoke tests, not for real mic validation.
 
 Ambient mode stores sessions in `ambient_sessions` and transcripts in
-`utterances`. When the ASR provider returns speaker-aware segments or
-diarization turns, the best available speaker label is stored on the utterance
-as `speaker`; providers without speaker metadata keep the default user label.
-Search and delete ambient sessions through the local API:
+`utterances`. Each stored ambient utterance runs through a deterministic local
+intent/sensitivity classifier before persistence. Wake words and command phrases
+mark the utterance as assistant-directed, meeting mode stores `shared_meeting`,
+personal reminder language stores `personal`, and secret/legal/medical-style
+terms store `private_sensitive`. The `/voice` Ambient Timeline shows the latest
+utterance routing and sensitivity label next to each session. When the ASR
+provider returns speaker-aware segments or diarization turns, the best available
+speaker label is stored on the utterance as `speaker`; providers without speaker
+metadata keep the default user label. Search and delete ambient sessions through
+the local API:
 
 ```bash
 curl 'http://127.0.0.1:8787/api/ambient/sessions?q=launch'
@@ -444,10 +450,12 @@ separate runtime concern; this registry is the local policy source.
 Direct voice uses the built-in `qwen-voice` profile for fast local replies. That
 profile defaults to `qwen2.5-7b-instruct`, `max_tokens=800`, and a
 `warm_optional` load policy so it can be kept warm only when capacity allows.
-Ambient classification uses `small-classifier`, defaulting to
-`qwen2.5-0.5b-instruct`, `max_tokens=256`, and a `hot_optional` policy for cheap
-intent/sensitivity routing. Override either profile under `llm_profiles` if the
-Jetson image uses different local model names.
+Ambient capture uses the deterministic rule-based classifier first so the
+always-on lane does not call Qwen 27B for every utterance. The
+`small-classifier` profile remains available for a later model-backed classifier
+or deployment override; it defaults to `qwen2.5-0.5b-instruct`, `max_tokens=256`,
+and a `hot_optional` load policy. Override either profile under `llm_profiles` if
+the Jetson image uses different local model names.
 
 The reflection profile uses the built-in `qwen-deep` LLM profile for on-demand
 deep reasoning. By default that profile points at `qwen-27b-instruct` and is

@@ -652,12 +652,15 @@ def _ambient_timeline_views(sessions: list[dict[str, Any]]) -> list[dict[str, An
             continue
         utterances = db.list_utterances(str(session["id"]))
         last_utterance = utterances[-1] if utterances else None
+        last_is_directed = bool(last_utterance and last_utterance.get("is_directed_to_assistant"))
         views.append(
             {
                 **session,
                 "started_at_display": _timestamp_label(_parse_timestamp(session.get("started_at"))),
                 "last_utterance": last_utterance["text"] if last_utterance else "",
                 "last_speaker": last_utterance["speaker"] if last_utterance else "",
+                "last_intent_label": "assistant-directed" if last_is_directed else "ambient",
+                "last_sensitivity": last_utterance.get("sensitivity") if last_utterance else None,
             }
         )
         if len(views) >= 8:

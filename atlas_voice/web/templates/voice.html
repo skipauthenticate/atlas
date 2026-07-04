@@ -78,7 +78,7 @@
                 <span class="voice-timeline-dot voice-timeline-{{ session.mode }}" aria-hidden="true"></span>
                 <span class="voice-timeline-copy">
                   <strong>{{ session.title or session.mode }}</strong>
-                  <small>{{ session.started_at_display }} · {{ session.mode }} · {{ session.source }} · {{ session.utterance_count }} utterances</small>
+                  <small>{{ session.started_at_display }} · {{ session.mode }} · {{ session.source }} · {{ session.utterance_count }} utterances{% if session.last_utterance %} · {{ session.last_intent_label }}{% if session.last_sensitivity %} · {{ session.last_sensitivity }}{% endif %}{% endif %}</small>
                   {% if session.last_utterance %}<em>{{ session.last_utterance }}</em>{% endif %}
                 </span>
               </a>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,24 @@ from .storage import is_audio_file, safe_filename
 
 AMBIENT_MODES = {"ambient", "meeting", "direct", "private", "paused"}
 
+_ASSISTANT_WAKE_RE = re.compile(r"\b(?:atlas|hey atlas|assistant)\b", re.IGNORECASE)
+_ASSISTANT_COMMAND_RE = re.compile(
+    r"\b(?:remind me|set (?:a )?reminder|take (?:a )?note|note this|"
+    r"summarize this|help me|what should i|how do i|schedule|add (?:a )?task)\b",
+    re.IGNORECASE,
+)
+_PRIVATE_SENSITIVE_RE = re.compile(
+    r"\b(?:password|passcode|social security|ssn|credit card|bank account|"
+    r"api key|secret key|access token|private key|medical record|diagnosis|"
+    r"therapy|salary|confidential|attorney|legal advice)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_RE = re.compile(
+    r"\b(?:remind me|my|personal|doctor|appointment|family|home|todo|"
+    r"follow up|remember to|i need to)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class VoiceSegment:
@@ -40,6 +59,14 @@ class AmbientResult:
 
 
 @dataclass(frozen=True)
+class AmbientUtteranceClassification:
+    is_directed_to_assistant: bool
+    sensitivity: str | None
+    confidence: float
+    reason: str
+
+
+@dataclass(frozen=True)
 class MicrophoneAsrValidationResult:
     status: str
     device: str
@@ -54,6 +81,58 @@ class AmbientTranscriptResult:
     text: str
     speaker: str | None = None
     confidence: float | None = None
+
+
+def classify_ambient_utterance(text: str, *, mode: str = "ambient") -> AmbientUtteranceClassification:
+    """Classify ambient text with a tiny deterministic first pass.
+
+    The always-on path must stay cheap on Jetson, so this intentionally avoids an
+    LLM call. The result maps onto existing utterance columns: directed intent is
+    stored as ``is_directed_to_assistant`` and privacy routing as ``sensitivity``.
+    """
+
+    mode = _clean_mode(mode)
+    normalized = " ".join(text.split())
+    if not normalized:
+        return AmbientUtteranceClassification(
+            is_directed_to_assistant=mode == "direct",
+            sensitivity=_sensitivity_for_mode(mode),
+            confidence=0.4,
+            reason="empty",
+        )
+
+    has_wake_word = bool(_ASSISTANT_WAKE_RE.search(normalized))
+    has_command = bool(_ASSISTANT_COMMAND_RE.search(normalized))
+    is_directed = mode == "direct" or has_wake_word or has_command
+
+    sensitivity = _sensitivity_for_mode(mode)
+    reason = "mode" if sensitivity else "default"
+    confidence = 0.65
+
+    if _PRIVATE_SENSITIVE_RE.search(normalized):
+        sensitivity = "private_sensitive"
+        reason = "private_sensitive_terms"
+        confidence = 0.9
+    elif sensitivity is None and _PERSONAL_RE.search(normalized):
+        sensitivity = "personal"
+        reason = "personal_terms"
+        confidence = 0.85
+    elif sensitivity is None and is_directed:
+        sensitivity = "directed_to_assistant"
+        reason = "assistant_intent"
+        confidence = 0.8
+
+    if has_wake_word or has_command:
+        confidence = max(confidence, 0.8)
+        if reason == "default":
+            reason = "assistant_intent"
+
+    return AmbientUtteranceClassification(
+        is_directed_to_assistant=is_directed,
+        sensitivity=sensitivity,
+        confidence=confidence,
+        reason=reason,
+    )
 
 
 def process_ambient_file(
@@ -104,6 +183,7 @@ def process_ambient_file(
             transcript = _transcribe_ambient_segment(segment_path, settings, db, session_id, index)
             if not transcript.text:
                 continue
+            classification = classify_ambient_utterance(transcript.text, mode=mode)
             db.add_utterance(
                 session_id=session_id,
                 text=transcript.text,
@@ -112,7 +192,8 @@ def process_ambient_file(
                 end=segment.end,
                 confidence=transcript.confidence,
                 source_provider="stub" if settings.stub_mode else settings.asr_provider,
-                sensitivity=_sensitivity_for_mode(mode),
+                is_directed_to_assistant=classification.is_directed_to_assistant,
+                sensitivity=classification.sensitivity,
             )
             utterance_count += 1
         db.end_ambient_session(session_id, status="done")

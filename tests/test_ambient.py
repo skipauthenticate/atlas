@@ -9,10 +9,45 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest import mock
 
-from atlas_voice.ambient import process_ambient_file, validate_microphone_asr, vad_segments
+from atlas_voice.ambient import (
+    classify_ambient_utterance,
+    process_ambient_file,
+    validate_microphone_asr,
+    vad_segments,
+)
 from atlas_voice.cli import build_parser
 from atlas_voice.config import Settings
 from atlas_voice.database import Database
+
+
+class AmbientClassificationTests(unittest.TestCase):
+    def test_rule_based_classifier_detects_assistant_intent_without_model_call(self) -> None:
+        classification = classify_ambient_utterance(
+            "Atlas, remind me to send the launch note tomorrow.",
+            mode="ambient",
+        )
+
+        self.assertTrue(classification.is_directed_to_assistant)
+        self.assertEqual(classification.sensitivity, "personal")
+        self.assertGreaterEqual(classification.confidence, 0.8)
+
+    def test_rule_based_classifier_keeps_meeting_chatter_out_of_direct_voice_path(self) -> None:
+        classification = classify_ambient_utterance(
+            "The roadmap risk is GPU memory pressure during demos.",
+            mode="meeting",
+        )
+
+        self.assertFalse(classification.is_directed_to_assistant)
+        self.assertEqual(classification.sensitivity, "shared_meeting")
+
+    def test_rule_based_classifier_escalates_private_sensitive_content(self) -> None:
+        classification = classify_ambient_utterance(
+            "My password is hunter two and my social security number is in the file.",
+            mode="ambient",
+        )
+
+        self.assertFalse(classification.is_directed_to_assistant)
+        self.assertEqual(classification.sensitivity, "private_sensitive")
 
 
 class AmbientTests(unittest.TestCase):
@@ -61,6 +96,7 @@ class AmbientTests(unittest.TestCase):
             self.assertEqual(session["mode"], "meeting")
             self.assertEqual(session["retention_policy"], "transcript_only")
             self.assertEqual(utterances[0]["text"], "Ambient segment 1 captured.")
+            self.assertEqual(utterances[0]["is_directed_to_assistant"], 0)
             self.assertEqual(utterances[0]["sensitivity"], "shared_meeting")
             self.assertEqual(model_run["task"], "ambient_transcribe")
             self.assertFalse((settings.artifacts_dir / "ambient" / result.session_id).exists())
@@ -126,6 +162,7 @@ class AmbientTests(unittest.TestCase):
             utterance = db.list_utterances(result.session_id)[0]
             self.assertEqual(utterance["text"], "speaker aware transcript")
             self.assertEqual(utterance["speaker"], "SPEAKER_02")
+            self.assertFalse(utterance["is_directed_to_assistant"])
 
     def test_process_ambient_file_stores_speaker_from_transcript_diarization(self) -> None:
         with TemporaryDirectory() as tmp:

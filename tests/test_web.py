@@ -385,6 +385,8 @@ class WebTests(unittest.TestCase):
                 session_id=ambient_id,
                 text="Remember to follow up on the launch note.",
                 source_provider="stub",
+                is_directed_to_assistant=True,
+                sensitivity="personal",
             )
             web_app.db.add_utterance(
                 session_id=meeting_id,
@@ -406,6 +408,8 @@ class WebTests(unittest.TestCase):
             self.assertIn("We discussed the roadmap risks.", response.text)
             self.assertIn("mic", response.text)
             self.assertIn("file", response.text)
+            self.assertIn("assistant-directed", response.text)
+            self.assertIn("personal", response.text)
 
     def test_voice_console_shows_recent_privacy_events(self) -> None:
         with TemporaryDirectory() as tmp:
