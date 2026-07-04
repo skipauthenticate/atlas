@@ -72,6 +72,7 @@ class Settings:
     vibevoice_max_new_tokens: int = 32768
     hyprwhspr_endpoint: str | None = None
     hyprwhspr_health_url: str | None = None
+    hyprwhspr_vad_endpoint: str | None = None
     hyprwhspr_cli: str = "hyprwhspr"
     hyprwhspr_timeout: float = 10.0
     realtime_asr_prefer_hyprwhspr: bool = True
@@ -105,6 +106,8 @@ class Settings:
     ambient_chunk_seconds: float = 15.0
     ambient_poll_seconds: float = 2.0
     ambient_mic_device: str = "default"
+    ambient_vad_provider: str = "auto"
+    ambient_vad_fallback_provider: str = "energy"
     ambient_vad_threshold: float = 500.0
     ambient_min_speech_seconds: float = 0.4
     ambient_retain_audio: bool = False
@@ -159,6 +162,7 @@ class Settings:
             ),
             hyprwhspr_endpoint=os.environ.get("ATLAS_VOICE_HYPRWHSPR_ENDPOINT") or None,
             hyprwhspr_health_url=os.environ.get("ATLAS_VOICE_HYPRWHSPR_HEALTH_URL") or None,
+            hyprwhspr_vad_endpoint=os.environ.get("ATLAS_VOICE_HYPRWHSPR_VAD_ENDPOINT") or None,
             hyprwhspr_cli=os.environ.get("ATLAS_VOICE_HYPRWHSPR_CLI", "hyprwhspr"),
             hyprwhspr_timeout=float(os.environ.get("ATLAS_VOICE_HYPRWHSPR_TIMEOUT", "10")),
             realtime_asr_prefer_hyprwhspr=_bool_from_env(
@@ -225,6 +229,12 @@ class Settings:
             ),
             ambient_poll_seconds=float(os.environ.get("ATLAS_VOICE_AMBIENT_POLL_SECONDS", "2")),
             ambient_mic_device=os.environ.get("ATLAS_VOICE_AMBIENT_MIC_DEVICE", "default"),
+            ambient_vad_provider=os.environ.get(
+                "ATLAS_VOICE_AMBIENT_VAD_PROVIDER", "auto"
+            ).strip().lower(),
+            ambient_vad_fallback_provider=os.environ.get(
+                "ATLAS_VOICE_AMBIENT_VAD_FALLBACK_PROVIDER", "energy"
+            ).strip().lower(),
             ambient_vad_threshold=float(
                 os.environ.get("ATLAS_VOICE_AMBIENT_VAD_THRESHOLD", "500")
             ),

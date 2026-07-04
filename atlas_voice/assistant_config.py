@@ -16,6 +16,8 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
         "ambient": {
             "enabled": False,
             "stt_provider": "hyprwhspr",
+            "vad_provider": "auto",
+            "vad_fallback_provider": "energy",
             "llm_profile": "small-classifier",
             "tts_provider": "none",
             "store_raw_audio_seconds": 30,

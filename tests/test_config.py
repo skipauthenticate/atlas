@@ -111,6 +111,9 @@ class ConfigTests(unittest.TestCase):
                 "ATLAS_VOICE_AMBIENT_CHUNK_SECONDS=3.5\n"
                 "ATLAS_VOICE_AMBIENT_POLL_SECONDS=0.5\n"
                 "ATLAS_VOICE_AMBIENT_MIC_DEVICE=hw:1,0\n"
+                "ATLAS_VOICE_AMBIENT_VAD_PROVIDER=hyprwhspr\n"
+                "ATLAS_VOICE_AMBIENT_VAD_FALLBACK_PROVIDER=energy\n"
+                "ATLAS_VOICE_HYPRWHSPR_VAD_ENDPOINT=http://127.0.0.1:9000/vad\n"
                 "ATLAS_VOICE_AMBIENT_VAD_THRESHOLD=700\n"
                 "ATLAS_VOICE_AMBIENT_MIN_SPEECH_SECONDS=0.25\n"
                 "ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true\n"
@@ -161,6 +164,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.ambient_chunk_seconds, 3.5)
         self.assertEqual(settings.ambient_poll_seconds, 0.5)
         self.assertEqual(settings.ambient_mic_device, "hw:1,0")
+        self.assertEqual(settings.ambient_vad_provider, "hyprwhspr")
+        self.assertEqual(settings.ambient_vad_fallback_provider, "energy")
+        self.assertEqual(settings.hyprwhspr_vad_endpoint, "http://127.0.0.1:9000/vad")
         self.assertEqual(settings.ambient_vad_threshold, 700)
         self.assertEqual(settings.ambient_min_speech_seconds, 0.25)
         self.assertTrue(settings.ambient_retain_audio)
@@ -309,6 +315,8 @@ class ConfigTests(unittest.TestCase):
                 "    tts_model: piper-local\n"
                 "  ambient:\n"
                 "    stt_provider: hyprwhspr\n"
+                "    vad_provider: hyprwhspr\n"
+                "    vad_fallback_provider: energy\n"
                 "    source: ./ambient-inbox\n"
                 "    chunk_seconds: 2.5\n"
                 "  reflection:\n"
@@ -342,6 +350,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(direct.tts_provider, "piper")
         self.assertEqual(direct.tts_model, "piper-local")
         self.assertEqual(ambient.asr_provider, "hyprwhspr")
+        self.assertEqual(ambient.ambient_vad_provider, "hyprwhspr")
+        self.assertEqual(ambient.ambient_vad_fallback_provider, "energy")
         self.assertEqual(ambient.ambient_source, "./ambient-inbox")
         self.assertEqual(ambient.ambient_chunk_seconds, 2.5)
         self.assertEqual(reflection.asr_provider, "canary")

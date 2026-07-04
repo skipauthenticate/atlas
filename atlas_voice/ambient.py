@@ -16,6 +16,7 @@ from typing import Any
 from .audio import normalize_audio
 from .config import Settings
 from .database import Database
+from .providers.vad import ambient_vad_provider_chain, detect_hyprwhspr_vad
 from .realtime import transcript_text
 from .storage import is_audio_file, safe_filename
 
@@ -173,8 +174,9 @@ def process_ambient_file(
 
     try:
         _prepare_normalized_audio(source_path, normalized_path)
-        segments = vad_segments(
+        segments = detect_vad_segments(
             normalized_path,
+            settings,
             energy_threshold=vad_threshold or settings.ambient_vad_threshold,
             min_speech_seconds=min_speech_seconds or settings.ambient_min_speech_seconds,
         )
@@ -368,6 +370,46 @@ def process_microphone_once(
         if not (settings.ambient_retain_audio if retain_audio is None else retain_audio):
             with suppress(FileNotFoundError):
                 capture_path.unlink()
+
+
+def detect_vad_segments(
+    wav_path: Path,
+    settings: Settings,
+    *,
+    energy_threshold: float = 500.0,
+    min_speech_seconds: float = 0.4,
+) -> list[VoiceSegment]:
+    errors: list[str] = []
+    for provider in ambient_vad_provider_chain(settings):
+        if provider == "hyprwhspr":
+            try:
+                segments = detect_hyprwhspr_vad(wav_path, settings)
+            except Exception as exc:  # noqa: BLE001 - VAD should fall back to energy.
+                errors.append(f"hyprwhspr: {type(exc).__name__}: {exc}")
+                continue
+            return [
+                VoiceSegment(
+                    start=segment.start,
+                    end=segment.end,
+                    peak_rms=segment.confidence if segment.confidence is not None else 0.0,
+                )
+                for segment in segments
+            ]
+        if provider == "energy":
+            return vad_segments(
+                wav_path,
+                energy_threshold=energy_threshold,
+                min_speech_seconds=min_speech_seconds,
+            )
+        errors.append(f"{provider}: unsupported VAD provider")
+
+    if errors:
+        raise RuntimeError("Ambient VAD providers failed: " + "; ".join(errors))
+    return vad_segments(
+        wav_path,
+        energy_threshold=energy_threshold,
+        min_speech_seconds=min_speech_seconds,
+    )
 
 
 def vad_segments(

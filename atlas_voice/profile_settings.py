@@ -36,6 +36,10 @@ PROFILE_SETTING_KEYS = {
     "ambient_poll_seconds": "ambient_poll_seconds",
     "mic_device": "ambient_mic_device",
     "ambient_mic_device": "ambient_mic_device",
+    "vad_provider": "ambient_vad_provider",
+    "ambient_vad_provider": "ambient_vad_provider",
+    "vad_fallback_provider": "ambient_vad_fallback_provider",
+    "ambient_vad_fallback_provider": "ambient_vad_fallback_provider",
     "vad_threshold": "ambient_vad_threshold",
     "ambient_vad_threshold": "ambient_vad_threshold",
     "min_speech_seconds": "ambient_min_speech_seconds",
@@ -63,6 +67,8 @@ _LOWERCASE_SETTINGS = {
     "tts_provider",
     "tts_response_format",
     "ambient_mode",
+    "ambient_vad_provider",
+    "ambient_vad_fallback_provider",
 }
 
 

@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from atlas_voice.ambient import (
+    VoiceSegment,
     classify_ambient_utterance,
     process_ambient_file,
     validate_microphone_asr,
@@ -65,6 +66,34 @@ class AmbientTests(unittest.TestCase):
         self.assertEqual(len(segments), 1)
         self.assertLess(segments[0].start, 0.25)
         self.assertGreater(segments[0].end, 0.9)
+
+    def test_process_ambient_file_uses_configured_vad_provider_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_path = root / "meeting.wav"
+            _write_test_wav(audio_path)
+            settings = _settings(root)
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+
+            with mock.patch(
+                "atlas_voice.ambient.detect_vad_segments",
+                return_value=[VoiceSegment(start=0.1, end=0.9, peak_rms=0.97)],
+            ) as vad_mock:
+                result = process_ambient_file(
+                    audio_path,
+                    settings,
+                    db,
+                    mode="meeting",
+                    retain_audio=False,
+                    vad_threshold=1000,
+                    min_speech_seconds=0.2,
+                )
+
+            self.assertEqual(result.segment_count, 1)
+            vad_mock.assert_called_once()
+
 
     def test_process_ambient_file_stores_session_utterance_and_model_run(self) -> None:
         with TemporaryDirectory() as tmp:

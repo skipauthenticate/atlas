@@ -125,12 +125,14 @@ remains available with `ATLAS_VOICE_TTS_PROVIDER=piper` and
 
 Phase 2 adds `atlas-voice ambient`. It can process a file once, watch a directory,
 or capture local mic chunks through `ffmpeg`/ALSA. The listener normalizes audio
-to 16 kHz mono, segments speech with local energy VAD, transcribes each segment
-with the configured local ASR provider, and stores transcripts in
-`ambient_sessions` / `utterances`. Audio artifacts are deleted after
-transcription unless `ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true` or `--retain-audio`
-is set. `private` and `paused` modes skip audio processing and write a local
-privacy event. Recent sessions are available at `GET /api/ambient/sessions`.
+to 16 kHz mono, segments speech with the ambient VAD chain, transcribes each
+segment with the fallback-safe local ASR chain, and stores transcripts in
+`ambient_sessions` / `utterances`. `ATLAS_VOICE_AMBIENT_VAD_PROVIDER=auto` uses a
+healthy Hyprwhspr VAD endpoint when configured and falls back to local energy VAD
+when the endpoint is unavailable. Audio artifacts are deleted after transcription
+unless `ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true` or `--retain-audio` is set.
+`private` and `paused` modes skip audio processing and write a local privacy
+event. Recent sessions are available at `GET /api/ambient/sessions`.
 
 Useful commands:
 

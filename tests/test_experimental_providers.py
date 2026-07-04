@@ -22,6 +22,11 @@ from atlas_voice.providers.hyprwhspr_provider import (
     transcribe_hyprwhspr,
 )
 from atlas_voice.providers.nemo_provider import transcribe_parakeet
+from atlas_voice.providers.vad import (
+    ambient_vad_provider_chain,
+    detect_hyprwhspr_vad,
+    hyprwhspr_vad_reliable,
+)
 from atlas_voice.providers.transcript_utils import (
     diarization_from_transcript,
     transcript_from_vibevoice_result,
@@ -216,6 +221,78 @@ class ExperimentalProviderTests(unittest.TestCase):
         self.assertEqual(transcript["text"], "whisperx fallback")
         faster_mock.assert_called_once()
         whisperx_mock.assert_called_once()
+
+    def test_ambient_vad_prefers_healthy_hyprwhspr_endpoint(self) -> None:
+        provider_settings = replace(
+            settings(Path("/tmp/atlas-test")),
+            ambient_vad_provider="auto",
+            ambient_vad_fallback_provider="energy",
+            hyprwhspr_vad_endpoint="http://127.0.0.1:9000/vad",
+            hyprwhspr_health_url="http://127.0.0.1:9000/health",
+        )
+        healthy_response = types.SimpleNamespace(status_code=200)
+        unhealthy_response = types.SimpleNamespace(status_code=503)
+
+        with mock.patch("httpx.get", return_value=healthy_response):
+            self.assertTrue(hyprwhspr_vad_reliable(provider_settings))
+            self.assertEqual(ambient_vad_provider_chain(provider_settings), ["hyprwhspr", "energy"])
+
+        with mock.patch("httpx.get", return_value=unhealthy_response):
+            self.assertFalse(hyprwhspr_vad_reliable(provider_settings))
+            self.assertEqual(ambient_vad_provider_chain(provider_settings), ["energy"])
+
+    def test_hyprwhspr_vad_endpoint_parses_segments(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_path = root / "speech.wav"
+            audio_path.write_bytes(b"RIFFtest")
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_vad_endpoint="http://127.0.0.1:9000/vad",
+                hyprwhspr_timeout=2.0,
+            )
+
+            class Response:
+                headers = {"content-type": "application/json"}
+
+                def raise_for_status(self) -> None:
+                    return None
+
+                def json(self) -> dict[str, object]:
+                    return {
+                        "segments": [
+                            {"start": 0.0, "end": 0.82, "confidence": 0.94},
+                            {"start_sec": 1.2, "end_sec": 1.8, "probability": 0.88},
+                        ]
+                    }
+
+            class Client:
+                def __init__(self) -> None:
+                    self.files = None
+
+                def __enter__(self) -> "Client":
+                    return self
+
+                def __exit__(self, *args: object) -> None:
+                    return None
+
+                def post(self, url: str, *, files: dict[str, object]) -> Response:
+                    self.url = url
+                    self.files = files
+                    return Response()
+
+            client = Client()
+            with mock.patch("httpx.Client", return_value=client):
+                segments = detect_hyprwhspr_vad(audio_path, provider_settings)
+
+        self.assertEqual(client.url, "http://127.0.0.1:9000/vad")
+        self.assertEqual(len(segments), 2)
+        self.assertEqual(segments[0].start, 0.0)
+        self.assertEqual(segments[0].end, 0.82)
+        self.assertEqual(segments[0].confidence, 0.94)
+        self.assertEqual(segments[1].start, 1.2)
+        self.assertEqual(segments[1].end, 1.8)
+
 
     def test_faster_whisper_provider_normalizes_segments_and_words(self) -> None:
         class Word:

@@ -338,7 +338,7 @@ Constraint:
 
 Likely eventual stack:
 
-- [ ] VAD: Silero VAD or `hyprwhspr` VAD path.
+- [x] VAD: Silero VAD or `hyprwhspr` VAD path.
 - [x] STT: `hyprwhspr` ONNX Parakeet initially, or direct Parakeet/Whisper service.
 - [x] Classifier: small local model or rule-based first pass.
 

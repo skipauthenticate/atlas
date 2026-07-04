@@ -254,7 +254,12 @@ ASR returns an empty transcript. Use
 `--allow-stub` only for command smoke tests, not for real mic validation.
 
 Ambient mode stores sessions in `ambient_sessions` and transcripts in
-`utterances`. Each stored ambient utterance runs through a deterministic local
+`utterances`. Ambient segmentation uses `ATLAS_VOICE_AMBIENT_VAD_PROVIDER`; the
+default `auto` mode tries a healthy Hyprwhspr VAD endpoint from
+`ATLAS_VOICE_HYPRWHSPR_VAD_ENDPOINT` and falls back to local energy VAD. Use
+`ATLAS_VOICE_AMBIENT_VAD_FALLBACK_PROVIDER=energy` on Jetson so competing GPU or
+sidecar load cannot break capture. Each stored ambient utterance runs through a
+deterministic local
 intent/sensitivity classifier before persistence. Wake words and command phrases
 mark the utterance as assistant-directed, meeting mode stores `shared_meeting`,
 personal reminder language stores `personal`, and secret/legal/medical-style
@@ -428,7 +433,8 @@ settings drive the `/voice` console, realtime websocket ASR/LLM/TTS calls, and
 voice playground endpoints. Ambient profile settings drive `atlas-voice ambient`
 when CLI flags do not provide a more specific source, mode, or capture option.
 Use `stt_provider` or `asr_provider` for ASR, `stt_model` or `asr_model` for ASR
-models, `diarization_provider` for reflection/processing, `tts_provider`,
+models, `vad_provider` and `vad_fallback_provider` for ambient segmentation,
+`diarization_provider` for reflection/processing, `tts_provider`,
 `tts_base_url`, and `tts_model` for local speech output, and `source`, `mode`,
 `chunk_seconds`, and related ambient keys for ambient capture behavior.
 
