@@ -42,6 +42,9 @@
     {% if runtime_settings_message %}
       <div class="notice">{{ runtime_settings_message }}</div>
     {% endif %}
+    {% if assistant_mode_message %}
+      <div class="notice">{{ assistant_mode_message }}</div>
+    {% endif %}
     <section class="runtime-summary" aria-label="Worker runtime">
       <div>
         <span>Compute</span>
@@ -84,6 +87,17 @@
         <small>{% if status.active_listeners %}{% for listener in status.active_listeners %}{{ listener.profile }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</small>
       </div>
     </section>
+    <form class="assistant-mode-controls" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
+      <div>
+        <span>Assistant mode</span>
+        <strong>{{ runtime.ambient_mode }}</strong>
+      </div>
+      <div class="assistant-mode-segments" role="group" aria-label="Ambient capture mode">
+        {% for mode in runtime.assistant_mode_options %}
+          <button type="submit" name="mode" value="{{ mode }}" data-mode="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">{{ mode | title }}</button>
+        {% endfor %}
+      </div>
+    </form>
     <section class="system-status" aria-label="System status">
       <div class="status-list">
         {% for service in status.services %}

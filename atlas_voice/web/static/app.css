@@ -197,6 +197,68 @@ button:disabled {
   color: var(--fail);
 }
 
+.assistant-mode-controls {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.assistant-mode-controls div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assistant-mode-controls span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assistant-mode-controls strong {
+  font-size: 14px;
+  text-transform: capitalize;
+}
+
+.assistant-mode-segments {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.assistant-mode-segments button {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.assistant-mode-segments button[aria-pressed="true"] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.assistant-mode-segments button:hover {
+  background: #effaf7;
+  color: var(--accent-strong);
+}
+
+.assistant-mode-segments button[aria-pressed="true"]:hover {
+  background: var(--accent-strong);
+  color: #fff;
+}
+
 .privacy-state,
 .service-state {
   display: inline-flex;
@@ -758,6 +820,7 @@ code {
   .topbar,
   .topbar-tools,
   .runtime-summary,
+  .assistant-mode-controls,
   .runtime-settings,
   .panel-heading,
   .section-heading,
@@ -783,6 +846,7 @@ code {
 
   .search,
   .upload,
+  .assistant-mode-controls,
   .runtime-settings,
   .actions,
   .topbar-tools {
@@ -792,6 +856,11 @@ code {
   .runtime-pill {
     max-width: none;
     justify-content: center;
+  }
+
+  .assistant-mode-segments {
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 

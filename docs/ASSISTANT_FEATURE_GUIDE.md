@@ -14,8 +14,11 @@ atlas-voice privacy audit-egress
 ```
 
 The dashboard and `GET /api/status` report RAM, swap, GPU detection, configured
-models, active listeners, privacy state, and service health. Use the more focused
-assistant health endpoint when validating voice features:
+models, active listeners, privacy state, and service health. The dashboard
+Assistant mode control persists `ambient`, `paused`, or `private` to
+`ATLAS_VOICE_AMBIENT_MODE` and logs an `assistant.mode` privacy event for
+auditing. Use the more focused assistant health endpoint when validating voice
+features:
 
 ```bash
 curl -fsS http://127.0.0.1:8787/api/assistant/health | python -m json.tool
@@ -301,9 +304,9 @@ atlas-voice privacy retention
 atlas-voice privacy retention --yes
 ```
 
-Use `private`
-or `paused` modes when capture should be skipped and logged as a local privacy
-event.
+Use `private` or `paused` modes when capture should be skipped and logged as a
+local privacy event. Set these from the dashboard Assistant mode segmented
+control or by exporting `ATLAS_VOICE_AMBIENT_MODE=private` or `paused`.
 
 Recent direct voice sessions are available at:
 

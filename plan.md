@@ -845,7 +845,7 @@ Suggested controls:
 - [x] `atlas-voice privacy status`
 - [x] `atlas-voice privacy audit-egress`
 - [x] `atlas-voice privacy purge --session ...`
-- [ ] Dashboard pause/private-mode toggle.
+- [x] Dashboard pause/private-mode toggle.
 - [ ] Physical mute support when using a satellite.
 
 ## Public Interfaces

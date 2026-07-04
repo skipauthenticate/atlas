@@ -267,6 +267,50 @@ class WebTests(unittest.TestCase):
             self.assertIn("pause", payload["controls"])
             self.assertIn("audit_egress", payload["controls"])
 
+    def test_dashboard_pause_private_mode_control_persists_and_logs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_file = root / ".env"
+            env_file.write_text("ATLAS_VOICE_AMBIENT_MODE=ambient\n")
+            env = {
+                "ATLAS_VOICE_ENV_FILE": str(env_file),
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(root / "config" / "atlas.assistant.yaml"),
+                "ATLAS_ASSISTANT_ENABLED": "true",
+                "ATLAS_VOICE_TTS_PROVIDER": "none",
+                "ATLAS_VOICE_STUB_MODE": "true",
+                "LLM_BASE_URL": "http://127.0.0.1:8080/v1/chat/completions",
+                "WHISPERX_DEVICE": "cpu",
+                "WHISPERX_MODEL": "tiny.en",
+                "WHISPERX_COMPUTE_TYPE": "int8",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                client = TestClient(web_app.app)
+
+                dashboard = client.get("/")
+                response = client.post("/settings/assistant-mode", data={"mode": "private"})
+
+                self.assertEqual(dashboard.status_code, 200)
+                self.assertIn('action="/settings/assistant-mode"', dashboard.text)
+                self.assertIn('name="mode" value="paused"', dashboard.text)
+                self.assertIn('name="mode" value="private"', dashboard.text)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Assistant mode saved", response.text)
+                self.assertEqual(web_app.settings.ambient_mode, "private")
+                self.assertIn("ATLAS_VOICE_AMBIENT_MODE=private", env_file.read_text())
+                event = web_app.db.list_privacy_events()[0]
+                self.assertEqual(event["event_type"], "assistant.mode")
+                self.assertEqual(event["metadata"]["mode"], "private")
+                refreshed = client.get("/")
+                self.assertIn('data-mode="private" aria-pressed="true"', refreshed.text)
+
     def test_assistant_privacy_api_surfaces_external_endpoint_errors(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

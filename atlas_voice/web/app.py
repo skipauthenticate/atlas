@@ -102,12 +102,14 @@ COMMON_ASR_MODELS = (
     "microsoft/VibeVoice-ASR",
 )
 RUNTIME_ENV_KEYS = {
+    "ATLAS_VOICE_AMBIENT_MODE",
     "ATLAS_VOICE_ASR_PROVIDER",
     "ATLAS_VOICE_ASR_MODEL",
     "ATLAS_VOICE_DIARIZATION_PROVIDER",
     "ATLAS_VOICE_VIBEVOICE_MODEL",
     "WHISPERX_MODEL",
 }
+ASSISTANT_MODE_OPTIONS = ("ambient", "paused", "private")
 
 
 def runtime_info(current_settings: Settings) -> dict[str, Any]:
@@ -126,6 +128,8 @@ def runtime_info(current_settings: Settings) -> dict[str, Any]:
         "diarization_provider": current_settings.diarization_provider,
         "diarization_providers": DIARIZATION_PROVIDERS,
         "pyannote_model": current_settings.pyannote_model,
+        "ambient_mode": current_settings.ambient_mode,
+        "assistant_mode_options": ASSISTANT_MODE_OPTIONS,
         "deep_llm_model_value": _deep_llm_profile_value("model", "qwen-27b-instruct"),
         "deep_llm_base_url_value": _deep_llm_profile_value("base_url", settings.llm_base_url),
     }
@@ -304,6 +308,12 @@ def _runtime_settings_message(status: str | None, worker: str | None) -> str | N
     return "Runtime settings saved. Restart the worker to apply them."
 
 
+def _assistant_mode_message(status: str | None) -> str | None:
+    if status == "saved":
+        return "Assistant mode saved."
+    return None
+
+
 def _anythingllm_message(status: str | None, error: str | None) -> dict[str, str] | None:
     if status == "synced":
         return {"kind": "ok", "text": "Synced to AnythingLLM."}
@@ -367,7 +377,10 @@ def _timestamp_label(value: datetime | None) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(
-    request: Request, runtime_settings: str | None = None, worker: str | None = None
+    request: Request,
+    runtime_settings: str | None = None,
+    worker: str | None = None,
+    assistant_mode: str | None = None,
 ) -> Response:
     recordings = [dict(row) for row in db.list_recordings()]
     return templates.TemplateResponse(
@@ -378,6 +391,7 @@ def dashboard(
             "runtime": runtime_info(settings),
             "status": collect_runtime_status(settings, db, assistant_config),
             "runtime_settings_message": _runtime_settings_message(runtime_settings, worker),
+            "assistant_mode_message": _assistant_mode_message(assistant_mode),
         },
     )
 
@@ -819,6 +833,25 @@ def api_voice_playground_tts(payload: dict[str, Any]) -> JSONResponse:
             "latency_ms": audio.latency_ms,
         }
     )
+
+
+@app.post("/settings/assistant-mode")
+def update_assistant_mode(mode: str = Form(...)) -> Response:
+    selected = mode.strip().lower()
+    if selected not in ASSISTANT_MODE_OPTIONS:
+        raise HTTPException(status_code=400, detail="Unknown assistant mode")
+
+    values = {"ATLAS_VOICE_AMBIENT_MODE": selected}
+    _write_dotenv_values(values)
+    os.environ.update(values)
+    _refresh_runtime_settings()
+    db.initialize()
+    db.log_privacy_event(
+        "assistant.mode",
+        f"Dashboard set assistant mode to {selected}.",
+        metadata={"mode": selected, "source": "dashboard"},
+    )
+    return RedirectResponse("/?assistant_mode=saved", status_code=303)
 
 
 @app.post("/settings/runtime")
