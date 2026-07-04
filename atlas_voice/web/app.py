@@ -535,6 +535,7 @@ def _coaching_progress_view(limit: int = 100) -> dict[str, Any]:
         _coaching_metric_view("Open questions", averages.get("open_question_ratio")),
         _coaching_metric_view("Affirmations", averages.get("affirmation_ratio")),
         _coaching_metric_view("Reflections", averages.get("reflection_ratio")),
+        _coaching_metric_view("Summaries", averages.get("summary_ratio")),
         _coaching_metric_view("Ask/action clarity", averages.get("ask_action_clarity")),
     ]
     return {

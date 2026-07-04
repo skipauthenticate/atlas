@@ -355,6 +355,7 @@ def _conversation_signal_metrics(
     closed_question_count = max(question_count - open_question_count, 0)
     affirmation_count = _affirmation_count(utterances)
     reflection_count = _reflection_count(utterances)
+    summary_count = _summary_count(utterances)
     commitment_count = _commitment_count(utterances)
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
@@ -374,6 +375,8 @@ def _conversation_signal_metrics(
         "affirmation_ratio": round(affirmation_count / utterance_count, 3) if utterance_count else 0.0,
         "reflection_count": reflection_count,
         "reflection_ratio": round(reflection_count / utterance_count, 3) if utterance_count else 0.0,
+        "summary_count": summary_count,
+        "summary_ratio": round(summary_count / utterance_count, 3) if utterance_count else 0.0,
         "commitment_count": commitment_count,
         "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
         "actionable_next_steps": actionable_count,
@@ -398,6 +401,7 @@ def _conversation_signal_message(
         f"Open questions: {metrics['open_question_count']}/{metrics['question_count']}",
         f"Affirmations: {metrics['affirmation_count']}",
         f"Reflections: {metrics['reflection_count']}",
+        f"Summaries: {metrics['summary_count']}",
         f"Follow-through: {metrics['follow_through']}",
         f"Commitments: {metrics['commitment_count']}",
         f"Actionable next steps: {metrics['actionable_next_steps']}",
@@ -636,6 +640,24 @@ def _is_reflection(text: str) -> bool:
         r"\b(you want|you need|you care about|you value)\b",
         r"\b(on one hand|part of you)\b.+\b(on the other hand|another part)\b",
         r"\b(the tradeoff is|the tension is|the pattern is)\b",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
+
+
+def _summary_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _is_summary_statement(str(item.get("text") or "")))
+
+
+def _is_summary_statement(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized or "?" in normalized:
+        return False
+    patterns = (
+        r"\b(to summarize|in summary|quick summary|brief summary|let me summarize)\b",
+        r"\b(the summary is|the gist is|the key points are|the main points are)\b",
+        r"\b(so far|what we have so far|where we landed)\b",
+        r"\b(we covered|we agreed|we decided)\b.+\b(and|,)\b",
+        r"\b(here'?s what i heard|here is what i heard|here'?s what i captured)\b",
     )
     return any(re.search(pattern, normalized, re.I) for pattern in patterns)
 

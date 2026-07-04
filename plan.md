@@ -764,7 +764,7 @@ Use Motivational Interviewing as the conversation-quality backbone:
 - [x] Open questions.
 - [x] Affirmations.
 - [x] Reflections.
-- [ ] Summaries.
+- [x] Summaries.
 - [ ] Change talk versus sustain talk.
 - [ ] Autonomy-respecting suggestions.
 
