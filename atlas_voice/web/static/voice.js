@@ -371,6 +371,14 @@
 
       controls.get('pause')?.addEventListener('click', () => {
         paused = !paused;
+        if (paused) {
+          if (micEnabled) {
+            micEnabled = false;
+            togglePressed(controls.get('mic'), false);
+            stopMicStreaming({ commit: false });
+            stopTimer();
+          }
+        }
         togglePressed(controls.get('pause'), paused);
         setPromptAvailability();
         setConnection(connection, paused ? 'paused' : 'ready', paused ? 'status-queued' : 'status-done');
@@ -378,6 +386,14 @@
 
       controls.get('private')?.addEventListener('click', () => {
         privateMode = !privateMode;
+        if (privateMode) {
+          if (micEnabled) {
+            micEnabled = false;
+            togglePressed(controls.get('mic'), false);
+            stopMicStreaming({ commit: false });
+            stopTimer();
+          }
+        }
         togglePressed(controls.get('private'), privateMode);
         setPromptAvailability();
         setConnection(connection, privateMode ? 'private' : 'ready', privateMode ? 'status-queued' : 'status-done');

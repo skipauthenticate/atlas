@@ -904,7 +904,7 @@ Suggested controls:
 - [x] Ambient insert/list.
 - [x] Ambient search/delete.
 - [x] Privacy purge.
-- [ ] Browser mic streaming.
+- [x] Browser mic streaming.
 - [x] Voice UI transport controls.
 
 ### Manual Jetson Tests

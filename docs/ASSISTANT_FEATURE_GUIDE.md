@@ -124,9 +124,10 @@ or committed audio that arrives while a response is active is treated as barge-i
 the active response is cancelled with reason `barge_in`, then the new turn starts.
 If no response is active, `response.cancel` is treated as an interruption signal
 and acknowledged with `response.interrupted` after clearing pending text and
-buffered audio. In the browser console, Interrupt also stops an active mic
-recording, discards queued mic chunks with `input_audio_buffer.clear`, and avoids
-committing partial speech. OpenAI-style model `tool_calls` are normalized, emitted as
+buffered audio. In the browser console, Interrupt, Pause, and Private also
+stop an active mic recording, discard queued mic chunks with
+`input_audio_buffer.clear`, and avoid committing partial speech. OpenAI-style
+model `tool_calls` are normalized, emitted as
 `response.tool_call.created`, gated with `response.tool_call.requires_confirmation`
 when the direct voice profile requires confirmation, shown in the `/voice`
 transcript, and persisted on the assistant turn. Local tool execution and the
@@ -135,7 +136,9 @@ audio is returned as `response.audio.delta`, queued in the browser playback
 control on `/voice`, and stored under `data/artifacts/realtime/`. Use the
 transport Mic button to request browser microphone access, stream
 `MediaRecorder` audio chunks to
-`input_audio_buffer.append`, and commit the buffer when the mic is stopped. Use
+`input_audio_buffer.append`, and commit the buffer when the mic is stopped.
+Entering Pause or Private while the mic is active stops capture, clears the
+buffer, and leaves text input disabled until the mode is toggled off. Use
 the transport Play button to enable or pause assistant audio playback and the
 Volume slider to set playback level. Realtime sessions use an internal turn state
 module to track buffered audio, browser audio media type, pending text, audio

@@ -67,6 +67,34 @@ class VoiceUiStaticTests(unittest.TestCase):
         self.assertIn("width: 100%", mobile_transport_range_group)
         self.assertIn("grid-template-columns: repeat(12, minmax(3px, 1fr))", mobile_waveform)
 
+    @staticmethod
+    def _script_between(script: str, start: str, end: str) -> str:
+        start_index = script.find(start)
+        if start_index == -1:
+            raise AssertionError(f"Missing script marker: {start}")
+        end_index = script.find(end, start_index)
+        if end_index == -1:
+            raise AssertionError(f"Missing script marker: {end}")
+        return script[start_index:end_index]
+
+    def test_pause_and_private_transport_stop_active_microphone_audio(self) -> None:
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+        pause_handler = self._script_between(
+            script,
+            "controls.get('pause')?.addEventListener",
+            "controls.get('private')?.addEventListener",
+        )
+        private_handler = self._script_between(
+            script,
+            "controls.get('private')?.addEventListener",
+            "controls.get('interrupt')?.addEventListener",
+        )
+
+        for handler in (pause_handler, private_handler):
+            self.assertIn("if (micEnabled)", handler)
+            self.assertIn("stopMicStreaming({ commit: false })", handler)
+            self.assertIn("togglePressed(controls.get('mic'), false)", handler)
+            self.assertIn("stopTimer()", handler)
 
     def test_interrupt_transport_discards_active_microphone_audio(self) -> None:
         script = Path("atlas_voice/web/static/voice.js").read_text()
