@@ -37,9 +37,33 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
         },
     },
     "llm_profiles": {
+        "small-classifier": {
+            "provider": "openai-compatible",
+            "model": "qwen2.5-0.5b-instruct",
+            "temperature": 0.0,
+            "max_tokens": 256,
+            "load_policy": "hot_optional",
+            "roles": [
+                "intent_classification",
+                "sensitivity_routing",
+                "low_stakes_routing",
+            ],
+        },
+        "qwen-voice": {
+            "provider": "openai-compatible",
+            "model": "qwen2.5-7b-instruct",
+            "temperature": 0.3,
+            "max_tokens": 800,
+            "load_policy": "warm_optional",
+            "roles": [
+                "fast_voice_replies",
+                "low_stakes_routing",
+                "brief_tool_planning",
+            ],
+        },
         "qwen-deep": {
             "provider": "openai-compatible",
-            "model": "qwen2.5-35b-instruct",
+            "model": "qwen-27b-instruct",
             "load_policy": "on_demand",
             "roles": [
                 "deep_coaching",

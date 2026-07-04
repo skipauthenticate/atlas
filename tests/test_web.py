@@ -1092,13 +1092,13 @@ class WebTests(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["provider"], "stub")
-            self.assertEqual(payload["model"], "qwen-local")
+            self.assertEqual(payload["model"], "qwen2.5-7b-instruct")
             self.assertEqual(payload["text"], "Atlas heard: Summarize this update")
             self.assertIsNotNone(payload["latency_ms"])
             model_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_model"]
             self.assertEqual(len(model_runs), 1)
             self.assertEqual(model_runs[0]["provider"], "stub")
-            self.assertEqual(model_runs[0]["model"], "qwen-local")
+            self.assertEqual(model_runs[0]["model"], "qwen2.5-7b-instruct")
 
     def test_voice_playground_outputs_have_latency_display_hooks(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -1702,6 +1702,90 @@ class WebTests(unittest.TestCase):
                 self.assertIn("ATLAS_VOICE_ASR_PROVIDER=canary", saved_env)
                 self.assertIn("ATLAS_VOICE_ASR_MODEL=", saved_env)
                 self.assertIn("ATLAS_VOICE_DIARIZATION_PROVIDER=pyannote", saved_env)
+        finally:
+            for key, value in old_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
+    def test_runtime_settings_form_persists_deep_summary_model_config(self) -> None:
+        keys = [
+            "ATLAS_VOICE_ENV_FILE",
+            "ATLAS_VOICE_DATA_DIR",
+            "ATLAS_VOICE_MODELS_DIR",
+            "ATLAS_VOICE_HF_CACHE",
+            "ATLAS_VOICE_ASSISTANT_CONFIG",
+            "ATLAS_VOICE_TTS_PROVIDER",
+            "ATLAS_VOICE_STUB_MODE",
+            "ATLAS_VOICE_ASR_PROVIDER",
+            "ATLAS_VOICE_ASR_MODEL",
+            "ATLAS_VOICE_DIARIZATION_PROVIDER",
+            "LLM_MODEL",
+            "LLM_BASE_URL",
+            "WHISPERX_DEVICE",
+            "WHISPERX_MODEL",
+            "WHISPERX_COMPUTE_TYPE",
+        ]
+        old_env = {key: os.environ.get(key) for key in keys}
+        try:
+            with TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                env_file = root / ".env"
+                env_file.write_text("ATLAS_VOICE_ASR_PROVIDER=whisperx\nWHISPERX_MODEL=tiny.en\n")
+                assistant_path = root / "config" / "atlas.assistant.yaml"
+                os.environ["ATLAS_VOICE_ENV_FILE"] = str(env_file)
+                os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+                os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+                os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(assistant_path)
+                os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+                os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+                os.environ["ATLAS_VOICE_ASR_PROVIDER"] = "whisperx"
+                os.environ["ATLAS_VOICE_ASR_MODEL"] = ""
+                os.environ["ATLAS_VOICE_DIARIZATION_PROVIDER"] = "pyannote"
+                os.environ["LLM_MODEL"] = "qwen-local"
+                os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+                os.environ["WHISPERX_DEVICE"] = "cpu"
+                os.environ["WHISPERX_MODEL"] = "tiny.en"
+                os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                web_app._restart_worker_if_idle = lambda: "restarted"
+                client = TestClient(web_app.app)
+
+                dashboard = client.get("/")
+                response = client.post(
+                    "/settings/runtime",
+                    data={
+                        "asr_provider": "whisperx",
+                        "asr_model": "tiny.en",
+                        "diarization_provider": "pyannote",
+                        "deep_llm_model": "qwen-27b-custom",
+                        "deep_llm_base_url": "http://127.0.0.1:8088/v1/chat/completions",
+                    },
+                )
+
+                self.assertEqual(dashboard.status_code, 200)
+                self.assertIn('name="deep_llm_model"', dashboard.text)
+                self.assertIn('value="qwen-27b-instruct"', dashboard.text)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Runtime settings saved", response.text)
+                self.assertEqual(web_app.processor.settings.llm_model, "qwen-27b-custom")
+                self.assertEqual(
+                    web_app.processor.settings.llm_base_url,
+                    "http://127.0.0.1:8088/v1/chat/completions",
+                )
+                saved_config = assistant_path.read_text()
+                self.assertIn("llm_profiles:", saved_config)
+                self.assertIn("qwen-deep:", saved_config)
+                self.assertIn("model: qwen-27b-custom", saved_config)
+                self.assertIn("base_url: http://127.0.0.1:8088/v1/chat/completions", saved_config)
         finally:
             for key, value in old_env.items():
                 if value is None:

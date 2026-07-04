@@ -386,12 +386,12 @@ class ConfigTests(unittest.TestCase):
         profile = config.llm_profiles["qwen-deep"]
         reflection = settings_for_profile(settings, config, "reflection")
 
-        self.assertEqual(profile["model"], "qwen2.5-35b-instruct")
+        self.assertEqual(profile["model"], "qwen-27b-instruct")
         self.assertEqual(profile["load_policy"], "on_demand")
         self.assertIn("deep_coaching", profile["roles"])
         self.assertIn("weekly_reviews", profile["roles"])
         self.assertEqual(settings.llm_model, "qwen-local")
-        self.assertEqual(reflection.llm_model, "qwen2.5-35b-instruct")
+        self.assertEqual(reflection.llm_model, "qwen-27b-instruct")
 
     def test_qwen_deep_llm_profile_accepts_local_overrides(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -403,7 +403,7 @@ class ConfigTests(unittest.TestCase):
                 "    llm_profile: qwen-deep\n"
                 "llm_profiles:\n"
                 "  qwen-deep:\n"
-                "    model: local-qwen-35b\n"
+                "    model: local-qwen-27b\n"
                 "    base_url: http://127.0.0.1:8088/v1/chat/completions\n"
                 "    temperature: 0.35\n"
                 "    max_tokens: 4096\n"
@@ -429,11 +429,38 @@ class ConfigTests(unittest.TestCase):
         reflection = settings_for_profile(settings, config, "reflection")
         direct = settings_for_profile(settings, config, "direct_voice")
 
-        self.assertEqual(reflection.llm_model, "local-qwen-35b")
+        self.assertEqual(reflection.llm_model, "local-qwen-27b")
         self.assertEqual(reflection.llm_base_url, "http://127.0.0.1:8088/v1/chat/completions")
         self.assertEqual(reflection.llm_temperature, 0.35)
         self.assertEqual(reflection.llm_max_tokens, 4096)
-        self.assertEqual(direct.llm_model, "qwen-local")
+        self.assertEqual(direct.llm_model, "qwen2.5-7b-instruct")
+        self.assertNotEqual(direct.llm_model, reflection.llm_model)
+
+    def test_smaller_llm_profiles_drive_voice_and_classifier_paths(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"LLM_MODEL": "qwen-local"}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(root / "missing.yaml")
+
+        voice_profile = config.llm_profiles["qwen-voice"]
+        classifier_profile = config.llm_profiles["small-classifier"]
+        direct = settings_for_profile(settings, config, "direct_voice")
+        ambient = settings_for_profile(settings, config, "ambient")
+
+        self.assertEqual(voice_profile["load_policy"], "warm_optional")
+        self.assertIn("fast_voice_replies", voice_profile["roles"])
+        self.assertEqual(direct.llm_model, "qwen2.5-7b-instruct")
+        self.assertLessEqual(direct.llm_max_tokens, 800)
+        self.assertEqual(classifier_profile["load_policy"], "hot_optional")
+        self.assertIn("intent_classification", classifier_profile["roles"])
+        self.assertEqual(ambient.llm_model, "qwen2.5-0.5b-instruct")
+        self.assertLessEqual(ambient.llm_max_tokens, 256)
 
 
 if __name__ == "__main__":

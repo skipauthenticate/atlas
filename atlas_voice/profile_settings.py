@@ -99,10 +99,8 @@ def _llm_profile_name(
 ) -> str | None:
     if "llm_profile" in overrides:
         value = overrides.get("llm_profile")
-    elif profile_name == "reflection":
-        value = assistant_config.profiles.get(profile_name, {}).get("llm_profile")
     else:
-        value = None
+        value = assistant_config.profiles.get(profile_name, {}).get("llm_profile")
     return str(value).strip() if value else None
 
 

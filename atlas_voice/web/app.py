@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import shutil
 import subprocess
@@ -124,7 +125,15 @@ def runtime_info(current_settings: Settings) -> dict[str, Any]:
         "diarization_provider": current_settings.diarization_provider,
         "diarization_providers": DIARIZATION_PROVIDERS,
         "pyannote_model": current_settings.pyannote_model,
+        "deep_llm_model_value": _deep_llm_profile_value("model", "qwen-27b-instruct"),
+        "deep_llm_base_url_value": _deep_llm_profile_value("base_url", settings.llm_base_url),
     }
+
+
+def _deep_llm_profile_value(key: str, default: str) -> str:
+    profile = assistant_config.llm_profiles.get("qwen-deep", {})
+    value = profile.get(key) if isinstance(profile, dict) else None
+    return str(value or default)
 
 
 def _effective_asr_model(current_settings: Settings) -> str:
@@ -185,6 +194,59 @@ def _write_dotenv_values(values: dict[str, str]) -> None:
         updated.append(f"{key}={_clean_env_value(value)}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(updated).rstrip() + "\n")
+
+
+def _write_deep_llm_profile(*, model: str, base_url: str) -> None:
+    if not model and not base_url:
+        return
+    overrides = copy.deepcopy(assistant_config.overrides)
+    profiles = overrides.setdefault("profiles", {})
+    reflection = profiles.setdefault("reflection", {})
+    reflection["llm_profile"] = "qwen-deep"
+
+    llm_profiles = overrides.setdefault("llm_profiles", {})
+    qwen_deep = llm_profiles.setdefault("qwen-deep", {})
+    qwen_deep.setdefault("provider", "openai-compatible")
+    qwen_deep.setdefault("load_policy", "on_demand")
+    if model:
+        qwen_deep["model"] = model
+    if base_url:
+        qwen_deep["base_url"] = base_url.rstrip("/")
+
+    _write_assistant_config_overrides(overrides)
+
+
+def _write_assistant_config_overrides(overrides: dict[str, Any]) -> None:
+    path = assistant_config.path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(_yaml_lines(overrides)).rstrip() + "\n")
+
+
+def _yaml_lines(value: dict[str, Any], *, indent: int = 0) -> list[str]:
+    lines: list[str] = []
+    prefix = " " * indent
+    for key, item in value.items():
+        if isinstance(item, dict):
+            lines.append(f"{prefix}{key}:")
+            lines.extend(_yaml_lines(item, indent=indent + 2))
+        else:
+            lines.append(f"{prefix}{key}: {_yaml_scalar(item)}")
+    return lines
+
+
+def _yaml_scalar(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "none"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_yaml_scalar(item) for item in value) + "]"
+    scalar = str(value)
+    if not scalar or any(char in scalar for char in {"#", "[", "]", "{", "}", "\n"}):
+        return repr(scalar)
+    return scalar
 
 
 def _clean_env_value(value: str) -> str:
@@ -760,6 +822,8 @@ def update_runtime_settings(
     asr_provider: str = Form(...),
     asr_model: str = Form(""),
     diarization_provider: str = Form(...),
+    deep_llm_model: str = Form(""),
+    deep_llm_base_url: str = Form(""),
 ) -> Response:
     provider = asr_provider.strip().lower()
     diarization = diarization_provider.strip().lower()
@@ -788,6 +852,10 @@ def update_runtime_settings(
 
     values = _runtime_env_values(provider, model, diarization)
     _write_dotenv_values(values)
+    _write_deep_llm_profile(
+        model=deep_llm_model.strip(),
+        base_url=deep_llm_base_url.strip(),
+    )
     os.environ.update(values)
     _refresh_runtime_settings()
     worker_state = _restart_worker_if_idle()

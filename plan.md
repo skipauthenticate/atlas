@@ -334,7 +334,7 @@ Runs all day:
 Constraint:
 
 - This lane must stay small.
-- It should not call Qwen 35B for every utterance.
+- It should not call Qwen 27B for every utterance.
 
 Likely eventual stack:
 
@@ -729,12 +729,12 @@ Current config support:
 
 ## Local Model Strategy
 
-Current Qwen 35B server is useful but too heavy to be the always-on brain.
+Current Qwen 27B server is useful but too heavy to be the always-on brain.
 
 Recommended model roles:
 
-- [x] Qwen 35B: deep coaching, complex reasoning, weekly reviews, direct hard questions.
-- [ ] Smaller local LLM: fast voice replies, classifications, low-stakes routing.
+- [x] Qwen 27B: deep coaching, complex reasoning, weekly reviews, direct hard questions.
+- [x] Smaller local LLM: fast voice replies, classifications, low-stakes routing.
 - [x] Parakeet/Whisper-capable ASR provider abstraction exists.
 - [ ] Hyprwhspr as primary always-on STT if its local socket/CLI is reliable.
 - [ ] faster-qwen3-tts as primary local TTS.
@@ -745,7 +745,7 @@ Capacity rules:
 
 - Do not keep every heavy component hot.
 - Keep the always-on lane small.
-- Use Qwen 35B on demand.
+- Use Qwen 27B on demand.
 - Use batch jobs for diarization and deep reflection.
 - Add a smaller voice/intent model profile.
 - Reduce realtime context versus deep reflection context.
@@ -941,13 +941,13 @@ Observed constraints:
 - CPU/GPU idle headroom is fine.
 - RAM is workable.
 - Swap is full.
-- Current Qwen 35B `llama-server` uses roughly 28.8 GB RSS.
+- Current Qwen 27B `llama-server` uses roughly 28.8 GB RSS.
 
 Design implications:
 
 - Do not keep every heavy component hot.
 - Keep the always-on lane small.
-- Use Qwen 35B on demand.
+- Use Qwen 27B on demand.
 - Use batch jobs for diarization and deep reflection.
 - Add a smaller voice/intent model profile.
 - Reduce context for realtime voice versus deep reflection.

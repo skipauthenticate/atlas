@@ -406,15 +406,25 @@ separate runtime concern; this registry is the local policy source.
 ## Jetson Operating Notes
 
 
-The reflection profile uses the built-in `qwen-deep` LLM profile for on-demand
-deep reasoning. By default that profile points at `qwen2.5-35b-instruct` and is
-tagged for deep coaching, complex reasoning, weekly reviews, and direct
-questions. Override `llm_profiles.qwen-deep.model`, `base_url`, `temperature`,
-and `max_tokens` in `config/atlas.assistant.yaml` to match the local
-OpenAI-compatible Qwen 35B server. Realtime direct voice does not inherit this
-deep model unless its own profile explicitly selects it.
 
-Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,
+Direct voice uses the built-in `qwen-voice` profile for fast local replies. That
+profile defaults to `qwen2.5-7b-instruct`, `max_tokens=800`, and a
+`warm_optional` load policy so it can be kept warm only when capacity allows.
+Ambient classification uses `small-classifier`, defaulting to
+`qwen2.5-0.5b-instruct`, `max_tokens=256`, and a `hot_optional` policy for cheap
+intent/sensitivity routing. Override either profile under `llm_profiles` if the
+Jetson image uses different local model names.
+
+The reflection profile uses the built-in `qwen-deep` LLM profile for on-demand
+deep reasoning. By default that profile points at `qwen-27b-instruct` and is
+tagged for deep coaching, complex reasoning, weekly reviews, and direct
+questions. Set the deep summary model and endpoint from the dashboard runtime
+settings form, or override `llm_profiles.qwen-deep.model`, `base_url`,
+`temperature`, and `max_tokens` in `config/atlas.assistant.yaml` to match the
+local OpenAI-compatible Qwen 27B server. Realtime direct voice does not inherit
+this deep model unless its own profile explicitly selects it.
+
+Keep the always-on path lightweight. Do not keep Qwen 27B, high-quality ASR,
 diarization, and TTS hot unless memory and swap remain stable. Watch
 `/api/assistant/health`, `/api/status`, and `model_runs` latency after each model
 change. If another process consumes memory or GPU, Atlas should keep reporting
