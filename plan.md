@@ -351,7 +351,7 @@ Runs when the user is talking to Atlas directly:
 - [x] Local LLM via OpenAI-compatible endpoint.
 - [x] Optional local Piper TTS integration.
 - [x] faster-qwen3-tts sidecar integration.
-- [ ] Streaming STT rather than commit-time transcription.
+- [x] Streaming STT rather than commit-time transcription.
 - [ ] Barge-in.
 - [ ] Tool calls with confirmation gates.
 

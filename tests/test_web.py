@@ -1700,6 +1700,70 @@ class WebTests(unittest.TestCase):
             self.assertEqual(utterance["text"], "Audio hello")
             self.assertEqual(utterance["source_provider"], "whisperx")
 
+    def test_realtime_websocket_streams_input_audio_transcript_deltas_before_commit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            audio = base64.b64encode(b"\0\0" * 12).decode("ascii")
+
+            with patch.object(
+                web_app,
+                "transcribe_realtime_audio",
+                side_effect=AssertionError("commit should reuse streaming transcript"),
+            ):
+                with client.websocket_connect("/v1/realtime") as websocket:
+                    created = websocket.receive_json()
+                    session_id = created["session"]["id"]
+                    websocket.send_json({
+                        "type": "input_audio_buffer.append",
+                        "audio": audio,
+                        "transcript_delta": "Hello",
+                    })
+                    first = websocket.receive_json()
+                    first_delta = websocket.receive_json()
+                    websocket.send_json({
+                        "type": "input_audio_buffer.append",
+                        "audio": audio,
+                        "transcript_delta": " Atlas",
+                        "transcript_final": True,
+                    })
+                    second = websocket.receive_json()
+                    second_delta = websocket.receive_json()
+                    websocket.send_json({"type": "input_audio_buffer.commit"})
+                    events = _receive_until(websocket, "response.done")
+
+            event_types = [event["type"] for event in events]
+            self.assertEqual(first["type"], "input_audio_buffer.appended")
+            self.assertEqual(second["type"], "input_audio_buffer.appended")
+            self.assertEqual(first_delta["type"], "conversation.item.input_audio_transcription.delta")
+            self.assertEqual(first_delta["delta"], "Hello")
+            self.assertFalse(first_delta["final"])
+            self.assertEqual(second_delta["type"], "conversation.item.input_audio_transcription.delta")
+            self.assertEqual(second_delta["delta"], " Atlas")
+            self.assertTrue(second_delta["final"])
+            self.assertIn("input_audio_buffer.committed", event_types)
+            self.assertIn("conversation.item.input_audio_transcription.done", event_types)
+            utterance = web_app.db.list_utterances(session_id)[0]
+            self.assertEqual(utterance["text"], "Hello Atlas")
+            self.assertEqual(utterance["source_provider"], "streaming_stt")
+
+
     def test_realtime_websocket_auto_commits_audio_after_vad_silence(self) -> None:
         keys = [
             "ATLAS_VOICE_DATA_DIR",

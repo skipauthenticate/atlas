@@ -81,6 +81,21 @@ class RealtimeTurnStateTests(unittest.TestCase):
         self.assertFalse(result.analyzed)
         self.assertFalse(result.end_of_turn)
 
+    def test_streaming_transcript_accumulates_and_clears_with_audio(self) -> None:
+        state = RealtimeTurnState(sample_rate=24000, channels=1)
+
+        self.assertEqual(state.append_streaming_transcript(" Hello", final=False), "Hello")
+        self.assertEqual(state.append_streaming_transcript(" Atlas ", final=True), "Hello Atlas")
+        self.assertEqual(state.pending_streaming_transcript, "Hello Atlas")
+        self.assertEqual(state.pop_streaming_transcript(), "Hello Atlas")
+        self.assertIsNone(state.pop_streaming_transcript())
+
+        state.append_streaming_transcript("discard me", final=False)
+        state.clear_audio()
+
+        self.assertIsNone(state.pending_streaming_transcript)
+
+
     def test_pending_text_and_response_lifecycle(self) -> None:
         state = RealtimeTurnState(sample_rate=24000, channels=1)
 

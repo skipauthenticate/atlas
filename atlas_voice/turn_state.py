@@ -30,6 +30,7 @@ class RealtimeTurnState:
     vad_silence_ms: int = 0
     _audio_buffer: bytearray = field(default_factory=bytearray)
     _pending_text: str | None = None
+    _streaming_transcript: str | None = None
 
     @property
     def buffered_audio_bytes(self) -> int:
@@ -38,6 +39,10 @@ class RealtimeTurnState:
     @property
     def has_pending_text(self) -> bool:
         return bool(self._pending_text)
+
+    @property
+    def pending_streaming_transcript(self) -> str | None:
+        return self._streaming_transcript
 
     def append_audio(self, payload: bytes, *, media_type: str | None = None) -> int:
         if media_type:
@@ -48,6 +53,7 @@ class RealtimeTurnState:
     def clear_audio(self) -> None:
         self._audio_buffer.clear()
         self.audio_media_type = None
+        self._streaming_transcript = None
         self.reset_realtime_vad()
 
     def commit_audio(self) -> bytes:
@@ -61,6 +67,19 @@ class RealtimeTurnState:
         self.audio_media_type = None
         self.reset_realtime_vad()
         return payload, media_type
+
+    def append_streaming_transcript(self, delta: str | None, *, final: bool = False) -> str | None:
+        cleaned_delta = str(delta or "")
+        if not cleaned_delta.strip():
+            return self._streaming_transcript
+        current = self._streaming_transcript or ""
+        self._streaming_transcript = " ".join(f"{current}{cleaned_delta}".split())
+        return self._streaming_transcript
+
+    def pop_streaming_transcript(self) -> str | None:
+        text = self._streaming_transcript
+        self._streaming_transcript = None
+        return text
 
     def update_realtime_vad(
         self,

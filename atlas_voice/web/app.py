@@ -1155,6 +1155,11 @@ async def realtime_websocket(websocket: WebSocket) -> None:
             byte_count=len(committed),
         )
         text = extract_text_input(event)
+        source_provider = realtime_settings.asr_provider if committed else "text"
+        if not text:
+            text = state.pop_streaming_transcript()
+            if text:
+                source_provider = "streaming_stt"
         if not text and committed:
             try:
                 text, _audio_path = await asyncio.to_thread(
@@ -1186,7 +1191,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 websocket,
                 session_id=session_id,
                 text=text,
-                source_provider=realtime_settings.asr_provider if committed else "text",
+                source_provider=source_provider,
                 transcript_prefix="conversation.item.input_audio_transcription",
                 instructions=instructions,
                 tts_provider=tts_provider,
@@ -1222,6 +1227,20 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     "input_audio_buffer.appended",
                     byte_count=buffered_bytes,
                 )
+                transcript_delta = extract_streaming_transcript_delta(event)
+                if transcript_delta:
+                    transcript_text_so_far = state.append_streaming_transcript(
+                        transcript_delta,
+                        final=bool(event.get("transcript_final") or event.get("final")),
+                    )
+                    await _send_realtime_event(
+                        websocket,
+                        "conversation.item.input_audio_transcription.delta",
+                        item_id=f"stream_{session_id}",
+                        delta=transcript_delta,
+                        text=transcript_text_so_far or "",
+                        final=bool(event.get("transcript_final") or event.get("final")),
+                    )
                 vad = state.update_realtime_vad(
                     audio_payload,
                     enabled=realtime_settings.realtime_vad_enabled,
@@ -1333,6 +1352,14 @@ async def realtime_websocket(websocket: WebSocket) -> None:
             with suppress(asyncio.CancelledError):
                 await active_response_task
         db.end_ambient_session(session_id)
+
+
+def extract_streaming_transcript_delta(event: dict[str, Any]) -> str:
+    for key in ("transcript_delta", "text_delta", "partial_transcript"):
+        value = event.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
 
 
 async def _handle_realtime_response_cancel(

@@ -149,7 +149,12 @@ Realtime end-of-turn detection is enabled by default for raw PCM16 audio sent
 through `input_audio_buffer.append`. It emits
 `input_audio_buffer.speech_started` after enough voiced audio and automatically
 commits the buffer after trailing silence by emitting
-`input_audio_buffer.speech_stopped` and `input_audio_buffer.committed`. Browser
+`input_audio_buffer.speech_stopped` and `input_audio_buffer.committed`. Streaming
+STT clients or local sidecars can attach `transcript_delta` to each
+`input_audio_buffer.append`; Atlas immediately emits
+`conversation.item.input_audio_transcription.delta`, accumulates the transcript,
+and reuses it on commit instead of running commit-time transcription. If no
+streaming transcript arrives, commit-time local ASR remains the fallback. Browser
 `MediaRecorder` container audio such as WebM is still accepted, but it requires
 explicit `input_audio_buffer.commit` until decoded container VAD is added. Tune
 the energy detector with:
