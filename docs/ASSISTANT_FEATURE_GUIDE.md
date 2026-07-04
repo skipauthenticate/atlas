@@ -378,6 +378,18 @@ API. `Database.record_skill_score(...)` writes bounded progress measurements to
 count, and reporting period. Use `Database.list_skill_scores(...)` to retrieve
 scores by goal, domain, or metric for future dashboards and reports.
 
+Assistant profile provider selection is resolved from explicit values in
+`config/atlas.assistant.yaml` after `.env` is loaded. The merged built-in profile
+defaults remain visible for status and validation, but only keys present in the
+local assistant config file override environment settings. Direct voice profile
+settings drive the `/voice` console, realtime websocket ASR/LLM/TTS calls, and
+voice playground endpoints. Ambient profile settings drive `atlas-voice ambient`
+when CLI flags do not provide a more specific source, mode, or capture option.
+Use `stt_provider` or `asr_provider` for ASR, `stt_model` or `asr_model` for ASR
+models, `diarization_provider` for reflection/processing, `tts_provider`,
+`tts_base_url`, and `tts_model` for local speech output, and `source`, `mode`,
+`chunk_seconds`, and related ambient keys for ambient capture behavior.
+
 Local prompt and rubric registry files live in `config/prompts/*.yaml`. Each file
 defines a `prompts` mapping with id, name, domain, system text, user text, and an
 optional rubric mapping. Load prompts programmatically with

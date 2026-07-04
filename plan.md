@@ -723,7 +723,7 @@ Current config support:
 - [x] Ambient source/mode settings in `.env`.
 - [x] Realtime audio sample rate/channel settings.
 - [x] Piper executable and voice settings.
-- [ ] Full profile-driven provider selection.
+- [x] Full profile-driven provider selection.
 - [x] Prompt/rubric registry.
 - [x] Tool definition and permission registry.
 

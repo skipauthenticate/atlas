@@ -29,6 +29,7 @@ from atlas_voice.exporter import export_payload, export_recording
 from atlas_voice.merge import format_seconds
 from atlas_voice.pipeline import PipelineProcessor
 from atlas_voice.privacy import privacy_summary
+from atlas_voice.profile_settings import settings_for_profile
 from atlas_voice.realtime import (
     REALTIME_SYSTEM_PROMPT,
     audio_delta_payload,
@@ -52,7 +53,7 @@ from atlas_voice.turn_state import RealtimeTurnState
 settings = Settings.from_env()
 assistant_config = load_assistant_config(settings.assistant_config_path)
 db = Database(settings.db_path)
-processor = PipelineProcessor(settings, db)
+processor = PipelineProcessor(settings_for_profile(settings, assistant_config, "reflection"), db)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -195,7 +196,15 @@ def _refresh_runtime_settings() -> None:
     settings = Settings.from_env()
     assistant_config = load_assistant_config(settings.assistant_config_path)
     settings.ensure_directories()
-    processor = PipelineProcessor(settings, db)
+    processor = PipelineProcessor(settings_for_profile(settings, assistant_config, "reflection"), db)
+
+
+def _profile_settings(profile_name: str) -> Settings:
+    return settings_for_profile(settings, assistant_config, profile_name)
+
+
+def _direct_voice_settings() -> Settings:
+    return _profile_settings("direct_voice")
 
 
 def _restart_worker_if_idle() -> str:
@@ -312,19 +321,20 @@ def dashboard(
 
 @app.get("/voice", response_class=HTMLResponse)
 def voice_console(request: Request) -> Response:
-    status = collect_runtime_status(settings, db, assistant_config)
+    voice_runtime_settings = _direct_voice_settings()
+    status = collect_runtime_status(voice_runtime_settings, db, assistant_config)
     sessions = _voice_session_views(db.list_ambient_sessions(limit=8, mode="direct_voice"))
     ambient_timeline = _ambient_timeline_views(db.list_ambient_sessions(limit=12, mode=None))
     return templates.TemplateResponse(
         request,
         "voice.html",
         {
-            "runtime": runtime_info(settings),
+            "runtime": runtime_info(voice_runtime_settings),
             "status": status,
-            "assistant_enabled": settings.assistant_enabled,
+            "assistant_enabled": voice_runtime_settings.assistant_enabled,
             "sessions": sessions,
             "ambient_timeline": ambient_timeline,
-            "voice_settings": _voice_settings_view(),
+            "voice_settings": _voice_settings_view(voice_runtime_settings),
             "memory_items": _memory_item_views(db.list_memory_items(limit=8)),
             "privacy_events": _privacy_events_view(limit=8),
             "coaching_goals": _coaching_goals_view(status="active"),
@@ -542,17 +552,18 @@ def _compact_float(value: Any) -> str:
     return f"{number:.2f}".rstrip("0").rstrip(".")
 
 
-def _voice_settings_view() -> dict[str, Any]:
-    tts_provider = _realtime_tts_provider()
+def _voice_settings_view(current_settings: Settings | None = None) -> dict[str, Any]:
+    current_settings = current_settings or _direct_voice_settings()
+    tts_provider = _realtime_tts_provider(current_settings)
     return {
-        "realtime_host": f"{settings.host}:{settings.port}",
+        "realtime_host": f"{current_settings.host}:{current_settings.port}",
         "websocket_path": "/v1/realtime",
-        "sample_rate": settings.realtime_audio_sample_rate,
-        "channels": settings.realtime_audio_channels,
+        "sample_rate": current_settings.realtime_audio_sample_rate,
+        "channels": current_settings.realtime_audio_channels,
         "tts_provider": tts_provider,
-        "tts_model": _realtime_tts_model(tts_provider) if tts_provider != "none" else "none",
-        "tts_base_url": settings.tts_base_url if is_tts_sidecar_provider(tts_provider) else None,
-        "llm_model": settings.llm_model,
+        "tts_model": _realtime_tts_model(tts_provider, current_settings) if tts_provider != "none" else "none",
+        "tts_base_url": current_settings.tts_base_url if is_tts_sidecar_provider(tts_provider) else None,
+        "llm_model": current_settings.llm_model,
     }
 
 
@@ -600,19 +611,20 @@ def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
     if not settings.assistant_enabled:
         raise HTTPException(status_code=403, detail="Assistant runtime is disabled")
 
-    settings.ensure_directories()
+    current_settings = _direct_voice_settings()
+    current_settings.ensure_directories()
     db.initialize()
-    provider = "stub" if settings.stub_mode else "openai-compatible"
+    provider = "stub" if current_settings.stub_mode else "openai-compatible"
     try:
         reply = generate_realtime_reply(
             text,
-            settings,
+            current_settings,
             instructions=_realtime_instructions(),
         )
     except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
         db.log_model_run(
             provider=provider,
-            model=settings.llm_model,
+            model=current_settings.llm_model,
             task="voice_playground_model",
             input_ref="voice_playground:text",
             error=f"{type(exc).__name__}: {exc}",
@@ -621,7 +633,7 @@ def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
 
     db.log_model_run(
         provider=provider,
-        model=settings.llm_model,
+        model=current_settings.llm_model,
         task="voice_playground_model",
         input_ref="voice_playground:text",
         latency_ms=reply.latency_ms,
@@ -632,7 +644,7 @@ def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
         {
             "status": "ok",
             "provider": provider,
-            "model": settings.llm_model,
+            "model": current_settings.llm_model,
             "text": reply.text,
             "latency_ms": reply.latency_ms,
             "tokens_in": reply.tokens_in,
@@ -649,14 +661,15 @@ async def api_voice_playground_stt(file: UploadFile = File(...)) -> JSONResponse
     if not audio:
         raise HTTPException(status_code=400, detail="Audio file is required")
 
-    settings.ensure_directories()
+    current_settings = _direct_voice_settings()
+    current_settings.ensure_directories()
     db.initialize()
-    output_dir = settings.artifacts_dir / "voice-playground"
-    provider = settings.asr_provider
-    model = _effective_asr_model(settings)
+    output_dir = current_settings.artifacts_dir / "voice-playground"
+    provider = current_settings.asr_provider
+    model = _effective_asr_model(current_settings)
     started = time.perf_counter()
     try:
-        text, audio_path = transcribe_realtime_audio(audio, settings, output_dir)
+        text, audio_path = transcribe_realtime_audio(audio, current_settings, output_dir)
     except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
         latency_ms = int((time.perf_counter() - started) * 1000)
         db.log_model_run(
@@ -698,19 +711,20 @@ def api_voice_playground_tts(payload: dict[str, Any]) -> JSONResponse:
     if not settings.assistant_enabled:
         raise HTTPException(status_code=403, detail="Assistant runtime is disabled")
 
-    tts_provider = _realtime_tts_provider()
+    current_settings = _direct_voice_settings()
+    tts_provider = _realtime_tts_provider(current_settings)
     if not _tts_outputs_audio(tts_provider):
         raise HTTPException(status_code=400, detail="TTS provider is disabled")
 
-    output_dir = settings.artifacts_dir / "voice-playground"
-    settings.ensure_directories()
+    output_dir = current_settings.artifacts_dir / "voice-playground"
+    current_settings.ensure_directories()
     db.initialize()
-    model = _realtime_tts_model(tts_provider)
+    model = _realtime_tts_model(tts_provider, current_settings)
     try:
         if tts_provider == "piper":
-            audio = synthesize_with_piper(text, settings, output_dir)
+            audio = synthesize_with_piper(text, current_settings, output_dir)
         else:
-            audio = synthesize_with_tts_sidecar(text, settings, output_dir)
+            audio = synthesize_with_tts_sidecar(text, current_settings, output_dir)
     except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
         db.log_model_run(
             provider=tts_provider,
@@ -1010,7 +1024,8 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         )
         await websocket.close(code=1008)
         return
-    settings.ensure_directories()
+    realtime_settings = _direct_voice_settings()
+    realtime_settings.ensure_directories()
     db.initialize()
     session_id = db.create_ambient_session(
         mode="direct_voice",
@@ -1018,10 +1033,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         title="Realtime voice session",
     )
     instructions = _realtime_instructions()
-    tts_provider = _realtime_tts_provider()
+    tts_provider = _realtime_tts_provider(realtime_settings)
     state = RealtimeTurnState(
-        sample_rate=settings.realtime_audio_sample_rate,
-        channels=settings.realtime_audio_channels,
+        sample_rate=realtime_settings.realtime_audio_sample_rate,
+        channels=realtime_settings.realtime_audio_channels,
     )
     active_response_task: asyncio.Task[None] | None = None
 
@@ -1031,16 +1046,16 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         session={
             "id": session_id,
             "object": "realtime.session",
-            "model": settings.llm_model,
+            "model": realtime_settings.llm_model,
             "modalities": ["text", "audio"],
             "input_audio_format": "pcm16",
             "output_audio_format": "wav" if _tts_outputs_audio(tts_provider) else "none",
             "input_audio_vad": {
-                "enabled": settings.realtime_vad_enabled,
+                "enabled": realtime_settings.realtime_vad_enabled,
                 "type": "energy",
-                "threshold": settings.realtime_vad_threshold,
-                "min_speech_ms": settings.realtime_vad_min_speech_ms,
-                "silence_ms": settings.realtime_vad_silence_ms,
+                "threshold": realtime_settings.realtime_vad_threshold,
+                "min_speech_ms": realtime_settings.realtime_vad_min_speech_ms,
+                "silence_ms": realtime_settings.realtime_vad_silence_ms,
             },
         },
     )
@@ -1074,8 +1089,8 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 text, _audio_path = await asyncio.to_thread(
                     transcribe_realtime_audio,
                     committed,
-                    settings,
-                    _realtime_artifact_dir(session_id),
+                    realtime_settings,
+                    _realtime_artifact_dir(session_id, realtime_settings),
                     sample_rate=state.sample_rate,
                     channels=state.channels,
                     media_type=event.get("media_type") or event.get("mime_type") or committed_media_type,
@@ -1100,11 +1115,12 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 websocket,
                 session_id=session_id,
                 text=text,
-                source_provider=settings.asr_provider if committed else "text",
+                source_provider=realtime_settings.asr_provider if committed else "text",
                 transcript_prefix="conversation.item.input_audio_transcription",
                 instructions=instructions,
                 tts_provider=tts_provider,
                 state=state,
+                current_settings=realtime_settings,
             )
         )
 
@@ -1137,17 +1153,17 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 )
                 vad = state.update_realtime_vad(
                     audio_payload,
-                    enabled=settings.realtime_vad_enabled,
+                    enabled=realtime_settings.realtime_vad_enabled,
                     media_type=media_type or state.audio_media_type,
-                    energy_threshold=settings.realtime_vad_threshold,
-                    min_speech_ms=settings.realtime_vad_min_speech_ms,
-                    silence_duration_ms=settings.realtime_vad_silence_ms,
+                    energy_threshold=realtime_settings.realtime_vad_threshold,
+                    min_speech_ms=realtime_settings.realtime_vad_min_speech_ms,
+                    silence_duration_ms=realtime_settings.realtime_vad_silence_ms,
                 )
                 if vad.speech_started:
                     await _send_realtime_event(
                         websocket,
                         "input_audio_buffer.speech_started",
-                        audio_start_ms=max(vad.speech_ms - settings.realtime_vad_min_speech_ms, 0),
+                        audio_start_ms=max(vad.speech_ms - realtime_settings.realtime_vad_min_speech_ms, 0),
                     )
                 if vad.end_of_turn:
                     await _send_realtime_event(
@@ -1194,6 +1210,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         instructions=instructions,
                         tts_provider=tts_provider,
                         state=state,
+                        current_settings=realtime_settings,
                     )
                 )
                 continue
@@ -1227,6 +1244,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         instructions=instructions,
                         tts_provider=tts_provider,
                         state=state,
+                        current_settings=realtime_settings,
                     )
                 )
                 continue
@@ -1307,6 +1325,7 @@ async def _handle_realtime_user_text(
     instructions: str,
     tts_provider: str,
     state: RealtimeTurnState,
+    current_settings: Settings,
 ) -> None:
     utterance_id = db.add_utterance(
         session_id=session_id,
@@ -1335,18 +1354,18 @@ async def _handle_realtime_user_text(
         response={"id": response_id, "status": "in_progress"},
     )
 
-    provider = "stub" if settings.stub_mode else "openai-compatible"
+    provider = "stub" if current_settings.stub_mode else "openai-compatible"
     try:
         reply = await asyncio.to_thread(
             generate_realtime_reply,
             text,
-            settings,
+            current_settings,
             instructions=instructions,
         )
     except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
         db.log_model_run(
             provider=provider,
-            model=settings.llm_model,
+            model=current_settings.llm_model,
             task="realtime_chat",
             input_ref=f"utterance:{utterance_id}",
             error=f"{type(exc).__name__}: {exc}",
@@ -1387,20 +1406,20 @@ async def _handle_realtime_user_text(
                 audio = await asyncio.to_thread(
                     synthesize_with_piper,
                     reply.text,
-                    settings,
-                    _realtime_artifact_dir(session_id),
+                    current_settings,
+                    _realtime_artifact_dir(session_id, current_settings),
                 )
             else:
                 audio = await asyncio.to_thread(
                     synthesize_with_tts_sidecar,
                     reply.text,
-                    settings,
-                    _realtime_artifact_dir(session_id),
+                    current_settings,
+                    _realtime_artifact_dir(session_id, current_settings),
                 )
             audio_path = str(audio.path)
             db.log_model_run(
                 provider=tts_provider,
-                model=_realtime_tts_model(tts_provider),
+                model=_realtime_tts_model(tts_provider, current_settings),
                 task="realtime_tts",
                 input_ref=f"response:{response_id}",
                 output_ref=audio_path,
@@ -1422,7 +1441,7 @@ async def _handle_realtime_user_text(
         except Exception as exc:  # noqa: BLE001 - TTS failure should not drop text response.
             db.log_model_run(
                 provider=tts_provider,
-                model=_realtime_tts_model(tts_provider),
+                model=_realtime_tts_model(tts_provider, current_settings),
                 task="realtime_tts",
                 input_ref=f"response:{response_id}",
                 error=f"{type(exc).__name__}: {exc}",
@@ -1446,13 +1465,13 @@ async def _handle_realtime_user_text(
         user_utterance_id=utterance_id,
         text=reply.text,
         audio_path=audio_path,
-        model=settings.llm_model,
+        model=current_settings.llm_model,
         latency_ms=reply.latency_ms,
         tool_calls=tool_calls,
     )
     db.log_model_run(
         provider=provider,
-        model=settings.llm_model,
+        model=current_settings.llm_model,
         task="realtime_chat",
         input_ref=f"utterance:{utterance_id}",
         output_ref=f"assistant_turn:{turn_id}",
@@ -1545,14 +1564,9 @@ def _updated_realtime_instructions(event: dict[str, Any], current: str) -> str:
     return current
 
 
-def _realtime_tts_provider() -> str:
-    provider = normalize_tts_provider(settings.tts_provider)
-    if provider != "none":
-        return provider
-    profile = assistant_config.profiles.get("direct_voice", {})
-    if isinstance(profile, dict) and profile.get("enabled") is True:
-        return normalize_tts_provider(str(profile.get("tts_provider") or "none"))
-    return "none"
+def _realtime_tts_provider(current_settings: Settings | None = None) -> str:
+    current_settings = current_settings or _direct_voice_settings()
+    return normalize_tts_provider(current_settings.tts_provider)
 
 
 def _realtime_requires_tool_confirmation() -> bool:
@@ -1567,16 +1581,18 @@ def _tts_outputs_audio(tts_provider: str) -> bool:
     return tts_provider == "piper" or is_tts_sidecar_provider(tts_provider)
 
 
-def _realtime_tts_model(tts_provider: str) -> str:
+def _realtime_tts_model(tts_provider: str, current_settings: Settings | None = None) -> str:
+    current_settings = current_settings or _direct_voice_settings()
     if tts_provider == "piper":
-        return settings.piper_voice or "piper"
+        return current_settings.piper_voice or "piper"
     if is_tts_sidecar_provider(tts_provider):
-        return settings.tts_model
+        return current_settings.tts_model
     return tts_provider
 
 
-def _realtime_artifact_dir(session_id: str) -> Path:
-    return settings.artifacts_dir / "realtime" / session_id
+def _realtime_artifact_dir(session_id: str, current_settings: Settings | None = None) -> Path:
+    current_settings = current_settings or _direct_voice_settings()
+    return current_settings.artifacts_dir / "realtime" / session_id
 
 
 def _safe_realtime_error(exc: Exception) -> str:

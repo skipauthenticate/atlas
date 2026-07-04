@@ -29,6 +29,7 @@ from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
 from .privacy import privacy_summary
+from .profile_settings import settings_for_profile
 from .memory import (
     MemoryExtractionResult,
     extract_memories_from_ambient_session,
@@ -628,6 +629,8 @@ def _print_memory_extraction_result(
 
 def cmd_ambient(args: argparse.Namespace) -> int:
     settings, db = settings_and_db()
+    assistant_config = load_assistant_config(settings.assistant_config_path)
+    settings = settings_for_profile(settings, assistant_config, "ambient")
     source = args.source or settings.ambient_source
     mode = args.mode or settings.ambient_mode
     retain_audio = args.retain_audio
@@ -767,6 +770,8 @@ def cmd_benchmark_asr(args: argparse.Namespace) -> int:
 
 def cmd_worker(_args: argparse.Namespace) -> int:
     settings, db = settings_and_db()
+    assistant_config = load_assistant_config(settings.assistant_config_path)
+    settings = settings_for_profile(settings, assistant_config, "reflection")
     Worker(settings, db).run_forever()
     return 0
 

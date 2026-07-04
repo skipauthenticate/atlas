@@ -111,6 +111,53 @@ class WebTests(unittest.TestCase):
             self.assertIn("[Atlas]", search.text)
             self.assertNotIn("&lt;mark&gt;", search.text)
 
+    def test_voice_console_uses_direct_voice_profile_settings(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            (config_dir / "atlas.assistant.yaml").write_text(
+                "profiles:\n"
+                "  direct_voice:\n"
+                "    enabled: true\n"
+                "    stt_provider: parakeet\n"
+                "    asr_model: nvidia/parakeet-tdt-0.6b-v3\n"
+                "    tts_provider: faster-qwen3-tts\n"
+                "    tts_model: qwen-profile\n"
+                "  reflection:\n"
+                "    asr_provider: canary\n"
+                "    diarization_provider: none\n"
+            )
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(config_dir / "atlas.assistant.yaml"),
+                "ATLAS_ASSISTANT_ENABLED": "true",
+                "ATLAS_VOICE_ASR_PROVIDER": "whisperx",
+                "ATLAS_VOICE_ASR_MODEL": "env-model",
+                "ATLAS_VOICE_TTS_PROVIDER": "none",
+                "ATLAS_VOICE_STUB_MODE": "true",
+                "WHISPERX_DEVICE": "cpu",
+                "WHISPERX_MODEL": "tiny.en",
+                "WHISPERX_COMPUTE_TYPE": "int8",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                client = TestClient(web_app.app)
+
+                response = client.get("/voice")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(web_app.processor.settings.asr_provider, "canary")
+        self.assertEqual(web_app.processor.settings.diarization_provider, "none")
+        self.assertIn("parakeet", response.text)
+        self.assertIn("nvidia/parakeet-tdt-0.6b-v3", response.text)
+        self.assertIn("qwen-profile", response.text)
 
     def test_assistant_health_api_reports_local_components(self) -> None:
         with TemporaryDirectory() as tmp:

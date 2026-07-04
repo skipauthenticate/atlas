@@ -8,6 +8,7 @@ from atlas_voice.assistant_config import load_assistant_config
 from atlas_voice.prompts import PromptRegistryError, load_prompt_registry
 from atlas_voice.tools import ToolRegistryError, load_tool_registry
 from atlas_voice.config import Settings
+from atlas_voice.profile_settings import settings_for_profile
 
 
 class ConfigTests(unittest.TestCase):
@@ -292,6 +293,83 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("ambient", config.profiles)
         self.assertEqual(config.privacy["raw_audio_retention_seconds"], 15)
         self.assertIn("llm", config.privacy["allowed_hosts"])
+
+    def test_profile_settings_apply_explicit_provider_overrides(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "assistant.yaml"
+            path.write_text(
+                "profiles:\n"
+                "  direct_voice:\n"
+                "    stt_provider: parakeet\n"
+                "    asr_model: nvidia/parakeet-tdt-0.6b-v3\n"
+                "    tts_provider: piper\n"
+                "    tts_model: piper-local\n"
+                "  ambient:\n"
+                "    stt_provider: hyprwhspr\n"
+                "    source: ./ambient-inbox\n"
+                "    chunk_seconds: 2.5\n"
+                "  reflection:\n"
+                "    asr_provider: canary\n"
+                "    diarization_provider: none\n"
+            )
+            env = {
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(path),
+                "ATLAS_VOICE_ASR_PROVIDER": "whisperx",
+                "ATLAS_VOICE_ASR_MODEL": "env-model",
+                "ATLAS_VOICE_TTS_PROVIDER": "none",
+                "ATLAS_VOICE_AMBIENT_SOURCE": "mic",
+                "ATLAS_VOICE_AMBIENT_CHUNK_SECONDS": "15",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(settings.assistant_config_path)
+
+        direct = settings_for_profile(settings, config, "direct_voice")
+        ambient = settings_for_profile(settings, config, "ambient")
+        reflection = settings_for_profile(settings, config, "reflection")
+
+        self.assertEqual(settings.asr_provider, "whisperx")
+        self.assertEqual(direct.asr_provider, "parakeet")
+        self.assertEqual(direct.asr_model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertEqual(direct.tts_provider, "piper")
+        self.assertEqual(direct.tts_model, "piper-local")
+        self.assertEqual(ambient.asr_provider, "hyprwhspr")
+        self.assertEqual(ambient.ambient_source, "./ambient-inbox")
+        self.assertEqual(ambient.ambient_chunk_seconds, 2.5)
+        self.assertEqual(reflection.asr_provider, "canary")
+        self.assertEqual(reflection.diarization_provider, "none")
+
+    def test_default_profile_values_do_not_override_environment(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(root / "missing.yaml"),
+                "ATLAS_VOICE_ASR_PROVIDER": "vibevoice",
+                "ATLAS_VOICE_ASR_MODEL": "env-model",
+                "ATLAS_VOICE_TTS_PROVIDER": "piper",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(settings.assistant_config_path)
+
+        ambient = settings_for_profile(settings, config, "ambient")
+        direct = settings_for_profile(settings, config, "direct_voice")
+
+        self.assertFalse(config.loaded)
+        self.assertEqual(ambient.asr_provider, "vibevoice")
+        self.assertEqual(ambient.asr_model, "env-model")
+        self.assertEqual(direct.tts_provider, "piper")
 
 
 if __name__ == "__main__":

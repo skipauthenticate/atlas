@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +50,7 @@ class AssistantConfig:
     path: Path
     loaded: bool
     raw: dict[str, Any]
+    overrides: dict[str, Any] = field(default_factory=dict)
 
     @property
     def profiles(self) -> dict[str, dict[str, Any]]:
@@ -74,6 +75,13 @@ class AssistantConfig:
             if _truthy(profile.get("enabled", False))
         ]
 
+    def profile_overrides(self, name: str) -> dict[str, Any]:
+        profiles = self.overrides.get("profiles")
+        if not isinstance(profiles, dict):
+            return {}
+        profile = profiles.get(name)
+        return dict(profile) if isinstance(profile, dict) else {}
+
 
 def assistant_config_path(path: Path | None = None) -> Path:
     if path is not None:
@@ -91,6 +99,7 @@ def load_assistant_config(path: Path | None = None) -> AssistantConfig:
             path=config_path,
             loaded=False,
             raw=_deep_merge(DEFAULT_ASSISTANT_CONFIG, {}),
+            overrides={},
         )
 
     try:
@@ -102,6 +111,7 @@ def load_assistant_config(path: Path | None = None) -> AssistantConfig:
         path=config_path,
         loaded=True,
         raw=_deep_merge(DEFAULT_ASSISTANT_CONFIG, parsed),
+        overrides=parsed,
     )
 
 

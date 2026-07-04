@@ -7,6 +7,7 @@ from .assistant_config import AssistantConfig
 from .config import Settings
 from .database import Database
 from .privacy import privacy_summary
+from .profile_settings import settings_for_profile
 from .realtime import check_tts_sidecar_health, is_tts_sidecar_provider, normalize_tts_provider
 
 PROVIDER_DEFAULT_MODELS = {
@@ -176,18 +177,19 @@ def tts_service_health(
     settings: Settings,
     assistant_config: AssistantConfig,
 ) -> dict[str, Any]:
-    provider = _effective_tts_provider(settings, assistant_config)
-    if not settings.assistant_enabled:
+    voice_settings = settings_for_profile(settings, assistant_config, "direct_voice")
+    provider = normalize_tts_provider(voice_settings.tts_provider)
+    if not voice_settings.assistant_enabled:
         return {"name": "tts", "status": "idle", "detail": "assistant disabled"}
     if provider == "none":
         return {"name": "tts", "status": "idle", "detail": "disabled"}
     if provider == "piper":
-        detail = settings.piper_voice or "voice not configured"
-        status = "configured" if settings.piper_voice else "warning"
+        detail = voice_settings.piper_voice or "voice not configured"
+        status = "configured" if voice_settings.piper_voice else "warning"
         return {"name": "tts", "status": status, "detail": f"Piper: {detail}"}
     if is_tts_sidecar_provider(provider):
-        health = check_tts_sidecar_health(settings)
-        detail = f"{settings.tts_model} at {settings.tts_base_url}: {health['detail']}"
+        health = check_tts_sidecar_health(voice_settings)
+        detail = f"{voice_settings.tts_model} at {voice_settings.tts_base_url}: {health['detail']}"
         return {"name": "tts", "status": str(health["status"]), "detail": detail}
     return {"name": "tts", "status": "configured", "detail": provider}
 
@@ -210,10 +212,15 @@ def active_models(
         },
         {"role": "LLM", "provider": "openai-compatible", "model": settings.llm_model},
     ]
-    tts_provider = _effective_tts_provider(settings, assistant_config)
-    if settings.assistant_enabled and tts_provider != "none":
+    voice_settings = settings_for_profile(settings, assistant_config, "direct_voice")
+    tts_provider = normalize_tts_provider(voice_settings.tts_provider)
+    if voice_settings.assistant_enabled and tts_provider != "none":
         models.append(
-            {"role": "TTS", "provider": tts_provider, "model": _effective_tts_model(settings, tts_provider)}
+            {
+                "role": "TTS",
+                "provider": tts_provider,
+                "model": _effective_tts_model(voice_settings, tts_provider),
+            }
         )
     return models
 
@@ -227,18 +234,6 @@ def _effective_asr_model(settings: Settings) -> str:
         return settings.vibevoice_model
     return PROVIDER_DEFAULT_MODELS.get(settings.asr_provider, settings.whisperx_model)
 
-
-def _effective_tts_provider(
-    settings: Settings,
-    assistant_config: AssistantConfig,
-) -> str:
-    provider = normalize_tts_provider(settings.tts_provider)
-    if provider != "none":
-        return provider
-    profile = assistant_config.profiles.get("direct_voice", {})
-    if isinstance(profile, dict) and _truthy(profile.get("enabled", False)):
-        return normalize_tts_provider(str(profile.get("tts_provider") or "none"))
-    return "none"
 
 
 def _effective_tts_model(settings: Settings, provider: str) -> str:
