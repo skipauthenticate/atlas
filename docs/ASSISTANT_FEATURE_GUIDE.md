@@ -84,9 +84,10 @@ atlas-voice validate-tts-sidecar --output-dir ./data/artifacts/tts-validation
 ```
 
 Use `--json` for benchmark logs or automation. The command uses the direct voice
-profile, probes the configured health URL, synthesizes a short local phrase,
-writes the returned audio file, and exits non-zero if the sidecar is disabled,
-unhealthy, unreachable, or returns empty audio.
+profile, first rejects non-loopback sidecar URLs or synthesis URLs that do not
+expose `/v1/audio/speech`, probes the configured health URL, synthesizes a
+short local phrase, writes the returned audio file, and exits non-zero if the
+sidecar is disabled, unhealthy, unreachable, or returns empty audio.
 
 Piper remains available as a local fallback:
 

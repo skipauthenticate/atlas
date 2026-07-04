@@ -64,6 +64,52 @@ class TTSValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "TTS sidecar provider"):
             validate_tts_sidecar(settings)
 
+    def test_validate_tts_sidecar_rejects_non_loopback_urls_before_network_call(self) -> None:
+        settings = SimpleNamespace(
+            tts_provider="faster-qwen3-tts",
+            tts_model="faster-qwen3-tts-0.6b",
+            tts_base_url="https://api.example.test/v1/audio/speech",
+            tts_health_url="http://127.0.0.1:8008/health",
+        )
+
+        with (
+            patch("atlas_voice.tts_validation.check_tts_sidecar_health") as health_mock,
+            patch("atlas_voice.tts_validation.synthesize_with_tts_sidecar") as synth_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "loopback"):
+                validate_tts_sidecar(settings)
+
+        health_mock.assert_not_called()
+        synth_mock.assert_not_called()
+
+    def test_validate_tts_sidecar_rejects_non_loopback_health_url(self) -> None:
+        settings = SimpleNamespace(
+            tts_provider="faster-qwen3-tts",
+            tts_model="faster-qwen3-tts-0.6b",
+            tts_base_url="http://127.0.0.1:8008/v1/audio/speech",
+            tts_health_url="http://192.0.2.20:8008/health",
+        )
+
+        with patch("atlas_voice.tts_validation.check_tts_sidecar_health") as health_mock:
+            with self.assertRaisesRegex(RuntimeError, "loopback"):
+                validate_tts_sidecar(settings)
+
+        health_mock.assert_not_called()
+
+    def test_validate_tts_sidecar_requires_openai_audio_speech_endpoint(self) -> None:
+        settings = SimpleNamespace(
+            tts_provider="faster-qwen3-tts",
+            tts_model="faster-qwen3-tts-0.6b",
+            tts_base_url="http://127.0.0.1:8008/synthesize",
+            tts_health_url="http://127.0.0.1:8008/health",
+        )
+
+        with patch("atlas_voice.tts_validation.check_tts_sidecar_health") as health_mock:
+            with self.assertRaisesRegex(RuntimeError, "/v1/audio/speech"):
+                validate_tts_sidecar(settings)
+
+        health_mock.assert_not_called()
+
     def test_validate_tts_sidecar_fails_on_unhealthy_sidecar(self) -> None:
         settings = SimpleNamespace(
             tts_provider="faster-qwen3-tts",
