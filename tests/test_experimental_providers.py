@@ -18,6 +18,7 @@ from atlas_voice.providers.diarization import diarize_audio
 from atlas_voice.providers.faster_whisper_provider import transcribe_faster_whisper
 from atlas_voice.providers.hyprwhspr_provider import (
     hyprwhspr_available,
+    hyprwhspr_reliable,
     transcribe_hyprwhspr,
 )
 from atlas_voice.providers.nemo_provider import transcribe_parakeet
@@ -80,6 +81,48 @@ class ExperimentalProviderTests(unittest.TestCase):
             )
 
             self.assertFalse(hyprwhspr_available(provider_settings))
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "faster-whisper")
+
+
+    def test_realtime_asr_uses_hyprwhspr_only_after_cli_reliability_probe(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = root / "hyprwhspr"
+            cli.write_text("#!/bin/sh\nexit 1\n")
+            cli.chmod(0o755)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(cli),
+                hyprwhspr_endpoint=None,
+                realtime_asr_prefer_hyprwhspr=True,
+            )
+
+            self.assertTrue(hyprwhspr_available(provider_settings))
+            self.assertFalse(hyprwhspr_reliable(provider_settings))
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "faster-whisper")
+
+            cli.write_text("#!/bin/sh\nexit 0\n")
+            cli.chmod(0o755)
+
+            self.assertTrue(hyprwhspr_reliable(provider_settings))
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "hyprwhspr")
+
+    def test_realtime_asr_uses_hyprwhspr_socket_after_health_probe(self) -> None:
+        provider_settings = replace(
+            settings(Path("/tmp/atlas-test")),
+            hyprwhspr_endpoint="http://127.0.0.1:9000/transcribe",
+            hyprwhspr_health_url="http://127.0.0.1:9000/health",
+            realtime_asr_prefer_hyprwhspr=True,
+        )
+        healthy_response = types.SimpleNamespace(status_code=200)
+        unhealthy_response = types.SimpleNamespace(status_code=503)
+
+        with mock.patch("httpx.get", return_value=healthy_response):
+            self.assertTrue(hyprwhspr_reliable(provider_settings))
+            self.assertEqual(select_realtime_asr_provider(provider_settings), "hyprwhspr")
+
+        with mock.patch("httpx.get", return_value=unhealthy_response):
+            self.assertFalse(hyprwhspr_reliable(provider_settings))
             self.assertEqual(select_realtime_asr_provider(provider_settings), "faster-whisper")
 
     def test_hyprwhspr_cli_transcription_parses_json_stdout(self) -> None:

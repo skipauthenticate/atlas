@@ -405,8 +405,6 @@ separate runtime concern; this registry is the local policy source.
 
 ## Jetson Operating Notes
 
-
-
 Direct voice uses the built-in `qwen-voice` profile for fast local replies. That
 profile defaults to `qwen2.5-7b-instruct`, `max_tokens=800`, and a
 `warm_optional` load policy so it can be kept warm only when capacity allows.
@@ -423,6 +421,15 @@ settings form, or override `llm_profiles.qwen-deep.model`, `base_url`,
 `temperature`, and `max_tokens` in `config/atlas.assistant.yaml` to match the
 local OpenAI-compatible Qwen 27B server. Realtime direct voice does not inherit
 this deep model unless its own profile explicitly selects it.
+
+
+Hyprwhspr is the primary always-on STT target only after a reliability probe
+passes. For socket mode, set `ATLAS_VOICE_HYPRWHSPR_ENDPOINT` plus
+`ATLAS_VOICE_HYPRWHSPR_HEALTH_URL`; Atlas checks the health URL before putting
+Hyprwhspr first in the realtime ASR chain. For CLI mode, set
+`ATLAS_VOICE_HYPRWHSPR_CLI`; Atlas runs a short `--version` probe before using it
+as primary. If either probe fails, realtime ASR falls back to
+`ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER` and then the configured ASR provider.
 
 Keep the always-on path lightweight. Do not keep Qwen 27B, high-quality ASR,
 diarization, and TTS hot unless memory and swap remain stable. Watch

@@ -71,6 +71,7 @@ class Settings:
     vibevoice_model: str = "microsoft/VibeVoice-ASR"
     vibevoice_max_new_tokens: int = 32768
     hyprwhspr_endpoint: str | None = None
+    hyprwhspr_health_url: str | None = None
     hyprwhspr_cli: str = "hyprwhspr"
     hyprwhspr_timeout: float = 10.0
     realtime_asr_prefer_hyprwhspr: bool = True
@@ -153,6 +154,7 @@ class Settings:
                 os.environ.get("ATLAS_VOICE_VIBEVOICE_MAX_NEW_TOKENS", "32768")
             ),
             hyprwhspr_endpoint=os.environ.get("ATLAS_VOICE_HYPRWHSPR_ENDPOINT") or None,
+            hyprwhspr_health_url=os.environ.get("ATLAS_VOICE_HYPRWHSPR_HEALTH_URL") or None,
             hyprwhspr_cli=os.environ.get("ATLAS_VOICE_HYPRWHSPR_CLI", "hyprwhspr"),
             hyprwhspr_timeout=float(os.environ.get("ATLAS_VOICE_HYPRWHSPR_TIMEOUT", "10")),
             realtime_asr_prefer_hyprwhspr=_bool_from_env(

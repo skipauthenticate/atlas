@@ -81,6 +81,7 @@ class ConfigTests(unittest.TestCase):
                 "ATLAS_VOICE_ASR_PROVIDER=vibevoice\n"
                 "ATLAS_VOICE_ASR_MODEL=microsoft/VibeVoice-ASR\n"
                 "ATLAS_VOICE_DIARIZATION_PROVIDER=transcript\n"
+                "ATLAS_VOICE_HYPRWHSPR_HEALTH_URL=http://127.0.0.1:9000/health\n"
                 "ATLAS_VOICE_NEMO_SOURCE_LANG=en\n"
                 "ATLAS_VOICE_NEMO_TARGET_LANG=fr\n"
                 "ANYTHINGLLM_BASE_URL=http://127.0.0.1:3001/api/v1\n"
@@ -130,6 +131,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.asr_provider, "vibevoice")
         self.assertEqual(settings.asr_model, "microsoft/VibeVoice-ASR")
         self.assertEqual(settings.diarization_provider, "transcript")
+        self.assertEqual(settings.hyprwhspr_health_url, "http://127.0.0.1:9000/health")
         self.assertEqual(settings.nemo_source_lang, "en")
         self.assertEqual(settings.nemo_target_lang, "fr")
         self.assertEqual(settings.anythingllm_base_url, "http://127.0.0.1:3001/api/v1")

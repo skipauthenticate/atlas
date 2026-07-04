@@ -7,7 +7,7 @@ from typing import Any
 from atlas_voice.config import Settings
 from atlas_voice.providers.faster_whisper_provider import transcribe_faster_whisper
 from atlas_voice.providers.hyprwhspr_provider import (
-    hyprwhspr_available,
+    hyprwhspr_reliable,
     transcribe_hyprwhspr,
 )
 from atlas_voice.providers.whisperx_provider import transcribe_audio as transcribe_whisperx
@@ -19,7 +19,7 @@ def realtime_asr_provider_chain(settings: Settings) -> list[str]:
         return ["hyprwhspr"]
 
     providers: list[str] = []
-    if getattr(settings, "realtime_asr_prefer_hyprwhspr", True) and hyprwhspr_available(settings):
+    if getattr(settings, "realtime_asr_prefer_hyprwhspr", True) and hyprwhspr_reliable(settings):
         providers.append("hyprwhspr")
 
     fallback_provider = _normalize_provider(

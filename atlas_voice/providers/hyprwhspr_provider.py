@@ -20,6 +20,13 @@ def hyprwhspr_available(settings: Settings) -> bool:
     return _resolve_cli(_cli(settings)) is not None
 
 
+def hyprwhspr_reliable(settings: Settings) -> bool:
+    endpoint = _endpoint(settings)
+    if endpoint:
+        return _endpoint_reliable(settings, endpoint)
+    return _cli_reliable(settings)
+
+
 def transcribe_hyprwhspr(audio_path: Path, settings: Settings) -> dict[str, Any]:
     endpoint = _endpoint(settings)
     if endpoint:
@@ -110,6 +117,35 @@ def _endpoint(settings: Settings) -> str | None:
     if not endpoint:
         return None
     return str(endpoint).strip().rstrip("/") or None
+
+
+def _endpoint_reliable(settings: Settings, endpoint: str) -> bool:
+    health_url = getattr(settings, "hyprwhspr_health_url", None)
+    url = str(health_url or f"{endpoint}/health").strip()
+    if not url:
+        return False
+    try:
+        response = httpx.get(url, timeout=min(_timeout(settings), 2.0))
+    except Exception:  # noqa: BLE001 - health probes are best-effort gates.
+        return False
+    return 200 <= int(getattr(response, "status_code", 0)) < 400
+
+
+def _cli_reliable(settings: Settings) -> bool:
+    cli = _resolve_cli(_cli(settings))
+    if cli is None:
+        return False
+    try:
+        completed = subprocess.run(
+            [cli, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=min(_timeout(settings), 2.0),
+        )
+    except Exception:  # noqa: BLE001 - health probes are best-effort gates.
+        return False
+    return completed.returncode == 0
 
 
 def _cli(settings: Settings) -> str:

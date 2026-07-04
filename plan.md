@@ -736,7 +736,7 @@ Recommended model roles:
 - [x] Qwen 27B: deep coaching, complex reasoning, weekly reviews, direct hard questions.
 - [x] Smaller local LLM: fast voice replies, classifications, low-stakes routing.
 - [x] Parakeet/Whisper-capable ASR provider abstraction exists.
-- [ ] Hyprwhspr as primary always-on STT if its local socket/CLI is reliable.
+- [x] Hyprwhspr as primary always-on STT if its local socket/CLI is reliable.
 - [ ] faster-qwen3-tts as primary local TTS.
 - [x] Piper as fallback local TTS.
 - [ ] Kokoro/Qwen3-TTS evaluation after the realtime loop works.
@@ -874,7 +874,7 @@ Suggested controls:
 ### Providers
 
 - [x] LLM: existing local llama.cpp/OpenAI-compatible Qwen server.
-- [ ] STT primary target: Hyprwhspr.
+- [x] STT primary target: Hyprwhspr.
 - [x] STT fallback/current: WhisperX/provider abstraction.
 - [x] STT fallback: faster-whisper.
 - [x] TTS primary target: faster-qwen3-tts.
