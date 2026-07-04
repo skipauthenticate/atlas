@@ -733,7 +733,7 @@ Current Qwen 35B server is useful but too heavy to be the always-on brain.
 
 Recommended model roles:
 
-- [ ] Qwen 35B: deep coaching, complex reasoning, weekly reviews, direct hard questions.
+- [x] Qwen 35B: deep coaching, complex reasoning, weekly reviews, direct hard questions.
 - [ ] Smaller local LLM: fast voice replies, classifications, low-stakes routing.
 - [x] Parakeet/Whisper-capable ASR provider abstraction exists.
 - [ ] Hyprwhspr as primary always-on STT if its local socket/CLI is reliable.

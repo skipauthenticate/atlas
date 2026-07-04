@@ -405,6 +405,15 @@ separate runtime concern; this registry is the local policy source.
 
 ## Jetson Operating Notes
 
+
+The reflection profile uses the built-in `qwen-deep` LLM profile for on-demand
+deep reasoning. By default that profile points at `qwen2.5-35b-instruct` and is
+tagged for deep coaching, complex reasoning, weekly reviews, and direct
+questions. Override `llm_profiles.qwen-deep.model`, `base_url`, `temperature`,
+and `max_tokens` in `config/atlas.assistant.yaml` to match the local
+OpenAI-compatible Qwen 35B server. Realtime direct voice does not inherit this
+deep model unless its own profile explicitly selects it.
+
 Keep the always-on path lightweight. Do not keep Qwen 35B, high-quality ASR,
 diarization, and TTS hot unless memory and swap remain stable. Watch
 `/api/assistant/health`, `/api/status`, and `model_runs` latency after each model

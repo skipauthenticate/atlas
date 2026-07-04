@@ -27,6 +27,16 @@ profiles:
     llm_profile: qwen-deep
     schedule: manual
 
+llm_profiles:
+  qwen-deep:
+    provider: openai-compatible
+    model: qwen2.5-35b-instruct
+    base_url: http://127.0.0.1:8080/v1/chat/completions
+    temperature: 0.2
+    max_tokens: 2400
+    load_policy: on_demand
+    roles: [deep_coaching, complex_reasoning, weekly_reviews, direct_questions]
+
 privacy:
   local_only: true
   telemetry: false

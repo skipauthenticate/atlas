@@ -371,6 +371,70 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(ambient.asr_model, "env-model")
         self.assertEqual(direct.tts_provider, "piper")
 
+    def test_qwen_deep_llm_profile_defaults_to_on_demand_roles(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"LLM_MODEL": "qwen-local"}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(root / "missing.yaml")
+
+        profile = config.llm_profiles["qwen-deep"]
+        reflection = settings_for_profile(settings, config, "reflection")
+
+        self.assertEqual(profile["model"], "qwen2.5-35b-instruct")
+        self.assertEqual(profile["load_policy"], "on_demand")
+        self.assertIn("deep_coaching", profile["roles"])
+        self.assertIn("weekly_reviews", profile["roles"])
+        self.assertEqual(settings.llm_model, "qwen-local")
+        self.assertEqual(reflection.llm_model, "qwen2.5-35b-instruct")
+
+    def test_qwen_deep_llm_profile_accepts_local_overrides(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "assistant.yaml"
+            path.write_text(
+                "profiles:\n"
+                "  reflection:\n"
+                "    llm_profile: qwen-deep\n"
+                "llm_profiles:\n"
+                "  qwen-deep:\n"
+                "    model: local-qwen-35b\n"
+                "    base_url: http://127.0.0.1:8088/v1/chat/completions\n"
+                "    temperature: 0.35\n"
+                "    max_tokens: 4096\n"
+                "    load_policy: on_demand\n"
+                "    roles: [deep_coaching, complex_reasoning, weekly_reviews]\n"
+            )
+            env = {
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(path),
+                "LLM_MODEL": "qwen-local",
+                "LLM_BASE_URL": "http://127.0.0.1:8080/v1/chat/completions",
+                "LLM_TEMPERATURE": "0.2",
+                "LLM_MAX_TOKENS": "1200",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(settings.assistant_config_path)
+
+        reflection = settings_for_profile(settings, config, "reflection")
+        direct = settings_for_profile(settings, config, "direct_voice")
+
+        self.assertEqual(reflection.llm_model, "local-qwen-35b")
+        self.assertEqual(reflection.llm_base_url, "http://127.0.0.1:8088/v1/chat/completions")
+        self.assertEqual(reflection.llm_temperature, 0.35)
+        self.assertEqual(reflection.llm_max_tokens, 4096)
+        self.assertEqual(direct.llm_model, "qwen-local")
+
 
 if __name__ == "__main__":
     unittest.main()

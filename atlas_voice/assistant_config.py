@@ -36,6 +36,19 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
             "schedule": "manual",
         },
     },
+    "llm_profiles": {
+        "qwen-deep": {
+            "provider": "openai-compatible",
+            "model": "qwen2.5-35b-instruct",
+            "load_policy": "on_demand",
+            "roles": [
+                "deep_coaching",
+                "complex_reasoning",
+                "weekly_reviews",
+                "direct_questions",
+            ],
+        },
+    },
     "privacy": {
         "local_only": True,
         "telemetry": False,
@@ -67,6 +80,17 @@ class AssistantConfig:
     def privacy(self) -> dict[str, Any]:
         privacy = self.raw.get("privacy")
         return dict(privacy) if isinstance(privacy, dict) else {}
+
+    @property
+    def llm_profiles(self) -> dict[str, dict[str, Any]]:
+        profiles = self.raw.get("llm_profiles")
+        if isinstance(profiles, dict):
+            return {
+                str(name): dict(value)
+                for name, value in profiles.items()
+                if isinstance(value, dict)
+            }
+        return {}
 
     def enabled_profiles(self) -> list[str]:
         return [

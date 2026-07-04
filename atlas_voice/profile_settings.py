@@ -72,11 +72,15 @@ def settings_for_profile(
     profile_name: str,
 ) -> Settings:
     overrides = assistant_config.profile_overrides(profile_name)
-    if not overrides:
-        return settings
 
     valid_settings = {field.name for field in fields(Settings)}
     updates: dict[str, Any] = {}
+    _apply_llm_profile_updates(
+        updates,
+        settings,
+        assistant_config,
+        _llm_profile_name(assistant_config, profile_name, overrides),
+    )
     for profile_key, value in overrides.items():
         setting_name = PROFILE_SETTING_KEYS.get(str(profile_key))
         if setting_name not in valid_settings:
@@ -86,6 +90,44 @@ def settings_for_profile(
         )
 
     return replace(settings, **updates) if updates else settings
+
+
+def _llm_profile_name(
+    assistant_config: AssistantConfig,
+    profile_name: str,
+    overrides: dict[str, Any],
+) -> str | None:
+    if "llm_profile" in overrides:
+        value = overrides.get("llm_profile")
+    elif profile_name == "reflection":
+        value = assistant_config.profiles.get(profile_name, {}).get("llm_profile")
+    else:
+        value = None
+    return str(value).strip() if value else None
+
+
+def _apply_llm_profile_updates(
+    updates: dict[str, Any],
+    settings: Settings,
+    assistant_config: AssistantConfig,
+    profile_name: str | None,
+) -> None:
+    if not profile_name:
+        return
+    profile = assistant_config.llm_profiles.get(profile_name)
+    if not profile:
+        return
+    mapping = {
+        "model": "llm_model",
+        "base_url": "llm_base_url",
+        "temperature": "llm_temperature",
+        "max_tokens": "llm_max_tokens",
+    }
+    for profile_key, setting_name in mapping.items():
+        if profile_key in profile:
+            updates[setting_name] = _coerce_profile_value(
+                setting_name, profile[profile_key], getattr(settings, setting_name)
+            )
 
 
 def _coerce_profile_value(setting_name: str, value: Any, current: Any) -> Any:
