@@ -554,6 +554,7 @@ class WebTests(unittest.TestCase):
                         "question_ratio": 0.25,
                         "open_question_ratio": 0.5,
                         "affirmation_ratio": 0.4,
+                        "reflection_ratio": 0.3,
                         "follow_through": 0.5,
                     }
                 },
@@ -601,6 +602,10 @@ class WebTests(unittest.TestCase):
                 {"label": "Affirmations", "value": 0.4, "display": "40%"},
                 payload["headline_metrics"],
             )
+            self.assertIn(
+                {"label": "Reflections", "value": 0.3, "display": "30%"},
+                payload["headline_metrics"],
+            )
             self.assertEqual(payload["categories"]["conversation_signals"], 1)
             self.assertEqual(payload["categories"]["writing_signals"], 1)
             self.assertEqual(voice_response.status_code, 200)
@@ -609,9 +614,11 @@ class WebTests(unittest.TestCase):
             self.assertIn("Clarity", voice_response.text)
             self.assertIn("Open questions", voice_response.text)
             self.assertIn("Affirmations", voice_response.text)
+            self.assertIn("Reflections", voice_response.text)
             self.assertIn("82%", voice_response.text)
             self.assertIn("50%", voice_response.text)
             self.assertIn("40%", voice_response.text)
+            self.assertIn("30%", voice_response.text)
             self.assertIn("Conversation Signals - Coaching progress session", voice_response.text)
             self.assertIn("Writing Signals - Launch note", voice_response.text)
 
