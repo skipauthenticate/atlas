@@ -758,7 +758,9 @@ class Database:
         *,
         status: str | None = None,
         mode: str | None = None,
+        query: str | None = None,
     ) -> list[dict[str, Any]]:
+        search_query = query
         query = """
             SELECT
                 s.*,
@@ -776,6 +778,22 @@ class Database:
         if mode:
             filters.append("s.mode = ?")
             params.append(mode)
+        cleaned_query = (search_query or "").strip().lower()
+        if cleaned_query:
+            pattern = f"%{cleaned_query}%"
+            filters.append(
+                "("
+                "lower(COALESCE(s.title, '')) LIKE ? OR "
+                "lower(COALESCE(s.source, '')) LIKE ? OR "
+                "EXISTS (SELECT 1 FROM utterances u "
+                "WHERE u.session_id = s.id "
+                "AND (lower(COALESCE(u.text, '')) LIKE ? "
+                "OR lower(COALESCE(u.speaker, '')) LIKE ?)) OR "
+                "EXISTS (SELECT 1 FROM assistant_turns t "
+                "WHERE t.session_id = s.id AND lower(COALESCE(t.text, '')) LIKE ?)"
+                ")"
+            )
+            params.extend([pattern, pattern, pattern, pattern, pattern])
         if filters:
             query += " WHERE " + " AND ".join(filters)
         query += " GROUP BY s.id ORDER BY s.started_at DESC LIMIT ?"
@@ -897,6 +915,9 @@ class Database:
             "assistant_turn_count": assistant_turn_count,
             "session_ids": unique_ids,
         }
+
+    def delete_ambient_session(self, session_id: str) -> dict[str, Any]:
+        return self.purge_privacy_sessions([session_id])
 
     def create_ambient_session(
         self,

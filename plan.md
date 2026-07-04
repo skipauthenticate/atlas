@@ -902,7 +902,7 @@ Suggested controls:
 - [x] TTS sidecar client.
 - [x] WebSocket session flow.
 - [x] Ambient insert/list.
-- [ ] Ambient search/delete.
+- [x] Ambient search/delete.
 - [x] Privacy purge.
 - [ ] Browser mic streaming.
 - [x] Voice UI transport controls.

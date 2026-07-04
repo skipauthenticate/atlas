@@ -151,6 +151,51 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(direct_sessions[0]["utterance_count"], 1)
         self.assertEqual({session["id"] for session in all_sessions}, {ambient_id, direct_id})
 
+    def test_ambient_sessions_can_be_searched_and_deleted(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            keep_id = db.create_ambient_session(
+                mode="ambient",
+                source="mic",
+                title="Kitchen planning",
+            )
+            delete_id = db.create_ambient_session(
+                mode="meeting",
+                source="file",
+                title="Launch review",
+            )
+            keep_utterance = db.add_utterance(
+                session_id=keep_id,
+                text="Discuss groceries and dinner",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=delete_id,
+                text="The launch blocker is fixed",
+                source_provider="text",
+            )
+            db.add_assistant_turn(
+                session_id=delete_id,
+                user_utterance_id=keep_utterance,
+                text="Review launch checklist",
+                model="qwen-local",
+            )
+            db.end_ambient_session(keep_id)
+            db.end_ambient_session(delete_id)
+
+            title_matches = db.list_ambient_sessions(query="kitchen")
+            text_matches = db.list_ambient_sessions(query="blocker")
+            result = db.delete_ambient_session(delete_id)
+
+            self.assertEqual([session["id"] for session in title_matches], [keep_id])
+            self.assertEqual([session["id"] for session in text_matches], [delete_id])
+            self.assertEqual(result["session_count"], 1)
+            self.assertEqual(result["utterance_count"], 1)
+            self.assertEqual(result["assistant_turn_count"], 1)
+            self.assertIsNone(db.get_ambient_session(delete_id))
+            self.assertIsNotNone(db.get_ambient_session(keep_id))
+
     def test_privacy_purge_finds_and_deletes_matching_sessions(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

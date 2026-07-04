@@ -250,7 +250,16 @@ Ambient mode stores sessions in `ambient_sessions` and transcripts in
 `utterances`. When the ASR provider returns speaker-aware segments or
 diarization turns, the best available speaker label is stored on the utterance
 as `speaker`; providers without speaker metadata keep the default user label.
-Raw audio is deleted after
+Search and delete ambient sessions through the local API:
+
+```bash
+curl 'http://127.0.0.1:8787/api/ambient/sessions?q=launch'
+curl -X DELETE 'http://127.0.0.1:8787/api/ambient/sessions/<session_id>'
+```
+
+The delete endpoint removes the session with cascaded utterances and assistant
+turns, removes retained ambient artifacts when present, and logs an
+`ambient.delete` privacy event. Raw audio is deleted after
 transcription unless
 `ATLAS_VOICE_AMBIENT_RETAIN_AUDIO=true`, `--retain-audio`, or a positive
 `ATLAS_VOICE_AMBIENT_RAW_AUDIO_RETENTION_DAYS` value is set. Transcript

@@ -1632,6 +1632,22 @@ def _updated_realtime_instructions(event: dict[str, Any], current: str) -> str:
     return current
 
 
+def _purge_ambient_artifacts(session_ids: list[str]) -> int:
+    count = 0
+    ambient_dir = (settings.artifacts_dir / "ambient").resolve()
+    for session_id in dict.fromkeys(session_ids):
+        artifact_dir = (ambient_dir / session_id).resolve()
+        try:
+            artifact_dir.relative_to(ambient_dir)
+        except ValueError:
+            continue
+        if not artifact_dir.exists():
+            continue
+        shutil.rmtree(artifact_dir)
+        count += 1
+    return count
+
+
 def _realtime_tts_provider(current_settings: Settings | None = None) -> str:
     current_settings = current_settings or _direct_voice_settings()
     return normalize_tts_provider(current_settings.tts_provider)
@@ -1720,9 +1736,50 @@ def api_assistant_privacy() -> JSONResponse:
 
 
 @app.get("/api/ambient/sessions")
-def api_ambient_sessions(limit: int = 20) -> JSONResponse:
+def api_ambient_sessions(
+    limit: int = 20,
+    q: str | None = None,
+    mode: str | None = None,
+    status: str | None = None,
+) -> JSONResponse:
     safe_limit = min(max(limit, 1), 100)
-    return JSONResponse({"sessions": db.list_ambient_sessions(safe_limit)})
+    query = (q or "").strip() or None
+    normalized_mode = mode.strip().lower() if mode else None
+    normalized_status = status.strip().lower() if status else None
+    return JSONResponse(
+        {
+            "sessions": db.list_ambient_sessions(
+                safe_limit,
+                mode=normalized_mode,
+                status=normalized_status,
+                query=query,
+            ),
+            "limit": safe_limit,
+            "query": query,
+            "mode": normalized_mode,
+            "status": normalized_status,
+        }
+    )
+
+
+@app.delete("/api/ambient/sessions/{session_id}")
+def api_delete_ambient_session(session_id: str) -> JSONResponse:
+    result = db.delete_ambient_session(session_id)
+    if result["session_count"] == 0:
+        raise HTTPException(status_code=404, detail="Ambient session not found")
+    artifact_count = _purge_ambient_artifacts([session_id])
+    db.log_privacy_event(
+        "ambient.delete",
+        f"Deleted ambient session {session_id}.",
+        severity="info",
+        metadata={
+            "session_id": session_id,
+            "utterance_count": result["utterance_count"],
+            "assistant_turn_count": result["assistant_turn_count"],
+            "artifact_count": artifact_count,
+        },
+    )
+    return JSONResponse({**result, "artifact_count": artifact_count})
 
 
 # ---------------------------------------------------------------------------

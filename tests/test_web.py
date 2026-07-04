@@ -1192,6 +1192,84 @@ class WebTests(unittest.TestCase):
                 {ambient_id, direct_id},
             )
 
+    def test_ambient_sessions_api_can_search_and_delete_sessions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            matching_id = web_app.db.create_ambient_session(
+                mode="ambient",
+                source="mic",
+                title="Launch notes",
+            )
+            other_id = web_app.db.create_ambient_session(
+                mode="ambient",
+                source="mic",
+                title="Kitchen notes",
+            )
+            web_app.db.add_utterance(
+                session_id=matching_id,
+                text="Launch blocker is resolved",
+                source_provider="text",
+            )
+            web_app.db.add_utterance(
+                session_id=other_id,
+                text="Dinner planning",
+                source_provider="text",
+            )
+            web_app.db.end_ambient_session(matching_id)
+            web_app.db.end_ambient_session(other_id)
+            client = TestClient(web_app.app)
+
+            search = client.get("/api/ambient/sessions", params={"q": "blocker"})
+            deleted = client.delete(f"/api/ambient/sessions/{matching_id}")
+            remaining = client.get("/api/ambient/sessions")
+
+            self.assertEqual(search.status_code, 200)
+            self.assertEqual([session["id"] for session in search.json()["sessions"]], [matching_id])
+            self.assertEqual(search.json()["query"], "blocker")
+            self.assertEqual(deleted.status_code, 200)
+            self.assertEqual(deleted.json()["session_count"], 1)
+            self.assertEqual(deleted.json()["utterance_count"], 1)
+            self.assertIsNone(web_app.db.get_ambient_session(matching_id))
+            self.assertEqual([session["id"] for session in remaining.json()["sessions"]], [other_id])
+            self.assertEqual(web_app.db.list_privacy_events()[0]["event_type"], "ambient.delete")
+
+    def test_ambient_sessions_delete_returns_404_for_missing_session(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.delete("/api/ambient/sessions/missing")
+
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"], "Ambient session not found")
+
     def test_realtime_websocket_requires_assistant_enabled(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
