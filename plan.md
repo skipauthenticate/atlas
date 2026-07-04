@@ -771,7 +771,7 @@ Use Motivational Interviewing as the conversation-quality backbone:
 
 Measure observable behaviors:
 
-- [ ] Talk/listen ratio.
+- [x] Talk/listen ratio.
 - [ ] Question ratio.
 - [ ] Reflection ratio.
 - [ ] Interruptions/overlap.

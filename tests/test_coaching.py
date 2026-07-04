@@ -199,12 +199,21 @@ class CoachingSummaryTests(unittest.TestCase):
                 text="Need owner for demo.",
                 source_provider="text",
             )
+            db.add_assistant_turn(
+                session_id=session_id,
+                text="You could choose the smallest launch test, then pause and decide what still feels useful.",
+                model="qwen-local",
+            )
 
             dry_run = track_conversation_signals(db, session_id, dry_run=True)
 
             self.assertEqual(dry_run.status, "ok")
             self.assertIsNone(dry_run.event_id)
             self.assertEqual(dry_run.metrics["utterance_count"], 11)
+            self.assertEqual(dry_run.metrics["assistant_turn_count"], 1)
+            self.assertEqual(dry_run.metrics["user_word_count"], 95)
+            self.assertEqual(dry_run.metrics["assistant_word_count"], 15)
+            self.assertEqual(dry_run.metrics["talk_listen_ratio"], 0.158)
             self.assertEqual(dry_run.metrics["question_count"], 2)
             self.assertEqual(dry_run.metrics["open_question_count"], 1)
             self.assertEqual(dry_run.metrics["closed_question_count"], 1)
@@ -236,6 +245,9 @@ class CoachingSummaryTests(unittest.TestCase):
             self.assertEqual(events[0]["session_id"], session_id)
             self.assertEqual(events[0]["metadata"]["signals"]["question_ratio"], stored.metrics["question_ratio"])
             self.assertEqual(events[0]["metadata"]["signals"]["open_question_count"], 1)
+            self.assertEqual(events[0]["metadata"]["signals"]["user_word_count"], 95)
+            self.assertEqual(events[0]["metadata"]["signals"]["assistant_word_count"], 15)
+            self.assertEqual(events[0]["metadata"]["signals"]["talk_listen_ratio"], 0.158)
             self.assertEqual(events[0]["metadata"]["signals"]["affirmation_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["reflection_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["summary_count"], 1)
@@ -244,6 +256,7 @@ class CoachingSummaryTests(unittest.TestCase):
             self.assertEqual(events[0]["metadata"]["signals"]["autonomy_respecting_suggestion_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["directive_suggestion_count"], 1)
             self.assertIn("Open questions: 1/2", events[0]["message"])
+            self.assertIn("Talk/listen ratio: 15/95 (0.158)", events[0]["message"])
             self.assertIn("Affirmations: 1", events[0]["message"])
             self.assertIn("Reflections: 1", events[0]["message"])
             self.assertIn("Summaries: 1", events[0]["message"])

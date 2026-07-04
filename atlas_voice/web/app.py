@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import math
 import os
 import shutil
 import subprocess
@@ -532,6 +533,7 @@ def _coaching_progress_view(limit: int = 100) -> dict[str, Any]:
         _coaching_metric_view("Clarity", averages.get("clarity")),
         _coaching_metric_view("Concision", averages.get("concision")),
         _coaching_metric_view("Question ratio", averages.get("question_ratio")),
+        _coaching_metric_view("Talk/listen ratio", averages.get("talk_listen_ratio")),
         _coaching_metric_view("Open questions", averages.get("open_question_ratio")),
         _coaching_metric_view("Affirmations", averages.get("affirmation_ratio")),
         _coaching_metric_view("Reflections", averages.get("reflection_ratio")),
@@ -559,8 +561,12 @@ def _feedback_signal_metrics(event: dict[str, Any]) -> dict[str, float]:
             number = float(value)
         except (TypeError, ValueError):
             continue
-        if 0.0 <= number <= 1.0:
-            metrics[str(key)] = number
+        metric_key = str(key)
+        if metric_key == "talk_listen_ratio":
+            if math.isfinite(number) and number >= 0.0:
+                metrics[metric_key] = number
+        elif 0.0 <= number <= 1.0:
+            metrics[metric_key] = number
     score = event.get("score")
     if "score" not in metrics and score is not None:
         try:
@@ -598,8 +604,14 @@ def _coaching_metric_view(label: str, value: float | None) -> dict[str, Any]:
     return {
         "label": label,
         "value": value,
-        "display": _percent_label(value),
+        "display": _ratio_label(value) if label == "Talk/listen ratio" else _percent_label(value),
     }
+
+
+def _ratio_label(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.2f}:1"
 
 
 def _percent_label(value: float | None) -> str:
@@ -609,6 +621,8 @@ def _percent_label(value: float | None) -> str:
 
 
 def _metric_title(value: str) -> str:
+    if value == "talk_listen_ratio":
+        return "Talk/listen ratio"
     return value.replace("_", " ").strip().title()
 
 

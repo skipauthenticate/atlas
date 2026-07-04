@@ -383,12 +383,13 @@ atlas-voice coaching signals --session <session_id> --yes
 ```
 
 Confirmed runs store one idempotent `coaching.conversation_signals` feedback event
-per session with clarity, concision, question ratio, open-question count and
-ratio, affirmation count and ratio, reflection count and ratio, summary count
-and ratio, change-talk and sustain-talk counts and ratios, autonomy-respecting
-and directive suggestion counts, autonomy-support ratio, follow-through,
-commitment, interruption, and actionable-next-step metrics derived locally from
-utterance text.
+per session with clarity, concision, user and assistant word counts,
+talk/listen ratio, question ratio, open-question count and ratio, affirmation
+count and ratio, reflection count and ratio, summary count and ratio, change-talk
+and sustain-talk counts and ratios, autonomy-respecting and directive suggestion
+counts, autonomy-support ratio, follow-through, commitment, interruption, and
+actionable-next-step metrics derived locally from utterance and assistant turn
+text.
 
 Track local writing signals from pasted text or a UTF-8 text file with:
 
@@ -411,11 +412,12 @@ curl http://127.0.0.1:8787/api/coaching/progress
 ```
 
 The `/voice` Coaching panel shows a local progress dashboard with average
-clarity, concision, question ratio, open-question ratio, affirmation ratio,
-reflection ratio, summary ratio, change-talk ratio, sustain-talk ratio,
-autonomy-support ratio, ask/action clarity, and recent coaching events derived
-from stored feedback events. The API is bounded to recent events and does not
-trigger model work.
+clarity, concision, talk/listen ratio, question ratio, open-question ratio,
+affirmation ratio, reflection ratio, summary ratio, change-talk ratio,
+sustain-talk ratio, autonomy-support ratio, ask/action clarity, and recent
+coaching events derived from stored feedback events. Talk/listen ratio is shown
+as assistant words to user words, for example `0.42:1`. The API is bounded to
+recent events and does not trigger model work.
 
 Manage coaching goals in the Voice inspector or as JSON:
 

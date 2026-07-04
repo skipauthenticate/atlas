@@ -365,12 +365,18 @@ def _conversation_signal_metrics(
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
     word_counts = [_word_count(str(item.get("text") or "")) for item in utterances]
-    avg_words = sum(word_counts) / utterance_count if utterance_count else 0.0
+    user_word_count = sum(word_counts)
+    assistant_word_count = sum(_word_count(str(item.get("text") or "")) for item in turns)
+    talk_listen_ratio = round(assistant_word_count / user_word_count, 3) if user_word_count else None
+    avg_words = user_word_count / utterance_count if utterance_count else 0.0
     concise_utterances = sum(1 for count in word_counts if 0 < count <= 24)
     clear_utterances = sum(1 for item in utterances if _is_clear_text(str(item.get("text") or "")))
     return {
         "utterance_count": utterance_count,
         "assistant_turn_count": len(turns),
+        "user_word_count": user_word_count,
+        "assistant_word_count": assistant_word_count,
+        "talk_listen_ratio": talk_listen_ratio,
         "question_count": question_count,
         "question_ratio": round(question_count / utterance_count, 3) if utterance_count else 0.0,
         "open_question_count": open_question_count,
@@ -412,6 +418,7 @@ def _conversation_signal_message(
         f"Concision: {metrics['concision']}",
         f"Question ratio: {metrics['question_ratio']}",
         f"Open questions: {metrics['open_question_count']}/{metrics['question_count']}",
+        _talk_listen_message(metrics),
         f"Affirmations: {metrics['affirmation_count']}",
         f"Reflections: {metrics['reflection_count']}",
         f"Summaries: {metrics['summary_count']}",
@@ -428,6 +435,16 @@ def _conversation_signal_message(
     else:
         lines.append("Interruptions: unavailable")
     return "\n".join(lines)
+
+
+def _talk_listen_message(metrics: dict[str, float | int | None]) -> str:
+    ratio = metrics.get("talk_listen_ratio")
+    if ratio is None:
+        return "Talk/listen ratio: unavailable"
+    return (
+        f"Talk/listen ratio: {metrics['assistant_word_count']}/"
+        f"{metrics['user_word_count']} ({ratio})"
+    )
 
 
 def _writing_signal_metrics(text: str) -> dict[str, float | int]:
