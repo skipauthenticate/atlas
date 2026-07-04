@@ -542,6 +542,7 @@ def _coaching_progress_view(limit: int = 100) -> dict[str, Any]:
         _coaching_metric_view("Sustain talk", averages.get("sustain_talk_ratio")),
         _coaching_metric_view("Autonomy support", averages.get("autonomy_support_ratio")),
         _coaching_metric_view("Interruptions/overlap", averages.get("interruption_overlap_ratio")),
+        _coaching_metric_view("Hedging", averages.get("hedging_ratio")),
         _coaching_metric_view("Ask/action clarity", averages.get("ask_action_clarity")),
     ]
     return {

@@ -775,7 +775,7 @@ Measure observable behaviors:
 - [x] Question ratio.
 - [x] Reflection ratio.
 - [x] Interruptions/overlap.
-- [ ] Hedging.
+- [x] Hedging.
 - [ ] Specificity of commitments.
 - [ ] Emotional labeling.
 - [ ] Repair attempts after tension.

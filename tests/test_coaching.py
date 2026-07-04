@@ -303,6 +303,50 @@ class CoachingSummaryTests(unittest.TestCase):
             self.assertIn("Directive suggestions: 1", events[0]["message"])
             self.assertIn("Conversation Signals", events[0]["message"])
 
+    def test_tracks_conversation_hedging_signals(self) -> None:
+        with TemporaryDirectory() as tmp:
+            db = Database(Path(tmp) / "db.sqlite")
+            db.initialize()
+            session_id = _session(db, "direct_voice", "Hedging session", "2026-07-08T11:00:00+00:00")
+            db.add_utterance(
+                session_id=session_id,
+                text="Maybe the launch date is still uncertain.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="I think the rollout might need a backup owner.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="Alice owns the launch note by Friday.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="We will decide after the review.",
+                source_provider="text",
+            )
+
+            dry_run = track_conversation_signals(db, session_id, dry_run=True)
+
+            self.assertEqual(dry_run.status, "ok")
+            self.assertEqual(dry_run.metrics["utterance_count"], 4)
+            self.assertEqual(dry_run.metrics["hedging_count"], 3)
+            self.assertEqual(dry_run.metrics["hedged_utterance_count"], 2)
+            self.assertEqual(dry_run.metrics["hedging_ratio"], 0.5)
+
+            stored = track_conversation_signals(db, session_id, dry_run=False)
+            events = db.list_feedback_events(category="conversation_signals")
+
+            self.assertEqual(stored.event_id, events[0]["id"])
+            self.assertEqual(events[0]["metadata"]["signals"]["hedging_count"], 3)
+            self.assertEqual(events[0]["metadata"]["signals"]["hedged_utterance_count"], 2)
+            self.assertEqual(events[0]["metadata"]["signals"]["hedging_ratio"], 0.5)
+            self.assertIn("Hedging: 3", events[0]["message"])
+            self.assertIn("Hedging ratio: 0.5", events[0]["message"])
+
     def test_conversation_signals_are_idempotent_per_session(self) -> None:
         with TemporaryDirectory() as tmp:
             db = Database(Path(tmp) / "db.sqlite")

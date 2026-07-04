@@ -366,6 +366,8 @@ def _conversation_signal_metrics(
     interruption_count = _interruption_count(utterances)
     overlap_count = _overlap_count(utterances)
     interruption_overlap_count = interruption_count + overlap_count
+    hedging_count = _hedging_count(utterances)
+    hedged_utterance_count = _hedged_utterance_count(utterances)
     word_counts = [_word_count(str(item.get("text") or "")) for item in utterances]
     user_word_count = sum(word_counts)
     assistant_word_count = sum(_word_count(str(item.get("text") or "")) for item in turns)
@@ -405,6 +407,9 @@ def _conversation_signal_metrics(
         "overlap_count": overlap_count if overlap_count else None,
         "interruption_overlap_count": interruption_overlap_count if interruption_overlap_count else None,
         "interruption_overlap_ratio": round(interruption_overlap_count / utterance_count, 3) if utterance_count else 0.0,
+        "hedging_count": hedging_count,
+        "hedged_utterance_count": hedged_utterance_count,
+        "hedging_ratio": round(hedged_utterance_count / utterance_count, 3) if utterance_count else 0.0,
         "concision": round(concise_utterances / utterance_count, 3) if utterance_count else 0.0,
         "clarity": round(clear_utterances / utterance_count, 3) if utterance_count else 0.0,
         "average_words": round(avg_words, 1),
@@ -435,6 +440,8 @@ def _conversation_signal_message(
         f"Follow-through: {metrics['follow_through']}",
         f"Commitments: {metrics['commitment_count']}",
         f"Actionable next steps: {metrics['actionable_next_steps']}",
+        f"Hedging: {metrics['hedging_count']}",
+        f"Hedging ratio: {metrics['hedging_ratio']}",
     ]
     if metrics.get("interruption_count") is not None:
         lines.append(f"Interruptions: {metrics['interruption_count']}")
@@ -800,6 +807,18 @@ def _commitment_count(utterances: list[dict[str, Any]]) -> int:
 def _actionable_next_step_count(utterances: list[dict[str, Any]]) -> int:
     pattern = re.compile(r"\b(next step|follow up|send|schedule|document|owner|tomorrow|by \w+)\b", re.I)
     return sum(1 for item in utterances if pattern.search(str(item.get("text") or "")))
+
+
+def _hedging_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(_hedge_count(str(item.get("text") or "")) for item in utterances)
+
+
+def _hedged_utterance_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _hedge_count(str(item.get("text") or "")))
+
+
+def _hedge_count(text: str) -> int:
+    return _pattern_count(text, r"\b(maybe|perhaps|possibly|kind of|sort of|i think|i guess|might)\b")
 
 
 def _interruption_count(utterances: list[dict[str, Any]]) -> int:
