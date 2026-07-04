@@ -40,6 +40,22 @@ class VoiceUiStaticTests(unittest.TestCase):
         )
         self.assertIn("max-width: 100%", workbench)
 
+    def test_voice_transport_and_status_text_have_stable_readable_bounds(self) -> None:
+        css = Path("atlas_voice/web/static/app.css").read_text()
+        transport_button = self._css_block(css, ".voice-transport button")
+        playback_status = self._css_block(css, ".voice-playback-status")
+        privacy_state = self._css_block(css, ".privacy-state,\n.service-state")
+
+        self.assertIn("min-height: 38px", transport_button)
+        self.assertIn("min-width: 88px", transport_button)
+        self.assertIn("white-space: nowrap", transport_button)
+        self.assertIn("max-width: 100%", playback_status)
+        self.assertIn("overflow: hidden", playback_status)
+        self.assertIn("text-overflow: ellipsis", playback_status)
+        self.assertIn("display: inline-flex", privacy_state)
+        self.assertIn("min-width: 54px", privacy_state)
+        self.assertIn("justify-content: center", privacy_state)
+
     def test_voice_workbench_tablet_and_mobile_layouts_prevent_overflow(self) -> None:
         css = Path("atlas_voice/web/static/app.css").read_text()
         tablet = self._media_block(css, "(max-width: 980px)")

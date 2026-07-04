@@ -199,7 +199,17 @@ button:disabled {
 
 .privacy-state,
 .service-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 54px;
+  max-width: 100%;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #f3f7f6;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .privacy-ok,
@@ -1314,6 +1324,13 @@ code {
   font-size: 14px;
 }
 
+.voice-transport button {
+  flex: 0 0 auto;
+  min-width: 88px;
+  min-height: 38px;
+  white-space: nowrap;
+}
+
 .voice-transport label {
   display: flex;
   align-items: center;
@@ -1330,9 +1347,12 @@ code {
 }
 
 .voice-playback-status {
+  max-width: 100%;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

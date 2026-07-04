@@ -220,8 +220,9 @@ meeting, private, and paused sessions with their latest utterance preview. The
 workbench keeps card framing restrained to repeated row items such as sessions,
 models, and timeline entries; playground sections remain unframed inside the main
 work surface. The desktop/tablet/mobile layout is covered by static QA checks
-for bounded workbench columns, stacked narrow-screen controls, readable transport
-controls, and reduced mobile waveform density. Realtime VAD/end-of-turn behavior
+for bounded workbench columns, stacked narrow-screen controls, fixed-size
+transport buttons, bounded playback/status text, clear privacy/service state
+pills, and reduced mobile waveform density. Realtime VAD/end-of-turn behavior
 and local tool execution are still tracked separately in `plan.md`.
 
 ## Phase 6: Ambient Listener MVP

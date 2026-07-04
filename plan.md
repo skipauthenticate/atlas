@@ -922,8 +922,8 @@ Suggested controls:
 
 ### UI Checks
 
-- [ ] Desktop width: no overlap, readable controls, working transport, clear privacy state.
-- [ ] Mobile width: no overlap, readable controls, working transport, clear privacy state.
+- [x] Desktop width: no overlap, readable controls, working transport, clear privacy state.
+- [x] Mobile width: no overlap, readable controls, working transport, clear privacy state.
 - [ ] Voice workbench follows ElevenLabs-inspired structure without copying branding, assets, or exact layouts.
 
 ## Assumptions
