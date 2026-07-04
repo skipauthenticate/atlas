@@ -30,7 +30,7 @@ from .database import Database
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
 from .privacy import privacy_summary
-from .profile_settings import settings_for_profile
+from .profile_settings import settings_for_pipeline, settings_for_profile
 from .memory import (
     MemoryExtractionResult,
     extract_memories_from_ambient_session,
@@ -862,7 +862,7 @@ def cmd_benchmark_asr(args: argparse.Namespace) -> int:
 def cmd_worker(_args: argparse.Namespace) -> int:
     settings, db = settings_and_db()
     assistant_config = load_assistant_config(settings.assistant_config_path)
-    settings = settings_for_profile(settings, assistant_config, "reflection")
+    settings = settings_for_pipeline(settings, assistant_config)
     Worker(settings, db).run_forever()
     return 0
 

@@ -8,7 +8,7 @@ from atlas_voice.assistant_config import load_assistant_config
 from atlas_voice.prompts import PromptRegistryError, load_prompt_registry
 from atlas_voice.tools import ToolRegistryError, load_tool_registry
 from atlas_voice.config import Settings
-from atlas_voice.profile_settings import settings_for_profile
+from atlas_voice.profile_settings import settings_for_pipeline, settings_for_profile
 
 
 class ConfigTests(unittest.TestCase):
@@ -440,6 +440,63 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("weekly_reviews", profile["roles"])
         self.assertEqual(settings.llm_model, "qwen-local")
         self.assertEqual(reflection.llm_model, "qwen-27b-instruct")
+
+    def test_summarization_profile_defaults_to_qwen_27b_on_demand(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"LLM_MODEL": "qwen-local"}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(root / "missing.yaml")
+
+        profile = config.llm_profiles["qwen-summary"]
+        summarization = settings_for_profile(settings, config, "summarization")
+
+        self.assertEqual(config.profiles["summarization"]["llm_profile"], "qwen-summary")
+        self.assertEqual(profile["model"], "qwen-27b-instruct")
+        self.assertEqual(profile["load_policy"], "on_demand")
+        self.assertIn("recording_summarization", profile["roles"])
+        self.assertEqual(settings.llm_model, "qwen-local")
+        self.assertEqual(summarization.llm_model, "qwen-27b-instruct")
+
+    def test_pipeline_settings_combine_reflection_audio_and_summary_llm(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "assistant.yaml"
+            path.write_text(
+                "profiles:\n"
+                "  reflection:\n"
+                "    asr_provider: canary\n"
+                "    diarization_provider: none\n"
+                "  summarization:\n"
+                "    llm_profile: qwen-summary\n"
+                "llm_profiles:\n"
+                "  qwen-summary:\n"
+                "    model: local-qwen-27b\n"
+            )
+            env = {
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(path),
+                "ATLAS_VOICE_ASR_PROVIDER": "whisperx",
+                "LLM_MODEL": "qwen-local",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(settings.assistant_config_path)
+
+        pipeline = settings_for_pipeline(settings, config)
+
+        self.assertEqual(pipeline.asr_provider, "canary")
+        self.assertEqual(pipeline.diarization_provider, "none")
+        self.assertEqual(pipeline.llm_model, "local-qwen-27b")
 
     def test_qwen_deep_llm_profile_accepts_local_overrides(self) -> None:
         with TemporaryDirectory() as tmp:

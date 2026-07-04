@@ -2149,7 +2149,7 @@ class WebTests(unittest.TestCase):
                     os.environ[key] = value
 
 
-    def test_runtime_settings_form_persists_deep_summary_model_config(self) -> None:
+    def test_runtime_settings_form_persists_summary_model_config(self) -> None:
         keys = [
             "ATLAS_VOICE_ENV_FILE",
             "ATLAS_VOICE_DATA_DIR",
@@ -2205,13 +2205,13 @@ class WebTests(unittest.TestCase):
                         "asr_provider": "whisperx",
                         "asr_model": "tiny.en",
                         "diarization_provider": "pyannote",
-                        "deep_llm_model": "qwen-27b-custom",
-                        "deep_llm_base_url": "http://127.0.0.1:8088/v1/chat/completions",
+                        "summary_llm_model": "qwen-27b-custom",
+                        "summary_llm_base_url": "http://127.0.0.1:8088/v1/chat/completions",
                     },
                 )
 
                 self.assertEqual(dashboard.status_code, 200)
-                self.assertIn('name="deep_llm_model"', dashboard.text)
+                self.assertIn('name="summary_llm_model"', dashboard.text)
                 self.assertIn('value="qwen-27b-instruct"', dashboard.text)
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("Runtime settings saved", response.text)
@@ -2222,7 +2222,8 @@ class WebTests(unittest.TestCase):
                 )
                 saved_config = assistant_path.read_text()
                 self.assertIn("llm_profiles:", saved_config)
-                self.assertIn("qwen-deep:", saved_config)
+                self.assertIn("summarization:", saved_config)
+                self.assertIn("qwen-summary:", saved_config)
                 self.assertIn("model: qwen-27b-custom", saved_config)
                 self.assertIn("base_url: http://127.0.0.1:8088/v1/chat/completions", saved_config)
         finally:

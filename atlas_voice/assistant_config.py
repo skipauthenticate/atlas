@@ -40,6 +40,9 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
             "llm_profile": "qwen-deep",
             "schedule": "manual",
         },
+        "summarization": {
+            "llm_profile": "qwen-summary",
+        },
     },
     "llm_profiles": {
         "small-classifier": {
@@ -64,6 +67,16 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
                 "fast_voice_replies",
                 "low_stakes_routing",
                 "brief_tool_planning",
+            ],
+        },
+        "qwen-summary": {
+            "provider": "openai-compatible",
+            "model": "qwen-27b-instruct",
+            "load_policy": "on_demand",
+            "roles": [
+                "recording_summarization",
+                "session_summaries",
+                "template_summaries",
             ],
         },
         "qwen-deep": {

@@ -30,7 +30,7 @@ from atlas_voice.exporter import export_payload, export_recording
 from atlas_voice.merge import format_seconds
 from atlas_voice.pipeline import PipelineProcessor
 from atlas_voice.privacy import privacy_summary
-from atlas_voice.profile_settings import settings_for_profile
+from atlas_voice.profile_settings import settings_for_pipeline, settings_for_profile
 from atlas_voice.realtime import (
     REALTIME_SYSTEM_PROMPT,
     audio_delta_payload,
@@ -55,7 +55,7 @@ from atlas_voice.turn_state import RealtimeTurnState
 settings = Settings.from_env()
 assistant_config = load_assistant_config(settings.assistant_config_path)
 db = Database(settings.db_path)
-processor = PipelineProcessor(settings_for_profile(settings, assistant_config, "reflection"), db)
+processor = PipelineProcessor(settings_for_pipeline(settings, assistant_config), db)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -130,13 +130,13 @@ def runtime_info(current_settings: Settings) -> dict[str, Any]:
         "pyannote_model": current_settings.pyannote_model,
         "ambient_mode": current_settings.ambient_mode,
         "assistant_mode_options": ASSISTANT_MODE_OPTIONS,
-        "deep_llm_model_value": _deep_llm_profile_value("model", "qwen-27b-instruct"),
-        "deep_llm_base_url_value": _deep_llm_profile_value("base_url", settings.llm_base_url),
+        "summary_llm_model_value": _summary_llm_profile_value("model", "qwen-27b-instruct"),
+        "summary_llm_base_url_value": _summary_llm_profile_value("base_url", settings.llm_base_url),
     }
 
 
-def _deep_llm_profile_value(key: str, default: str) -> str:
-    profile = assistant_config.llm_profiles.get("qwen-deep", {})
+def _summary_llm_profile_value(key: str, default: str) -> str:
+    profile = assistant_config.llm_profiles.get("qwen-summary", {})
     value = profile.get(key) if isinstance(profile, dict) else None
     return str(value or default)
 
@@ -201,22 +201,22 @@ def _write_dotenv_values(values: dict[str, str]) -> None:
     path.write_text("\n".join(updated).rstrip() + "\n")
 
 
-def _write_deep_llm_profile(*, model: str, base_url: str) -> None:
+def _write_summary_llm_profile(*, model: str, base_url: str) -> None:
     if not model and not base_url:
         return
     overrides = copy.deepcopy(assistant_config.overrides)
     profiles = overrides.setdefault("profiles", {})
-    reflection = profiles.setdefault("reflection", {})
-    reflection["llm_profile"] = "qwen-deep"
+    summarization = profiles.setdefault("summarization", {})
+    summarization["llm_profile"] = "qwen-summary"
 
     llm_profiles = overrides.setdefault("llm_profiles", {})
-    qwen_deep = llm_profiles.setdefault("qwen-deep", {})
-    qwen_deep.setdefault("provider", "openai-compatible")
-    qwen_deep.setdefault("load_policy", "on_demand")
+    qwen_summary = llm_profiles.setdefault("qwen-summary", {})
+    qwen_summary.setdefault("provider", "openai-compatible")
+    qwen_summary.setdefault("load_policy", "on_demand")
     if model:
-        qwen_deep["model"] = model
+        qwen_summary["model"] = model
     if base_url:
-        qwen_deep["base_url"] = base_url.rstrip("/")
+        qwen_summary["base_url"] = base_url.rstrip("/")
 
     _write_assistant_config_overrides(overrides)
 
@@ -263,7 +263,7 @@ def _refresh_runtime_settings() -> None:
     settings = Settings.from_env()
     assistant_config = load_assistant_config(settings.assistant_config_path)
     settings.ensure_directories()
-    processor = PipelineProcessor(settings_for_profile(settings, assistant_config, "reflection"), db)
+    processor = PipelineProcessor(settings_for_pipeline(settings, assistant_config), db)
 
 
 def _profile_settings(profile_name: str) -> Settings:
@@ -863,6 +863,8 @@ def update_runtime_settings(
     asr_provider: str = Form(...),
     asr_model: str = Form(""),
     diarization_provider: str = Form(...),
+    summary_llm_model: str = Form(""),
+    summary_llm_base_url: str = Form(""),
     deep_llm_model: str = Form(""),
     deep_llm_base_url: str = Form(""),
 ) -> Response:
@@ -893,9 +895,9 @@ def update_runtime_settings(
 
     values = _runtime_env_values(provider, model, diarization)
     _write_dotenv_values(values)
-    _write_deep_llm_profile(
-        model=deep_llm_model.strip(),
-        base_url=deep_llm_base_url.strip(),
+    _write_summary_llm_profile(
+        model=(summary_llm_model or deep_llm_model).strip(),
+        base_url=(summary_llm_base_url or deep_llm_base_url).strip(),
     )
     os.environ.update(values)
     _refresh_runtime_settings()

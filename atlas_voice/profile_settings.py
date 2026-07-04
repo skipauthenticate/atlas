@@ -99,6 +99,11 @@ def settings_for_profile(
     return replace(settings, **updates) if updates else settings
 
 
+def settings_for_pipeline(settings: Settings, assistant_config: AssistantConfig) -> Settings:
+    reflection_settings = settings_for_profile(settings, assistant_config, "reflection")
+    return settings_for_profile(reflection_settings, assistant_config, "summarization")
+
+
 def _apply_default_tts_profile_updates(
     updates: dict[str, Any],
     settings: Settings,

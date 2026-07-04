@@ -482,14 +482,19 @@ or deployment override; it defaults to `qwen2.5-0.5b-instruct`, `max_tokens=256`
 and a `hot_optional` load policy. Override either profile under `llm_profiles` if
 the Jetson image uses different local model names.
 
+Recording summarization uses the built-in `summarization` profile, which points
+at the `qwen-summary` LLM profile. By default `qwen-summary` uses
+`qwen-27b-instruct` with an on-demand load policy so batch summaries can use the
+local Qwen 27B server without keeping that model hot for realtime voice. Set the
+summary model and endpoint from the dashboard runtime settings form, or override
+`llm_profiles.qwen-summary.model`, `base_url`, `temperature`, and `max_tokens` in
+`config/atlas.assistant.yaml`.
+
 The reflection profile uses the built-in `qwen-deep` LLM profile for on-demand
-deep reasoning. By default that profile points at `qwen-27b-instruct` and is
+deep reasoning. By default that profile also points at `qwen-27b-instruct` and is
 tagged for deep coaching, complex reasoning, weekly reviews, and direct
-questions. Set the deep summary model and endpoint from the dashboard runtime
-settings form, or override `llm_profiles.qwen-deep.model`, `base_url`,
-`temperature`, and `max_tokens` in `config/atlas.assistant.yaml` to match the
-local OpenAI-compatible Qwen 27B server. Realtime direct voice does not inherit
-this deep model unless its own profile explicitly selects it.
+questions. Realtime direct voice does not inherit either heavy model unless its
+own profile explicitly selects it.
 
 
 Hyprwhspr is the primary always-on STT target only after a reliability probe

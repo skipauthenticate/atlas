@@ -736,6 +736,7 @@ Current Qwen 27B server is useful but too heavy to be the always-on brain.
 Recommended model roles:
 
 - [x] Qwen 27B: deep coaching, complex reasoning, weekly reviews, direct hard questions.
+- [x] Recording summarization uses a configurable `qwen-summary` profile defaulting to `qwen-27b-instruct`.
 - [x] Smaller local LLM: fast voice replies, classifications, low-stakes routing.
 - [x] Parakeet/Whisper-capable ASR provider abstraction exists.
 - [x] Hyprwhspr as primary always-on STT if its local socket/CLI is reliable.
