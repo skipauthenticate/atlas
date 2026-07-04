@@ -176,6 +176,16 @@ class CoachingSummaryTests(unittest.TestCase):
             )
             db.add_utterance(
                 session_id=session_id,
+                text="I want to make the launch decision this week.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="I don't want to change the launch process yet.",
+                source_provider="text",
+            )
+            db.add_utterance(
+                session_id=session_id,
                 text="Need owner for demo.",
                 source_provider="text",
             )
@@ -184,17 +194,21 @@ class CoachingSummaryTests(unittest.TestCase):
 
             self.assertEqual(dry_run.status, "ok")
             self.assertIsNone(dry_run.event_id)
-            self.assertEqual(dry_run.metrics["utterance_count"], 7)
+            self.assertEqual(dry_run.metrics["utterance_count"], 9)
             self.assertEqual(dry_run.metrics["question_count"], 2)
             self.assertEqual(dry_run.metrics["open_question_count"], 1)
             self.assertEqual(dry_run.metrics["closed_question_count"], 1)
             self.assertEqual(dry_run.metrics["open_question_ratio"], 0.5)
             self.assertEqual(dry_run.metrics["affirmation_count"], 1)
-            self.assertEqual(dry_run.metrics["affirmation_ratio"], 0.143)
+            self.assertEqual(dry_run.metrics["affirmation_ratio"], 0.111)
             self.assertEqual(dry_run.metrics["reflection_count"], 1)
-            self.assertEqual(dry_run.metrics["reflection_ratio"], 0.143)
+            self.assertEqual(dry_run.metrics["reflection_ratio"], 0.111)
             self.assertEqual(dry_run.metrics["summary_count"], 1)
-            self.assertEqual(dry_run.metrics["summary_ratio"], 0.143)
+            self.assertEqual(dry_run.metrics["summary_ratio"], 0.111)
+            self.assertEqual(dry_run.metrics["change_talk_count"], 2)
+            self.assertEqual(dry_run.metrics["change_talk_ratio"], 0.222)
+            self.assertEqual(dry_run.metrics["sustain_talk_count"], 1)
+            self.assertEqual(dry_run.metrics["sustain_talk_ratio"], 0.111)
             self.assertEqual(dry_run.metrics["commitment_count"], 1)
             self.assertGreater(dry_run.metrics["clarity"], 0)
             self.assertGreater(dry_run.metrics["concision"], 0)
@@ -212,10 +226,14 @@ class CoachingSummaryTests(unittest.TestCase):
             self.assertEqual(events[0]["metadata"]["signals"]["affirmation_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["reflection_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["summary_count"], 1)
+            self.assertEqual(events[0]["metadata"]["signals"]["change_talk_count"], 2)
+            self.assertEqual(events[0]["metadata"]["signals"]["sustain_talk_count"], 1)
             self.assertIn("Open questions: 1/2", events[0]["message"])
             self.assertIn("Affirmations: 1", events[0]["message"])
             self.assertIn("Reflections: 1", events[0]["message"])
             self.assertIn("Summaries: 1", events[0]["message"])
+            self.assertIn("Change talk: 2", events[0]["message"])
+            self.assertIn("Sustain talk: 1", events[0]["message"])
             self.assertIn("Conversation Signals", events[0]["message"])
 
     def test_conversation_signals_are_idempotent_per_session(self) -> None:

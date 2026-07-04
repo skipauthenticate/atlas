@@ -356,6 +356,8 @@ def _conversation_signal_metrics(
     affirmation_count = _affirmation_count(utterances)
     reflection_count = _reflection_count(utterances)
     summary_count = _summary_count(utterances)
+    change_talk_count = _change_talk_count(utterances)
+    sustain_talk_count = _sustain_talk_count(utterances)
     commitment_count = _commitment_count(utterances)
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
@@ -377,6 +379,10 @@ def _conversation_signal_metrics(
         "reflection_ratio": round(reflection_count / utterance_count, 3) if utterance_count else 0.0,
         "summary_count": summary_count,
         "summary_ratio": round(summary_count / utterance_count, 3) if utterance_count else 0.0,
+        "change_talk_count": change_talk_count,
+        "change_talk_ratio": round(change_talk_count / utterance_count, 3) if utterance_count else 0.0,
+        "sustain_talk_count": sustain_talk_count,
+        "sustain_talk_ratio": round(sustain_talk_count / utterance_count, 3) if utterance_count else 0.0,
         "commitment_count": commitment_count,
         "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
         "actionable_next_steps": actionable_count,
@@ -402,6 +408,8 @@ def _conversation_signal_message(
         f"Affirmations: {metrics['affirmation_count']}",
         f"Reflections: {metrics['reflection_count']}",
         f"Summaries: {metrics['summary_count']}",
+        f"Change talk: {metrics['change_talk_count']}",
+        f"Sustain talk: {metrics['sustain_talk_count']}",
         f"Follow-through: {metrics['follow_through']}",
         f"Commitments: {metrics['commitment_count']}",
         f"Actionable next steps: {metrics['actionable_next_steps']}",
@@ -658,6 +666,49 @@ def _is_summary_statement(text: str) -> bool:
         r"\b(so far|what we have so far|where we landed)\b",
         r"\b(we covered|we agreed|we decided)\b.+\b(and|,)\b",
         r"\b(here'?s what i heard|here is what i heard|here'?s what i captured)\b",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
+
+
+def _change_talk_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _is_change_talk(str(item.get("text") or "")))
+
+
+def _sustain_talk_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _is_sustain_talk(str(item.get("text") or "")))
+
+
+def _is_change_talk(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized or "?" in normalized or _is_sustain_talk(normalized):
+        return False
+    action_keywords = (
+        r"change|improve|start|stop|reduce|increase|send|schedule|decide|decision|"
+        r"finish|make|ship|follow up|practice|try|commit|ask|call|write|review|"
+        r"choose|move|launch|checklist"
+    )
+    patterns = (
+        rf"\b(i|we)\s+(will|'ll|can|could|need to|want to|would like to|plan to|"
+        rf"intend to|hope to|am ready to|are ready to|am going to|are going to)\b.*\b({action_keywords})\b",
+        rf"\b(i|we)\s+(started|have started|already)\b.*\b({action_keywords})\b",
+        r"\b(reason to|important to|matters to)\b.*\b(change|improve|start|stop|decide|commit)\b",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
+
+
+def _is_sustain_talk(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized or "?" in normalized:
+        return False
+    patterns = (
+        r"\b(i|we)\s+(don'?t|do not|can't|cannot|won'?t|will not)\s+"
+        r"(want to|need to|plan to|intend to|feel ready to|think we should)\b.*"
+        r"\b(change|start|stop|switch|move|decide|commit|ship)\b",
+        r"\b(i|we)\s+(want to|need to|would rather|prefer to|plan to|intend to)\s+"
+        r"(keep|stay|avoid|wait|hold|delay|continue|stick)\b",
+        r"\b(i|we)\s+(can'?t|cannot|won'?t|will not|don'?t|do not)\s+"
+        r"(change|start|stop|switch|move|decide|commit|ship)\b",
+        r"\b(not ready|too hard|not worth it|fine as is|leave it as is|keep things as they are)\b",
     )
     return any(re.search(pattern, normalized, re.I) for pattern in patterns)
 

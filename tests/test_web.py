@@ -556,6 +556,8 @@ class WebTests(unittest.TestCase):
                         "affirmation_ratio": 0.4,
                         "reflection_ratio": 0.3,
                         "summary_ratio": 0.2,
+                        "change_talk_ratio": 0.35,
+                        "sustain_talk_ratio": 0.15,
                         "follow_through": 0.5,
                     }
                 },
@@ -611,6 +613,14 @@ class WebTests(unittest.TestCase):
                 {"label": "Summaries", "value": 0.2, "display": "20%"},
                 payload["headline_metrics"],
             )
+            self.assertIn(
+                {"label": "Change talk", "value": 0.35, "display": "35%"},
+                payload["headline_metrics"],
+            )
+            self.assertIn(
+                {"label": "Sustain talk", "value": 0.15, "display": "15%"},
+                payload["headline_metrics"],
+            )
             self.assertEqual(payload["categories"]["conversation_signals"], 1)
             self.assertEqual(payload["categories"]["writing_signals"], 1)
             self.assertEqual(voice_response.status_code, 200)
@@ -621,11 +631,15 @@ class WebTests(unittest.TestCase):
             self.assertIn("Affirmations", voice_response.text)
             self.assertIn("Reflections", voice_response.text)
             self.assertIn("Summaries", voice_response.text)
+            self.assertIn("Change talk", voice_response.text)
+            self.assertIn("Sustain talk", voice_response.text)
             self.assertIn("82%", voice_response.text)
             self.assertIn("50%", voice_response.text)
             self.assertIn("40%", voice_response.text)
             self.assertIn("30%", voice_response.text)
             self.assertIn("20%", voice_response.text)
+            self.assertIn("35%", voice_response.text)
+            self.assertIn("15%", voice_response.text)
             self.assertIn("Conversation Signals - Coaching progress session", voice_response.text)
             self.assertIn("Writing Signals - Launch note", voice_response.text)
 
