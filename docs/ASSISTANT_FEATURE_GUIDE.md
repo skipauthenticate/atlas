@@ -416,8 +416,9 @@ clarity, concision, talk/listen ratio, question ratio, open-question ratio,
 affirmation ratio, reflection ratio, summary ratio, change-talk ratio,
 sustain-talk ratio, autonomy-support ratio, ask/action clarity, and recent
 coaching events derived from stored feedback events. Talk/listen ratio is shown
-as assistant words to user words, for example `0.42:1`. The API is bounded to
-recent events and does not trigger model work.
+as assistant words to user words, for example `0.42:1`. Question ratio is the
+share of user utterances that contain at least one question. The API is bounded
+to recent events and does not trigger model work.
 
 Manage coaching goals in the Voice inspector or as JSON:
 

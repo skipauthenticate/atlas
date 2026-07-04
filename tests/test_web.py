@@ -598,7 +598,12 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["event_count"], 2)
             self.assertEqual(payload["latest_events"][0]["title"], "Writing Signals - Launch note")
             self.assertEqual(payload["averages"]["clarity"], 0.825)
+            self.assertEqual(payload["averages"]["question_ratio"], 0.25)
             self.assertEqual(payload["averages"]["open_question_ratio"], 0.5)
+            self.assertIn(
+                {"label": "Question ratio", "value": 0.25, "display": "25%"},
+                payload["headline_metrics"],
+            )
             self.assertIn(
                 {"label": "Talk/listen ratio", "value": 0.42, "display": "0.42:1"},
                 payload["headline_metrics"],
@@ -637,6 +642,7 @@ class WebTests(unittest.TestCase):
             self.assertIn('data-coaching-progress', voice_response.text)
             self.assertIn("Progress Dashboard", voice_response.text)
             self.assertIn("Clarity", voice_response.text)
+            self.assertIn("Question ratio", voice_response.text)
             self.assertIn("Talk/listen ratio", voice_response.text)
             self.assertIn("Open questions", voice_response.text)
             self.assertIn("Affirmations", voice_response.text)
@@ -647,6 +653,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Autonomy support", voice_response.text)
             self.assertIn("82%", voice_response.text)
             self.assertIn("0.42:1", voice_response.text)
+            self.assertIn("25%", voice_response.text)
             self.assertIn("50%", voice_response.text)
             self.assertIn("40%", voice_response.text)
             self.assertIn("30%", voice_response.text)
