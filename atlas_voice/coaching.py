@@ -358,6 +358,9 @@ def _conversation_signal_metrics(
     summary_count = _summary_count(utterances)
     change_talk_count = _change_talk_count(utterances)
     sustain_talk_count = _sustain_talk_count(utterances)
+    autonomy_suggestion_count = _autonomy_respecting_suggestion_count(utterances)
+    directive_suggestion_count = _directive_suggestion_count(utterances)
+    suggestion_count = autonomy_suggestion_count + directive_suggestion_count
     commitment_count = _commitment_count(utterances)
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
@@ -383,6 +386,10 @@ def _conversation_signal_metrics(
         "change_talk_ratio": round(change_talk_count / utterance_count, 3) if utterance_count else 0.0,
         "sustain_talk_count": sustain_talk_count,
         "sustain_talk_ratio": round(sustain_talk_count / utterance_count, 3) if utterance_count else 0.0,
+        "autonomy_respecting_suggestion_count": autonomy_suggestion_count,
+        "directive_suggestion_count": directive_suggestion_count,
+        "suggestion_count": suggestion_count,
+        "autonomy_support_ratio": round(autonomy_suggestion_count / suggestion_count, 3) if suggestion_count else 0.0,
         "commitment_count": commitment_count,
         "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
         "actionable_next_steps": actionable_count,
@@ -410,6 +417,8 @@ def _conversation_signal_message(
         f"Summaries: {metrics['summary_count']}",
         f"Change talk: {metrics['change_talk_count']}",
         f"Sustain talk: {metrics['sustain_talk_count']}",
+        f"Autonomy-respecting suggestions: {metrics['autonomy_respecting_suggestion_count']}/{metrics['suggestion_count']}",
+        f"Directive suggestions: {metrics['directive_suggestion_count']}",
         f"Follow-through: {metrics['follow_through']}",
         f"Commitments: {metrics['commitment_count']}",
         f"Actionable next steps: {metrics['actionable_next_steps']}",
@@ -680,7 +689,7 @@ def _sustain_talk_count(utterances: list[dict[str, Any]]) -> int:
 
 def _is_change_talk(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", text).strip().lower()
-    if not normalized or "?" in normalized or _is_sustain_talk(normalized):
+    if not normalized or "?" in normalized or _is_sustain_talk(normalized) or _is_suggestion(normalized):
         return False
     action_keywords = (
         r"change|improve|start|stop|reduce|increase|send|schedule|decide|decision|"
@@ -709,6 +718,48 @@ def _is_sustain_talk(text: str) -> bool:
         r"\b(i|we)\s+(can'?t|cannot|won'?t|will not|don'?t|do not)\s+"
         r"(change|start|stop|switch|move|decide|commit|ship)\b",
         r"\b(not ready|too hard|not worth it|fine as is|leave it as is|keep things as they are)\b",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
+
+
+def _autonomy_respecting_suggestion_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(
+        1 for item in utterances if _is_autonomy_respecting_suggestion(str(item.get("text") or ""))
+    )
+
+
+def _directive_suggestion_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _is_directive_suggestion(str(item.get("text") or "")))
+
+
+def _is_suggestion(text: str) -> bool:
+    return _is_autonomy_respecting_suggestion(text) or _is_directive_suggestion(text)
+
+
+def _is_autonomy_respecting_suggestion(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized or "?" in normalized:
+        return False
+    action = r"test|try|send|schedule|decide|review|ask|call|write|draft|choose|use|start|stop|change|practice|follow up"
+    patterns = (
+        rf"\b(if it works for you|if you want|if you choose|if you'?d like|if that feels right|when you'?re ready)\b.*\b({action})\b",
+        rf"\b(you could|you might|you may want to|you can choose to|one option is|another option is)\b.*\b({action})\b",
+        rf"\b(we could|we might|we can)\b.*\b({action})\b.*\b(if you want|if that works|if it helps|with your permission)\b",
+        rf"\b(would it help to|would you like to)\b.*\b({action})\b",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
+
+
+def _is_directive_suggestion(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized or "?" in normalized or _is_autonomy_respecting_suggestion(normalized):
+        return False
+    action = r"test|try|send|schedule|decide|review|ask|call|write|draft|choose|use|start|stop|change|practice|follow up"
+    patterns = (
+        rf"\byou\s+(should|must|need to|have to|ought to|better)\b.*\b({action})\b",
+        rf"\b(just|simply)\s+({action})\b",
+        rf"\b(the next step is to|your next step is to)\b.*\b({action})\b",
+        rf"\b(i recommend|i suggest|my advice is to)\b.*\b({action})\b",
     )
     return any(re.search(pattern, normalized, re.I) for pattern in patterns)
 
