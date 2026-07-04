@@ -1528,6 +1528,56 @@ class WebTests(unittest.TestCase):
             self.assertEqual(tts_runs[0]["model"], "faster-qwen3-tts-0.6b")
             self.assertEqual(tts_runs[0]["latency_ms"], 7)
 
+    def test_realtime_websocket_uses_tts_sidecar_by_default_profile(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ.pop("ATLAS_VOICE_TTS_PROVIDER", None)
+            os.environ.pop("ATLAS_TTS_MODEL", None)
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            audio_path = root / "assistant.wav"
+
+            with patch.object(
+                web_app,
+                "synthesize_with_tts_sidecar",
+                return_value=RealtimeAudio(
+                    path=audio_path,
+                    payload=b"RIFFtest",
+                    media_type="audio/wav",
+                    latency_ms=7,
+                ),
+            ) as synth_mock:
+                with client.websocket_connect("/v1/realtime") as websocket:
+                    created = websocket.receive_json()
+                    websocket.send_json({"type": "input_text", "text": "Hello Atlas"})
+                    events = _receive_until(websocket, "response.done")
+
+            event_types = [event["type"] for event in events]
+            self.assertEqual(created["session"]["output_audio_format"], "wav")
+            self.assertIn("response.audio.delta", event_types)
+            self.assertIn("response.audio.done", event_types)
+            synth_mock.assert_called_once()
+            tts_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "realtime_tts"]
+            self.assertEqual(len(tts_runs), 1)
+            self.assertEqual(tts_runs[0]["provider"], "faster-qwen3-tts")
+            self.assertEqual(tts_runs[0]["model"], "faster-qwen3-tts-0.6b")
+            self.assertEqual(tts_runs[0]["latency_ms"], 7)
+
+
     def test_realtime_websocket_accepts_audio_buffer_with_transcript(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

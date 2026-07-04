@@ -25,7 +25,10 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
             "realtime_backend": "atlas-native",
             "stt_provider": "whisperx",
             "llm_profile": "qwen-voice",
-            "tts_provider": "none",
+            "tts_provider": "faster-qwen3-tts",
+            "tts_model": "faster-qwen3-tts-0.6b",
+            "tts_base_url": "http://127.0.0.1:8008/v1/audio/speech",
+            "tts_health_url": "http://127.0.0.1:8008/health",
             "require_tool_confirmation": True,
         },
         "reflection": {

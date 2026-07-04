@@ -347,6 +347,42 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(reflection.asr_provider, "canary")
         self.assertEqual(reflection.diarization_provider, "none")
 
+
+    def test_direct_voice_defaults_to_faster_qwen3_tts_when_tts_unset(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(root / "missing.yaml")
+
+        direct = settings_for_profile(settings, config, "direct_voice")
+
+        self.assertEqual(config.profiles["direct_voice"]["tts_provider"], "faster-qwen3-tts")
+        self.assertEqual(direct.tts_provider, "faster-qwen3-tts")
+        self.assertEqual(direct.tts_model, "faster-qwen3-tts-0.6b")
+        self.assertEqual(direct.tts_base_url, "http://127.0.0.1:8008/v1/audio/speech")
+
+    def test_explicit_tts_none_disables_direct_voice_default_tts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"ATLAS_VOICE_TTS_PROVIDER": "none"}, clear=True):
+                cwd = Path.cwd()
+                try:
+                    os.chdir(root)
+                    settings = Settings.from_env()
+                finally:
+                    os.chdir(cwd)
+                config = load_assistant_config(root / "missing.yaml")
+
+        direct = settings_for_profile(settings, config, "direct_voice")
+
+        self.assertEqual(direct.tts_provider, "none")
+
     def test_default_profile_values_do_not_override_environment(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

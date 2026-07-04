@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -110,10 +110,14 @@ class Settings:
     ambient_retain_audio: bool = False
     ambient_raw_audio_retention_days: float = 0.0
     ambient_transcript_retention_days: int | None = None
+    configured_env: frozenset[str] = field(
+        default_factory=frozenset, repr=False, compare=False
+    )
 
     @classmethod
     def from_env(cls) -> "Settings":
         load_dotenv()
+        configured_env = frozenset(os.environ)
         return cls(
             host=os.environ.get(
                 "ATLAS_REALTIME_HOST",
@@ -235,6 +239,7 @@ class Settings:
             ambient_transcript_retention_days=_optional_int_from_env(
                 "ATLAS_VOICE_AMBIENT_TRANSCRIPT_RETENTION_DAYS"
             ),
+            configured_env=configured_env,
         )
 
     @property

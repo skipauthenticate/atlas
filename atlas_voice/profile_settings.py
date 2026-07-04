@@ -81,6 +81,7 @@ def settings_for_profile(
         assistant_config,
         _llm_profile_name(assistant_config, profile_name, overrides),
     )
+    _apply_default_tts_profile_updates(updates, settings, assistant_config, profile_name)
     for profile_key, value in overrides.items():
         setting_name = PROFILE_SETTING_KEYS.get(str(profile_key))
         if setting_name not in valid_settings:
@@ -90,6 +91,26 @@ def settings_for_profile(
         )
 
     return replace(settings, **updates) if updates else settings
+
+
+def _apply_default_tts_profile_updates(
+    updates: dict[str, Any],
+    settings: Settings,
+    assistant_config: AssistantConfig,
+    profile_name: str,
+) -> None:
+    if profile_name != "direct_voice" or settings.tts_provider != "none":
+        return
+    if "ATLAS_VOICE_TTS_PROVIDER" in settings.configured_env:
+        return
+    profile = assistant_config.profiles.get(profile_name, {})
+    for profile_key in ("tts_provider", "tts_model", "tts_base_url", "tts_health_url"):
+        if profile_key not in profile:
+            continue
+        setting_name = PROFILE_SETTING_KEYS[profile_key]
+        updates[setting_name] = _coerce_profile_value(
+            setting_name, profile[profile_key], getattr(settings, setting_name)
+        )
 
 
 def _llm_profile_name(

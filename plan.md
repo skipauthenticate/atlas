@@ -362,7 +362,7 @@ Likely stack:
 - [ ] Voice backend spike: HF `speech-to-speech` sidecar.
 - [x] LLM: current local `llama.cpp`/OpenAI-compatible Qwen endpoint.
 - [x] TTS: Piper fallback, optional and local.
-- [ ] TTS primary: faster-qwen3-tts sidecar.
+- [x] TTS primary: faster-qwen3-tts sidecar.
 - [ ] TTS later: Kokoro/Qwen3-TTS if stable.
 
 ### Lane 3: Deep Reflection Lane
@@ -737,7 +737,7 @@ Recommended model roles:
 - [x] Smaller local LLM: fast voice replies, classifications, low-stakes routing.
 - [x] Parakeet/Whisper-capable ASR provider abstraction exists.
 - [x] Hyprwhspr as primary always-on STT if its local socket/CLI is reliable.
-- [ ] faster-qwen3-tts as primary local TTS.
+- [x] faster-qwen3-tts as primary local TTS.
 - [x] Piper as fallback local TTS.
 - [ ] Kokoro/Qwen3-TTS evaluation after the realtime loop works.
 

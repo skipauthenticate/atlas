@@ -60,11 +60,11 @@ Atlas can call an OpenAI-compatible local TTS sidecar, expected at:
 http://127.0.0.1:8008/v1/audio/speech
 ```
 
-Recommended environment for the primary local TTS path:
+The direct voice profile uses `faster-qwen3-tts` as the primary local TTS path
+when no other TTS provider is configured. Recommended sidecar environment:
 
 ```bash
 export ATLAS_ASSISTANT_ENABLED=true
-export ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts
 export ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech
 export ATLAS_TTS_HEALTH_URL=http://127.0.0.1:8008/health
 export ATLAS_TTS_MODEL=faster-qwen3-tts-0.6b
