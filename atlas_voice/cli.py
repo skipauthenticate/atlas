@@ -37,7 +37,15 @@ from .memory import (
     extract_memories_from_direct_voice_session,
 )
 from .retention import apply_ambient_retention
-from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
+from .benchmark import (
+    DEFAULT_VOICE_STACK_BENCHMARK_TEXT,
+    DEFAULT_VOICE_STACK_BENCHMARK_TTS_TEXT,
+    make_smoke_audio,
+    print_benchmark_results,
+    print_voice_stack_benchmark_results,
+    run_asr_benchmark,
+    run_voice_stack_benchmark,
+)
 from .storage import is_audio_file
 from .tts_validation import DEFAULT_TTS_VALIDATION_TEXT, validate_tts_sidecar
 from .worker import Worker
@@ -224,6 +232,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate_tts.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     validate_tts.set_defaults(func=cmd_validate_tts_sidecar)
+
+    voice_benchmark = subparsers.add_parser(
+        "benchmark-voice-stack",
+        help="Benchmark concurrent local LLM and TTS calls",
+    )
+    voice_benchmark.add_argument("--rounds", type=int, default=3, help="Benchmark rounds")
+    voice_benchmark.add_argument(
+        "--text",
+        default=DEFAULT_VOICE_STACK_BENCHMARK_TEXT,
+        help="Prompt sent to the configured local LLM",
+    )
+    voice_benchmark.add_argument(
+        "--tts-text",
+        default=DEFAULT_VOICE_STACK_BENCHMARK_TTS_TEXT,
+        help="Text sent to the configured local TTS provider",
+    )
+    voice_benchmark.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Directory for synthesized benchmark audio",
+    )
+    voice_benchmark.add_argument("--json", action="store_true", help="Print JSON results")
+    voice_benchmark.set_defaults(func=cmd_benchmark_voice_stack)
 
     benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
@@ -791,6 +822,21 @@ def cmd_validate_tts_sidecar(args: argparse.Namespace) -> int:
             f"health={result.health_latency_ms}ms synthesis={result.synthesis_latency_ms}ms"
         )
     return 0
+
+
+def cmd_benchmark_voice_stack(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    assistant_config = load_assistant_config(settings.assistant_config_path)
+    voice_settings = settings_for_profile(settings, assistant_config, "direct_voice")
+    results = run_voice_stack_benchmark(
+        voice_settings,
+        rounds=args.rounds,
+        text=args.text,
+        tts_text=args.tts_text,
+        output_dir=args.output_dir,
+    )
+    print_voice_stack_benchmark_results(results, json_output=args.json)
+    return 1 if any(result.get("error") for result in results) else 0
 
 
 def cmd_benchmark_asr(args: argparse.Namespace) -> int:

@@ -180,6 +180,19 @@ export ATLAS_VOICE_FASTER_WHISPER_MODEL=large-v3-turbo
 
 Use `ATLAS_VOICE_ASR_PROVIDER=faster-whisper` to make faster-whisper the direct batch and playground ASR provider too. On Jetson, benchmark `large-v3-turbo` and `distil-large-v3` with `scripts/smoke-benchmark-asr.sh` before making the model permanent.
 
+Benchmark simultaneous local LLM and TTS load after the Qwen endpoint and the
+configured direct voice TTS provider are running:
+
+```bash
+atlas-voice benchmark-voice-stack --rounds 5 --json
+```
+
+The command uses the direct voice profile, runs a local model prompt and a TTS
+synthesis request concurrently, writes returned audio under
+`data/artifacts/voice-stack-benchmark`, and reports per-round LLM latency, TTS
+latency, audio bytes, max RSS, and component-specific errors. Run it with
+`ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts` for the primary sidecar and with
+`ATLAS_VOICE_TTS_PROVIDER=piper` when comparing the fallback path.
 
 ## Phase 3: Voice Workbench Console
 

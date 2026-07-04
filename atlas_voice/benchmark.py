@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
@@ -15,6 +16,19 @@ from atlas_voice.config import Settings
 from atlas_voice.providers.asr import transcribe_audio
 from atlas_voice.providers.diarization import diarize_audio
 from atlas_voice.providers.transcript_utils import audio_duration_seconds
+from atlas_voice.realtime import (
+    generate_realtime_reply,
+    is_tts_sidecar_provider,
+    normalize_tts_provider,
+    synthesize_with_piper,
+    synthesize_with_tts_sidecar,
+)
+
+DEFAULT_VOICE_STACK_BENCHMARK_TEXT = "Answer in one short sentence: is Atlas Voice responsive?"
+DEFAULT_VOICE_STACK_BENCHMARK_TTS_TEXT = (
+    "Atlas Voice concurrent local speech benchmark. "
+    "This checks whether Qwen and local TTS can run at the same time."
+)
 
 
 def run_asr_benchmark(
@@ -59,6 +73,85 @@ def run_asr_benchmark(
             result["wer"] = word_error_rate(reference_text, text)
         results.append(result)
     return results
+
+
+def run_voice_stack_benchmark(
+    settings: Settings,
+    *,
+    rounds: int = 3,
+    text: str = DEFAULT_VOICE_STACK_BENCHMARK_TEXT,
+    tts_text: str = DEFAULT_VOICE_STACK_BENCHMARK_TTS_TEXT,
+    output_dir: Path | None = None,
+) -> list[dict[str, Any]]:
+    if rounds < 1:
+        raise ValueError("rounds must be at least 1")
+
+    target_dir = output_dir or settings.artifacts_dir / "voice-stack-benchmark"
+    results: list[dict[str, Any]] = []
+    for round_index in range(1, rounds + 1):
+        started = time.perf_counter()
+        llm_reply = None
+        tts_audio = None
+        llm_error = None
+        tts_error = None
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            llm_future = executor.submit(generate_realtime_reply, text, settings)
+            tts_future = executor.submit(
+                _synthesize_voice_stack_tts, tts_text, settings, target_dir
+            )
+            try:
+                llm_reply = llm_future.result()
+            except Exception as exc:  # noqa: BLE001 - benchmark reports component failures.
+                llm_error = _component_error("llm", exc)
+            try:
+                tts_audio = tts_future.result()
+            except Exception as exc:  # noqa: BLE001 - benchmark reports component failures.
+                tts_error = _component_error("tts", exc)
+
+        errors = [error for error in (llm_error, tts_error) if error]
+        provider = normalize_tts_provider(settings.tts_provider)
+        results.append(
+            {
+                "round": round_index,
+                "llm_provider": "stub" if settings.stub_mode else "openai-compatible",
+                "llm_model": settings.llm_model,
+                "tts_provider": provider,
+                "tts_model": _tts_model_for_benchmark(settings, provider),
+                "elapsed_seconds": round(time.perf_counter() - started, 3),
+                "llm_latency_ms": llm_reply.latency_ms if llm_reply else None,
+                "tts_latency_ms": tts_audio.latency_ms if tts_audio else None,
+                "tokens_in": llm_reply.tokens_in if llm_reply else None,
+                "tokens_out": llm_reply.tokens_out if llm_reply else None,
+                "tts_audio_bytes": len(tts_audio.payload) if tts_audio else 0,
+                "tts_audio_path": str(tts_audio.path) if tts_audio else None,
+                "max_rss_mb": _max_rss_mb(),
+                "error": "; ".join(errors) if errors else None,
+            }
+        )
+    return results
+
+
+def print_voice_stack_benchmark_results(
+    results: list[dict[str, Any]], *, json_output: bool = False
+) -> None:
+    if json_output:
+        print(json.dumps({"results": results}, indent=2))
+        return
+    for result in results:
+        print(
+            f"round={result['round']} llm={result['llm_model']} "
+            f"tts={result['tts_provider']}:{result['tts_model']}"
+        )
+        print(
+            f"  elapsed={result['elapsed_seconds']}s "
+            f"llm={result['llm_latency_ms']}ms tts={result['tts_latency_ms']}ms "
+            f"tts_bytes={result['tts_audio_bytes']} max_rss={result['max_rss_mb']}MB"
+        )
+        if result.get("tts_audio_path"):
+            print(f"  audio={result['tts_audio_path']}")
+        if result.get("error"):
+            print(f"  error: {result['error']}")
 
 
 def make_smoke_audio(output_path: Path) -> str:
@@ -106,6 +199,27 @@ def print_benchmark_results(results: list[dict[str, Any]], *, json_output: bool 
             print(f"  wer={result['wer']:.4f}")
         if result.get("text_preview"):
             print(f"  text={result['text_preview']}")
+
+
+def _synthesize_voice_stack_tts(text: str, settings: Settings, output_dir: Path):
+    provider = normalize_tts_provider(settings.tts_provider)
+    if is_tts_sidecar_provider(provider):
+        return synthesize_with_tts_sidecar(text, settings, output_dir)
+    if provider == "piper":
+        return synthesize_with_piper(text, settings, output_dir)
+    raise RuntimeError(f"TTS provider {provider!r} does not produce benchmark audio")
+
+
+def _tts_model_for_benchmark(settings: Settings, provider: str) -> str:
+    if is_tts_sidecar_provider(provider):
+        return settings.tts_model
+    if provider == "piper":
+        return settings.piper_voice or settings.piper_executable
+    return provider
+
+
+def _component_error(component: str, exc: Exception) -> str:
+    return f"{component}: {type(exc).__name__}: {exc}"
 
 
 def _settings_for_provider(settings: Settings, provider: str) -> Settings:

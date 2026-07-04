@@ -909,6 +909,7 @@ Suggested controls:
 
 ### Manual Jetson Tests
 
+- [x] Add `atlas-voice benchmark-voice-stack` for repeatable Qwen + TTS concurrency runs.
 - [ ] Idle load.
 - [ ] Qwen + faster-qwen3-tts concurrency.
 - [ ] Qwen + Piper concurrency.
