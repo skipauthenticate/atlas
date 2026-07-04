@@ -773,7 +773,7 @@ Measure observable behaviors:
 
 - [x] Talk/listen ratio.
 - [x] Question ratio.
-- [ ] Reflection ratio.
+- [x] Reflection ratio.
 - [ ] Interruptions/overlap.
 - [ ] Hedging.
 - [ ] Specificity of commitments.

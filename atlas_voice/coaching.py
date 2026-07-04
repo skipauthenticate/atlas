@@ -421,6 +421,7 @@ def _conversation_signal_message(
         _talk_listen_message(metrics),
         f"Affirmations: {metrics['affirmation_count']}",
         f"Reflections: {metrics['reflection_count']}",
+        f"Reflection ratio: {metrics['reflection_ratio']}",
         f"Summaries: {metrics['summary_count']}",
         f"Change talk: {metrics['change_talk_count']}",
         f"Sustain talk: {metrics['sustain_talk_count']}",

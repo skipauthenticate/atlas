@@ -616,8 +616,9 @@ class WebTests(unittest.TestCase):
                 {"label": "Affirmations", "value": 0.4, "display": "40%"},
                 payload["headline_metrics"],
             )
+            self.assertEqual(payload["averages"]["reflection_ratio"], 0.3)
             self.assertIn(
-                {"label": "Reflections", "value": 0.3, "display": "30%"},
+                {"label": "Reflection ratio", "value": 0.3, "display": "30%"},
                 payload["headline_metrics"],
             )
             self.assertIn(
@@ -646,7 +647,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Talk/listen ratio", voice_response.text)
             self.assertIn("Open questions", voice_response.text)
             self.assertIn("Affirmations", voice_response.text)
-            self.assertIn("Reflections", voice_response.text)
+            self.assertIn("Reflection ratio", voice_response.text)
             self.assertIn("Summaries", voice_response.text)
             self.assertIn("Change talk", voice_response.text)
             self.assertIn("Sustain talk", voice_response.text)
