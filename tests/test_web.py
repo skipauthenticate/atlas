@@ -560,6 +560,7 @@ class WebTests(unittest.TestCase):
                         "change_talk_ratio": 0.35,
                         "sustain_talk_ratio": 0.15,
                         "autonomy_support_ratio": 0.67,
+                        "interruption_overlap_ratio": 0.12,
                         "follow_through": 0.5,
                     }
                 },
@@ -637,6 +638,10 @@ class WebTests(unittest.TestCase):
                 {"label": "Autonomy support", "value": 0.67, "display": "67%"},
                 payload["headline_metrics"],
             )
+            self.assertIn(
+                {"label": "Interruptions/overlap", "value": 0.12, "display": "12%"},
+                payload["headline_metrics"],
+            )
             self.assertEqual(payload["categories"]["conversation_signals"], 1)
             self.assertEqual(payload["categories"]["writing_signals"], 1)
             self.assertEqual(voice_response.status_code, 200)
@@ -652,6 +657,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Change talk", voice_response.text)
             self.assertIn("Sustain talk", voice_response.text)
             self.assertIn("Autonomy support", voice_response.text)
+            self.assertIn("Interruptions/overlap", voice_response.text)
             self.assertIn("82%", voice_response.text)
             self.assertIn("0.42:1", voice_response.text)
             self.assertIn("25%", voice_response.text)
@@ -662,6 +668,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("35%", voice_response.text)
             self.assertIn("15%", voice_response.text)
             self.assertIn("67%", voice_response.text)
+            self.assertIn("12%", voice_response.text)
             self.assertIn("Conversation Signals - Coaching progress session", voice_response.text)
             self.assertIn("Writing Signals - Launch note", voice_response.text)
 

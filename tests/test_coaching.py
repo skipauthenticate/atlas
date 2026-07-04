@@ -199,6 +199,27 @@ class CoachingSummaryTests(unittest.TestCase):
                 text="Need owner for demo.",
                 source_provider="text",
             )
+            db.add_utterance(
+                session_id=session_id,
+                text="Interrupting for one quick clarification.",
+                source_provider="interruption",
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="First overlapping speaker continues the launch point.",
+                source_provider="text",
+                speaker="SPEAKER_00",
+                start=10.0,
+                end=12.0,
+            )
+            db.add_utterance(
+                session_id=session_id,
+                text="Second overlapping speaker starts before the first ends.",
+                source_provider="text",
+                speaker="SPEAKER_01",
+                start=11.5,
+                end=13.0,
+            )
             db.add_assistant_turn(
                 session_id=session_id,
                 text="You could choose the smallest launch test, then pause and decide what still feels useful.",
@@ -209,29 +230,33 @@ class CoachingSummaryTests(unittest.TestCase):
 
             self.assertEqual(dry_run.status, "ok")
             self.assertIsNone(dry_run.event_id)
-            self.assertEqual(dry_run.metrics["utterance_count"], 11)
+            self.assertEqual(dry_run.metrics["utterance_count"], 14)
             self.assertEqual(dry_run.metrics["assistant_turn_count"], 1)
-            self.assertEqual(dry_run.metrics["user_word_count"], 95)
+            self.assertEqual(dry_run.metrics["user_word_count"], 115)
             self.assertEqual(dry_run.metrics["assistant_word_count"], 15)
-            self.assertEqual(dry_run.metrics["talk_listen_ratio"], 0.158)
+            self.assertEqual(dry_run.metrics["talk_listen_ratio"], 0.13)
             self.assertEqual(dry_run.metrics["question_count"], 2)
-            self.assertEqual(dry_run.metrics["question_ratio"], 0.182)
+            self.assertEqual(dry_run.metrics["question_ratio"], 0.143)
             self.assertEqual(dry_run.metrics["open_question_count"], 1)
             self.assertEqual(dry_run.metrics["closed_question_count"], 1)
             self.assertEqual(dry_run.metrics["open_question_ratio"], 0.5)
             self.assertEqual(dry_run.metrics["affirmation_count"], 1)
-            self.assertEqual(dry_run.metrics["affirmation_ratio"], 0.091)
+            self.assertEqual(dry_run.metrics["affirmation_ratio"], 0.071)
             self.assertEqual(dry_run.metrics["reflection_count"], 1)
-            self.assertEqual(dry_run.metrics["reflection_ratio"], 0.091)
+            self.assertEqual(dry_run.metrics["reflection_ratio"], 0.071)
             self.assertEqual(dry_run.metrics["summary_count"], 1)
-            self.assertEqual(dry_run.metrics["summary_ratio"], 0.091)
+            self.assertEqual(dry_run.metrics["summary_ratio"], 0.071)
             self.assertEqual(dry_run.metrics["change_talk_count"], 2)
-            self.assertEqual(dry_run.metrics["change_talk_ratio"], 0.182)
+            self.assertEqual(dry_run.metrics["change_talk_ratio"], 0.143)
             self.assertEqual(dry_run.metrics["sustain_talk_count"], 1)
-            self.assertEqual(dry_run.metrics["sustain_talk_ratio"], 0.091)
+            self.assertEqual(dry_run.metrics["sustain_talk_ratio"], 0.071)
             self.assertEqual(dry_run.metrics["autonomy_respecting_suggestion_count"], 1)
             self.assertEqual(dry_run.metrics["directive_suggestion_count"], 1)
             self.assertEqual(dry_run.metrics["autonomy_support_ratio"], 0.5)
+            self.assertEqual(dry_run.metrics["interruption_count"], 1)
+            self.assertEqual(dry_run.metrics["overlap_count"], 1)
+            self.assertEqual(dry_run.metrics["interruption_overlap_count"], 2)
+            self.assertEqual(dry_run.metrics["interruption_overlap_ratio"], 0.143)
             self.assertEqual(dry_run.metrics["commitment_count"], 1)
             self.assertGreater(dry_run.metrics["clarity"], 0)
             self.assertGreater(dry_run.metrics["concision"], 0)
@@ -245,29 +270,35 @@ class CoachingSummaryTests(unittest.TestCase):
             self.assertEqual(events[0]["event_type"], "coaching.conversation_signals")
             self.assertEqual(events[0]["session_id"], session_id)
             self.assertEqual(events[0]["metadata"]["signals"]["question_count"], 2)
-            self.assertEqual(events[0]["metadata"]["signals"]["question_ratio"], 0.182)
+            self.assertEqual(events[0]["metadata"]["signals"]["question_ratio"], 0.143)
             self.assertEqual(events[0]["metadata"]["signals"]["question_ratio"], stored.metrics["question_ratio"])
             self.assertEqual(events[0]["metadata"]["signals"]["open_question_count"], 1)
-            self.assertEqual(events[0]["metadata"]["signals"]["user_word_count"], 95)
+            self.assertEqual(events[0]["metadata"]["signals"]["user_word_count"], 115)
             self.assertEqual(events[0]["metadata"]["signals"]["assistant_word_count"], 15)
-            self.assertEqual(events[0]["metadata"]["signals"]["talk_listen_ratio"], 0.158)
+            self.assertEqual(events[0]["metadata"]["signals"]["talk_listen_ratio"], 0.13)
             self.assertEqual(events[0]["metadata"]["signals"]["affirmation_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["reflection_count"], 1)
-            self.assertEqual(events[0]["metadata"]["signals"]["reflection_ratio"], 0.091)
+            self.assertEqual(events[0]["metadata"]["signals"]["reflection_ratio"], 0.071)
             self.assertEqual(events[0]["metadata"]["signals"]["summary_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["change_talk_count"], 2)
             self.assertEqual(events[0]["metadata"]["signals"]["sustain_talk_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["autonomy_respecting_suggestion_count"], 1)
             self.assertEqual(events[0]["metadata"]["signals"]["directive_suggestion_count"], 1)
-            self.assertIn("Question ratio: 0.182", events[0]["message"])
+            self.assertEqual(events[0]["metadata"]["signals"]["interruption_count"], 1)
+            self.assertEqual(events[0]["metadata"]["signals"]["overlap_count"], 1)
+            self.assertEqual(events[0]["metadata"]["signals"]["interruption_overlap_count"], 2)
+            self.assertEqual(events[0]["metadata"]["signals"]["interruption_overlap_ratio"], 0.143)
+            self.assertIn("Question ratio: 0.143", events[0]["message"])
             self.assertIn("Open questions: 1/2", events[0]["message"])
-            self.assertIn("Talk/listen ratio: 15/95 (0.158)", events[0]["message"])
+            self.assertIn("Talk/listen ratio: 15/115 (0.13)", events[0]["message"])
             self.assertIn("Affirmations: 1", events[0]["message"])
             self.assertIn("Reflections: 1", events[0]["message"])
-            self.assertIn("Reflection ratio: 0.091", events[0]["message"])
+            self.assertIn("Reflection ratio: 0.071", events[0]["message"])
             self.assertIn("Summaries: 1", events[0]["message"])
             self.assertIn("Change talk: 2", events[0]["message"])
             self.assertIn("Sustain talk: 1", events[0]["message"])
+            self.assertIn("Interruptions/overlap: 2", events[0]["message"])
+            self.assertIn("Overlap: 1", events[0]["message"])
             self.assertIn("Autonomy-respecting suggestions: 1/2", events[0]["message"])
             self.assertIn("Directive suggestions: 1", events[0]["message"])
             self.assertIn("Conversation Signals", events[0]["message"])

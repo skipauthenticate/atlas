@@ -364,6 +364,8 @@ def _conversation_signal_metrics(
     commitment_count = _commitment_count(utterances)
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
+    overlap_count = _overlap_count(utterances)
+    interruption_overlap_count = interruption_count + overlap_count
     word_counts = [_word_count(str(item.get("text") or "")) for item in utterances]
     user_word_count = sum(word_counts)
     assistant_word_count = sum(_word_count(str(item.get("text") or "")) for item in turns)
@@ -400,6 +402,9 @@ def _conversation_signal_metrics(
         "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
         "actionable_next_steps": actionable_count,
         "interruption_count": interruption_count if interruption_count else None,
+        "overlap_count": overlap_count if overlap_count else None,
+        "interruption_overlap_count": interruption_overlap_count if interruption_overlap_count else None,
+        "interruption_overlap_ratio": round(interruption_overlap_count / utterance_count, 3) if utterance_count else 0.0,
         "concision": round(concise_utterances / utterance_count, 3) if utterance_count else 0.0,
         "clarity": round(clear_utterances / utterance_count, 3) if utterance_count else 0.0,
         "average_words": round(avg_words, 1),
@@ -435,6 +440,11 @@ def _conversation_signal_message(
         lines.append(f"Interruptions: {metrics['interruption_count']}")
     else:
         lines.append("Interruptions: unavailable")
+    if metrics.get("interruption_overlap_count") is not None:
+        lines.append(f"Interruptions/overlap: {metrics['interruption_overlap_count']}")
+        lines.append(f"Overlap: {metrics.get('overlap_count') or 0}")
+    else:
+        lines.append("Interruptions/overlap: unavailable")
     return "\n".join(lines)
 
 
@@ -799,6 +809,33 @@ def _interruption_count(utterances: list[dict[str, Any]]) -> int:
         if "interrupt" in str(item.get("text") or "").lower()
         or str(item.get("source_provider") or "").lower() == "interruption"
     )
+
+
+def _overlap_count(utterances: list[dict[str, Any]]) -> int:
+    timed: list[tuple[float, float, str, int]] = []
+    for index, item in enumerate(utterances):
+        start = _optional_float(item.get("start"))
+        end = _optional_float(item.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        timed.append((start, end, str(item.get("speaker") or ""), index))
+    count = 0
+    for index, (start, end, speaker, original_index) in enumerate(timed):
+        for other_start, other_end, other_speaker, other_index in timed[index + 1 :]:
+            if other_start >= end:
+                break
+            if original_index == other_index or (speaker and speaker == other_speaker):
+                continue
+            if start < other_end and other_start < end:
+                count += 1
+    return count
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_clear_text(text: str) -> bool:
