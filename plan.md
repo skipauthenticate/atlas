@@ -762,7 +762,7 @@ reflection, skill practice, and feedback.
 Use Motivational Interviewing as the conversation-quality backbone:
 
 - [x] Open questions.
-- [ ] Affirmations.
+- [x] Affirmations.
 - [ ] Reflections.
 - [ ] Summaries.
 - [ ] Change talk versus sustain talk.

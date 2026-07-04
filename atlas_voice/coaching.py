@@ -353,6 +353,7 @@ def _conversation_signal_metrics(
     question_count = _question_count(utterances)
     open_question_count = _open_question_count(utterances)
     closed_question_count = max(question_count - open_question_count, 0)
+    affirmation_count = _affirmation_count(utterances)
     commitment_count = _commitment_count(utterances)
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
@@ -368,6 +369,8 @@ def _conversation_signal_metrics(
         "open_question_count": open_question_count,
         "closed_question_count": closed_question_count,
         "open_question_ratio": round(open_question_count / question_count, 3) if question_count else 0.0,
+        "affirmation_count": affirmation_count,
+        "affirmation_ratio": round(affirmation_count / utterance_count, 3) if utterance_count else 0.0,
         "commitment_count": commitment_count,
         "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
         "actionable_next_steps": actionable_count,
@@ -390,6 +393,7 @@ def _conversation_signal_message(
         f"Concision: {metrics['concision']}",
         f"Question ratio: {metrics['question_ratio']}",
         f"Open questions: {metrics['open_question_count']}/{metrics['question_count']}",
+        f"Affirmations: {metrics['affirmation_count']}",
         f"Follow-through: {metrics['follow_through']}",
         f"Commitments: {metrics['commitment_count']}",
         f"Actionable next steps: {metrics['actionable_next_steps']}",
@@ -592,6 +596,25 @@ def _is_open_question(text: str) -> bool:
         "in what way",
     )
     return any(part.startswith(openers) for part in question_parts)
+
+
+def _affirmation_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _is_affirmation(str(item.get("text") or "")))
+
+
+def _is_affirmation(text: str) -> bool:
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    if not normalized or "?" in normalized:
+        return False
+    patterns = (
+        r"\b(i|we)\s+(appreciate|value|respect|admire)\b.+\b(you|your|how)\b",
+        r"\b(i'?m|i am|we are)\s+impressed\b.+\b(you|your|how)\b",
+        r"\b(great|good|nice|strong)\s+(job|work|point|catch)\b",
+        r"\bwell done\b",
+        r"\byou\s+(handled|showed|demonstrated|did|were|are)\b.+\b(clear|clearly|thoughtful|strong|careful|brave|patient|focused|prepared)\b",
+        r"\bthat shows\b.+\b(strength|care|commitment|progress|thoughtfulness)\b",
+    )
+    return any(re.search(pattern, normalized, re.I) for pattern in patterns)
 
 
 def _commitment_count(utterances: list[dict[str, Any]]) -> int:
