@@ -5,7 +5,7 @@
 {% endblock %}
 
 {% block content %}
-  <div class="voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
+  <div class="voice-workbench" data-layout="atlas-voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
     <nav class="voice-rail" aria-label="Voice workspace">
       <a href="/">Home</a>
       <a href="/voice" class="active">Voice</a>

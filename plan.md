@@ -924,7 +924,7 @@ Suggested controls:
 
 - [x] Desktop width: no overlap, readable controls, working transport, clear privacy state.
 - [x] Mobile width: no overlap, readable controls, working transport, clear privacy state.
-- [ ] Voice workbench follows ElevenLabs-inspired structure without copying branding, assets, or exact layouts.
+- [x] Voice workbench follows ElevenLabs-inspired structure without copying branding, assets, or exact layouts.
 
 ## Assumptions
 

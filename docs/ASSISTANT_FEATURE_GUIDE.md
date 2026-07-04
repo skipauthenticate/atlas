@@ -219,7 +219,10 @@ each playground result. The Ambient Timeline on `/voice` surfaces recent ambient
 meeting, private, and paused sessions with their latest utterance preview. The
 workbench keeps card framing restrained to repeated row items such as sessions,
 models, and timeline entries; playground sections remain unframed inside the main
-work surface. The desktop/tablet/mobile layout is covered by static QA checks
+work surface. The workbench root carries the Atlas-owned
+`data-layout="atlas-voice-workbench"` marker, and production UI static checks
+reject ElevenLabs branding, URLs, or copied external assets. The
+desktop/tablet/mobile layout is covered by static QA checks
 for bounded workbench columns, stacked narrow-screen controls, fixed-size
 transport buttons, bounded playback/status text, clear privacy/service state
 pills, and reduced mobile waveform density. Realtime VAD/end-of-turn behavior

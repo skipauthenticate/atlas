@@ -40,6 +40,44 @@ class VoiceUiStaticTests(unittest.TestCase):
         )
         self.assertIn("max-width: 100%", workbench)
 
+    def test_voice_workbench_uses_atlas_owned_inspired_structure(self) -> None:
+        template = Path("atlas_voice/web/templates/voice.html").read_text()
+
+        self.assertIn('class="voice-workbench"', template)
+        self.assertIn('data-layout="atlas-voice-workbench"', template)
+        ordered_markers = [
+            '<nav class="voice-rail"',
+            '<section class="voice-main"',
+            '<aside class="voice-inspector"',
+            '<footer class="voice-transport"',
+        ]
+        positions = [template.index(marker) for marker in ordered_markers]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('aria-label="Voice workspace"', template)
+        self.assertIn('aria-label="Voice console"', template)
+        self.assertIn('aria-label="Voice inspector"', template)
+        self.assertIn('aria-label="Transport"', template)
+
+    def test_voice_ui_assets_do_not_copy_elevenlabs_branding_or_external_assets(self) -> None:
+        production_ui = "\n".join(
+            Path(path).read_text().lower()
+            for path in (
+                "atlas_voice/web/templates/voice.html",
+                "atlas_voice/web/static/app.css",
+                "atlas_voice/web/static/voice.js",
+            )
+        )
+
+        prohibited = (
+            "elevenlabs",
+            "eleven labs",
+            "eleven-labs",
+            "elevenlabs.io",
+            "elevenlabs.com",
+        )
+        for term in prohibited:
+            self.assertNotIn(term, production_ui)
+
     def test_voice_transport_and_status_text_have_stable_readable_bounds(self) -> None:
         css = Path("atlas_voice/web/static/app.css").read_text()
         transport_button = self._css_block(css, ".voice-transport button")
