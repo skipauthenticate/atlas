@@ -120,8 +120,10 @@ Supported event paths include `input_text`, `conversation.item.create` plus
 The interrupt control sends `response.cancel`; if a response is in progress, the
 backend cancels the active response task and acknowledges with `response.cancelled`
 without persisting an assistant turn or model run. New user text, `response.create`,
-or committed audio that arrives while a response is active is treated as barge-in:
-the active response is cancelled with reason `barge_in`, then the new turn starts.
+audio speech-start, streaming text, or committed audio that arrives while a
+response is active is treated as barge-in: the active response is cancelled with
+reason `barge_in`, playback is cleared in the browser, and the new turn can start
+from the incoming speech or text.
 If no response is active, `response.cancel` is treated as an interruption signal
 and acknowledged with `response.interrupted` after clearing pending text and
 buffered audio. In the browser console, Interrupt, Pause, and Private also

@@ -352,7 +352,7 @@ Runs when the user is talking to Atlas directly:
 - [x] Optional local Piper TTS integration.
 - [x] faster-qwen3-tts sidecar integration.
 - [x] Streaming STT rather than commit-time transcription.
-- [ ] Barge-in.
+- [x] Barge-in.
 - [ ] Tool calls with confirmation gates.
 
 Likely stack:

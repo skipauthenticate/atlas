@@ -1504,6 +1504,92 @@ class WebTests(unittest.TestCase):
             self.assertEqual(len(model_runs), 1)
             self.assertEqual(model_runs[0]["input_ref"], f"utterance:{utterances[1]['id']}")
 
+    def test_realtime_websocket_vad_speech_start_barges_in_before_audio_commit(self) -> None:
+        keys = [
+            "ATLAS_VOICE_DATA_DIR",
+            "ATLAS_VOICE_MODELS_DIR",
+            "ATLAS_VOICE_HF_CACHE",
+            "ATLAS_VOICE_ASSISTANT_CONFIG",
+            "ATLAS_ASSISTANT_ENABLED",
+            "ATLAS_VOICE_TTS_PROVIDER",
+            "ATLAS_VOICE_STUB_MODE",
+            "ATLAS_VOICE_REALTIME_AUDIO_SAMPLE_RATE",
+            "ATLAS_VOICE_REALTIME_AUDIO_CHANNELS",
+            "ATLAS_VOICE_REALTIME_VAD_ENABLED",
+            "ATLAS_VOICE_REALTIME_VAD_THRESHOLD",
+            "ATLAS_VOICE_REALTIME_VAD_MIN_SPEECH_MS",
+            "ATLAS_VOICE_REALTIME_VAD_SILENCE_MS",
+            "WHISPERX_DEVICE",
+            "WHISPERX_MODEL",
+            "WHISPERX_COMPUTE_TYPE",
+        ]
+        old_env = {key: os.environ.get(key) for key in keys}
+        try:
+            with TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+                os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+                os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+                os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+                os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+                os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+                os.environ["ATLAS_VOICE_REALTIME_AUDIO_SAMPLE_RATE"] = "16000"
+                os.environ["ATLAS_VOICE_REALTIME_AUDIO_CHANNELS"] = "1"
+                os.environ["ATLAS_VOICE_REALTIME_VAD_ENABLED"] = "true"
+                os.environ["ATLAS_VOICE_REALTIME_VAD_THRESHOLD"] = "1000"
+                os.environ["ATLAS_VOICE_REALTIME_VAD_MIN_SPEECH_MS"] = "100"
+                os.environ["ATLAS_VOICE_REALTIME_VAD_SILENCE_MS"] = "100"
+                os.environ["WHISPERX_DEVICE"] = "cpu"
+                os.environ["WHISPERX_MODEL"] = "tiny.en"
+                os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                client = TestClient(web_app.app)
+                started = threading.Event()
+                release = threading.Event()
+
+                def slow_reply(*_args, **_kwargs) -> RealtimeReply:
+                    started.set()
+                    release.wait(2.0)
+                    return RealtimeReply(text="Too late", latency_ms=200, tokens_in=1, tokens_out=2)
+
+                speech = base64.b64encode(_pcm_tone(16000, 0.2, amplitude=7000)).decode("ascii")
+
+                with patch.object(web_app, "generate_realtime_reply", side_effect=slow_reply):
+                    with client.websocket_connect("/v1/realtime") as websocket:
+                        created = websocket.receive_json()
+                        session_id = created["session"]["id"]
+                        websocket.send_json({"type": "input_text", "text": "Keep talking"})
+                        first_events = _receive_until(websocket, "response.created")
+                        first_response_id = first_events[-1]["response"]["id"]
+                        self.assertTrue(started.wait(1.0))
+                        websocket.send_json({"type": "input_audio_buffer.append", "audio": speech})
+                        appended = websocket.receive_json()
+                        speech_started = websocket.receive_json()
+                        cancelled = websocket.receive_json()
+                        release.set()
+
+                self.assertEqual(appended["type"], "input_audio_buffer.appended")
+                self.assertEqual(speech_started["type"], "input_audio_buffer.speech_started")
+                self.assertEqual(cancelled["type"], "response.cancelled")
+                self.assertEqual(cancelled["response"]["id"], first_response_id)
+                self.assertEqual(cancelled["reason"], "barge_in")
+                self.assertEqual(web_app.db.list_utterances(session_id)[0]["text"], "Keep talking")
+                self.assertEqual(web_app.db.list_assistant_turns(session_id), [])
+                self.assertEqual(web_app.db.list_model_runs(), [])
+        finally:
+            for key, value in old_env.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+
     def test_realtime_websocket_emits_confirmation_gated_tool_call_events(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

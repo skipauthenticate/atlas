@@ -1255,6 +1255,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         "input_audio_buffer.speech_started",
                         audio_start_ms=max(vad.speech_ms - realtime_settings.realtime_vad_min_speech_ms, 0),
                     )
+                    await cancel_active_response("barge_in")
                 if vad.end_of_turn:
                     await _send_realtime_event(
                         websocket,
