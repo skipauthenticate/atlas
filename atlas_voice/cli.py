@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 import subprocess
@@ -38,6 +39,7 @@ from .memory import (
 from .retention import apply_ambient_retention
 from .benchmark import make_smoke_audio, print_benchmark_results, run_asr_benchmark
 from .storage import is_audio_file
+from .tts_validation import DEFAULT_TTS_VALIDATION_TEXT, validate_tts_sidecar
 from .worker import Worker
 
 
@@ -205,6 +207,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Minimum transcript characters required for success",
     )
     validate_brio.set_defaults(func=cmd_validate_brio)
+
+    validate_tts = subparsers.add_parser(
+        "validate-tts-sidecar",
+        help="Validate the configured local faster-qwen3-tts sidecar",
+    )
+    validate_tts.add_argument(
+        "--text",
+        default=DEFAULT_TTS_VALIDATION_TEXT,
+        help="Text to synthesize during validation",
+    )
+    validate_tts.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Directory for the synthesized validation audio",
+    )
+    validate_tts.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    validate_tts.set_defaults(func=cmd_validate_tts_sidecar)
 
     benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
@@ -745,6 +764,32 @@ def cmd_validate_brio(args: argparse.Namespace) -> int:
         f"BRIO validation ok: device={result.device} provider={result.provider} "
         f"audio={result.audio_path} transcript={result.transcript[:120]!r}"
     )
+    return 0
+
+
+def cmd_validate_tts_sidecar(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    assistant_config = load_assistant_config(settings.assistant_config_path)
+    voice_settings = settings_for_profile(settings, assistant_config, "direct_voice")
+    output_dir = args.output_dir or voice_settings.artifacts_dir / "tts-validation"
+    try:
+        result = validate_tts_sidecar(
+            voice_settings,
+            text=args.text,
+            output_dir=output_dir,
+        )
+    except Exception as exc:
+        print(f"TTS sidecar validation failed: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result.as_dict(), sort_keys=True))
+    else:
+        print(
+            "TTS sidecar validation ok: "
+            f"provider={result.provider} model={result.model} "
+            f"audio={result.audio_path} bytes={result.audio_bytes} "
+            f"health={result.health_latency_ms}ms synthesis={result.synthesis_latency_ms}ms"
+        )
     return 0
 
 

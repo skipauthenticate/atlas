@@ -401,7 +401,7 @@ Status: complete.
 
 ### Phase 1: TTS Sidecar Spike
 
-Status: partial. Atlas-side client, health, logging, and tests exist; external sidecar runtime validation remains.
+Status: partial. Atlas-side client, health, logging, validation command, and tests exist; external sidecar runtime validation remains.
 
 - [ ] Run `faster-qwen3-tts` outside the Atlas venv as a localhost sidecar.
 - [ ] Start with 0.6B.
@@ -413,6 +413,7 @@ Status: partial. Atlas-side client, health, logging, and tests exist; external s
   - `ATLAS_VOICE_PIPER_EXECUTABLE=piper`
   - `ATLAS_VOICE_PIPER_VOICE=/path/to/voice.onnx`
 - [x] Add faster-qwen3-tts health check.
+- [x] Add `atlas-voice validate-tts-sidecar`.
 - [x] Add TTS sidecar latency/model-run logging.
 - [x] Add TTS sidecar integration tests.
 

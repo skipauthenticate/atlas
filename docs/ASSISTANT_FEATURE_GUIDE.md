@@ -75,11 +75,18 @@ Keep the sidecar outside the Atlas virtualenv so heavy model dependencies do not
 pollute the application runtime. Start with the 0.6B model on Jetson AGX Orin
 64GB, then test 1.7B only after Qwen plus TTS latency and memory are stable.
 
-Validate readiness through:
+Validate service health and a real synthesis response before using the sidecar in
+voice sessions:
 
 ```bash
 curl -fsS http://127.0.0.1:8787/api/assistant/health | python -m json.tool
+atlas-voice validate-tts-sidecar --output-dir ./data/artifacts/tts-validation
 ```
+
+Use `--json` for benchmark logs or automation. The command uses the direct voice
+profile, probes the configured health URL, synthesizes a short local phrase,
+writes the returned audio file, and exits non-zero if the sidecar is disabled,
+unhealthy, unreachable, or returns empty audio.
 
 Piper remains available as a local fallback:
 
