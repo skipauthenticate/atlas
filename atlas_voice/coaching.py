@@ -351,6 +351,8 @@ def _conversation_signal_metrics(
 ) -> dict[str, float | int | None]:
     utterance_count = len(utterances)
     question_count = _question_count(utterances)
+    open_question_count = _open_question_count(utterances)
+    closed_question_count = max(question_count - open_question_count, 0)
     commitment_count = _commitment_count(utterances)
     actionable_count = _actionable_next_step_count(utterances)
     interruption_count = _interruption_count(utterances)
@@ -363,6 +365,9 @@ def _conversation_signal_metrics(
         "assistant_turn_count": len(turns),
         "question_count": question_count,
         "question_ratio": round(question_count / utterance_count, 3) if utterance_count else 0.0,
+        "open_question_count": open_question_count,
+        "closed_question_count": closed_question_count,
+        "open_question_ratio": round(open_question_count / question_count, 3) if question_count else 0.0,
         "commitment_count": commitment_count,
         "follow_through": round(commitment_count / utterance_count, 3) if utterance_count else 0.0,
         "actionable_next_steps": actionable_count,
@@ -384,6 +389,7 @@ def _conversation_signal_message(
         f"Clarity: {metrics['clarity']}",
         f"Concision: {metrics['concision']}",
         f"Question ratio: {metrics['question_ratio']}",
+        f"Open questions: {metrics['open_question_count']}/{metrics['question_count']}",
         f"Follow-through: {metrics['follow_through']}",
         f"Commitments: {metrics['commitment_count']}",
         f"Actionable next steps: {metrics['actionable_next_steps']}",
@@ -564,6 +570,28 @@ def _suggested_focus(question_count: int, commitment_count: int, utterance_count
 
 def _question_count(utterances: list[dict[str, Any]]) -> int:
     return sum(1 for item in utterances if "?" in str(item.get("text") or ""))
+
+
+def _open_question_count(utterances: list[dict[str, Any]]) -> int:
+    return sum(1 for item in utterances if _is_open_question(str(item.get("text") or "")))
+
+
+def _is_open_question(text: str) -> bool:
+    question_parts = [part.strip().lower() for part in re.split(r"[?]+", text) if part.strip()]
+    openers = (
+        "what ",
+        "how ",
+        "why ",
+        "when ",
+        "where ",
+        "who ",
+        "which ",
+        "tell me",
+        "describe ",
+        "walk me through",
+        "in what way",
+    )
+    return any(part.startswith(openers) for part in question_parts)
 
 
 def _commitment_count(utterances: list[dict[str, Any]]) -> int:
