@@ -129,11 +129,14 @@ and acknowledged with `response.interrupted` after clearing pending text and
 buffered audio. In the browser console, Interrupt, Pause, and Private also
 stop an active mic recording, discard queued mic chunks with
 `input_audio_buffer.clear`, and avoid committing partial speech. OpenAI-style
-model `tool_calls` are normalized, emitted as
-`response.tool_call.created`, gated with `response.tool_call.requires_confirmation`
-when the direct voice profile requires confirmation, shown in the `/voice`
-transcript, and persisted on the assistant turn. Local tool execution and the
-full tool registry remain separate planned items. When TTS is configured, assistant
+model `tool_calls` are normalized, checked against the local tool registry,
+emitted as `response.tool_call.created`, then emitted as `response.tool_call.ready`,
+`response.tool_call.requires_confirmation`, or `response.tool_call.denied`.
+Registry `confirm` or `mutating` tools always require confirmation, unknown or
+`deny` tools are blocked, and the direct voice profile can require confirmation
+for all calls. Calls are shown in the `/voice` transcript and persisted on the
+assistant turn; local tool execution remains a separate runtime concern. When TTS
+is configured, assistant
 audio is returned as `response.audio.delta`, queued in the browser playback
 control on `/voice`, and stored under `data/artifacts/realtime/`. Use the
 transport Mic button to request browser microphone access, stream
@@ -455,8 +458,11 @@ Local tool definition and permission files live in `config/tools/*.yaml`. Each
 file defines a `tools` mapping with id, name, description, handler, mutating flag,
 permission policy (`allow`, `confirm`, or `deny`), and parameter descriptions.
 Load tools with `load_tool_registry()` or set `ATLAS_VOICE_TOOLS_DIR` for
-deployment-specific allow/confirmation policy overrides. Tool execution remains a
-separate runtime concern; this registry is the local policy source.
+deployment-specific allow/confirmation policy overrides. Realtime tool calls use
+this registry as the local policy source: `allow` non-mutating tools can be marked
+ready, `confirm` or mutating tools require confirmation, and `deny` or unknown
+tools are blocked with `response.tool_call.denied`. Tool execution remains a
+separate runtime concern.
 
 ## Jetson Operating Notes
 

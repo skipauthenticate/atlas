@@ -353,7 +353,7 @@ Runs when the user is talking to Atlas directly:
 - [x] faster-qwen3-tts sidecar integration.
 - [x] Streaming STT rather than commit-time transcription.
 - [x] Barge-in.
-- [ ] Tool calls with confirmation gates.
+- [x] Tool calls with confirmation gates.
 
 Likely stack:
 
@@ -836,7 +836,7 @@ Hard requirements:
 - [x] Raw audio retention is explicit and short/transcript-only by default.
 - [x] Provide session/person/date/keyword deletion.
 - [x] Log model runs locally.
-- [ ] Tool calls that mutate files, tasks, or system state require confirmation.
+- [x] Tool calls that mutate files, tasks, or system state require confirmation.
 - [x] Dashboard shows privacy status and active listeners.
 
 Suggested controls:

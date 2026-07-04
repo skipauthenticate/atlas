@@ -48,6 +48,7 @@ from atlas_voice.status import assistant_health as collect_assistant_health
 from atlas_voice.status import runtime_status as collect_runtime_status
 from atlas_voice.storage import safe_filename
 from atlas_voice.summarizer import get_template, list_templates, summary_to_sections
+from atlas_voice.tools import ToolRegistry, ToolRegistryError, load_tool_registry
 from atlas_voice.turn_state import RealtimeTurnState
 
 
@@ -1599,15 +1600,21 @@ async def _emit_realtime_tool_calls(
 ) -> list[dict[str, Any]]:
     stored: list[dict[str, Any]] = []
     require_confirmation = _realtime_requires_tool_confirmation()
+    registry: ToolRegistry | None
+    registry_error: str | None = None
+    try:
+        registry = load_tool_registry()
+    except ToolRegistryError:
+        registry = None
+        registry_error = "tool_registry_error"
+
     for call in tool_calls:
-        safe_call = {
-            "id": str(call.get("id") or f"call_{uuid.uuid4().hex}"),
-            "name": str(call.get("name") or "unknown"),
-            "arguments": call.get("arguments") if isinstance(call.get("arguments"), dict) else {},
-            "mutating": bool(call.get("mutating", False)),
-        }
-        needs_confirmation = require_confirmation or safe_call["mutating"]
-        safe_call["status"] = "requires_confirmation" if needs_confirmation else "ready"
+        safe_call = _realtime_tool_call_with_policy(
+            call,
+            registry=registry,
+            registry_error=registry_error,
+            require_confirmation=require_confirmation,
+        )
         stored.append(safe_call)
         await _send_realtime_event(
             websocket,
@@ -1615,7 +1622,14 @@ async def _emit_realtime_tool_calls(
             response_id=response_id,
             tool_call=safe_call,
         )
-        if needs_confirmation:
+        if safe_call["status"] == "denied":
+            await _send_realtime_event(
+                websocket,
+                "response.tool_call.denied",
+                response_id=response_id,
+                tool_call=safe_call,
+            )
+        elif safe_call["status"] == "requires_confirmation":
             await _send_realtime_event(
                 websocket,
                 "response.tool_call.requires_confirmation",
@@ -1630,6 +1644,43 @@ async def _emit_realtime_tool_calls(
                 tool_call=safe_call,
             )
     return stored
+
+
+def _realtime_tool_call_with_policy(
+    call: dict[str, Any],
+    *,
+    registry: ToolRegistry | None,
+    registry_error: str | None,
+    require_confirmation: bool,
+) -> dict[str, Any]:
+    safe_call = {
+        "id": str(call.get("id") or f"call_{uuid.uuid4().hex}"),
+        "name": str(call.get("name") or "unknown"),
+        "arguments": call.get("arguments") if isinstance(call.get("arguments"), dict) else {},
+        "mutating": bool(call.get("mutating", False)),
+    }
+    if registry is None:
+        safe_call["status"] = "denied"
+        safe_call["reason"] = registry_error or "tool_registry_error"
+        return safe_call
+    try:
+        tool = registry.get(safe_call["name"])
+    except ToolRegistryError:
+        safe_call["status"] = "denied"
+        safe_call["reason"] = "unknown_tool"
+        return safe_call
+
+    safe_call["handler"] = tool.handler
+    safe_call["permission"] = tool.permission
+    safe_call["mutating"] = bool(safe_call["mutating"] or tool.mutating)
+    if not tool.allowed:
+        safe_call["status"] = "denied"
+        safe_call["reason"] = "permission_denied"
+    elif require_confirmation or tool.requires_confirmation or safe_call["mutating"]:
+        safe_call["status"] = "requires_confirmation"
+    else:
+        safe_call["status"] = "ready"
+    return safe_call
 
 
 async def _send_realtime_event(websocket: WebSocket, event_type: str, **payload: Any) -> None:

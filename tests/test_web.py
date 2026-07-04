@@ -1647,6 +1647,90 @@ class WebTests(unittest.TestCase):
             self.assertEqual(turn["tool_calls"][0]["status"], "requires_confirmation")
             self.assertEqual(turn["tool_calls"][0]["arguments"], {"query": "Atlas"})
 
+    def test_realtime_websocket_applies_tool_registry_permission_gates(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            assistant_config = root / "config" / "atlas.assistant.yaml"
+            assistant_config.parent.mkdir(parents=True)
+            assistant_config.write_text(
+                "profiles:\n"
+                "  direct_voice:\n"
+                "    require_tool_confirmation: false\n"
+            )
+            tools_dir = root / "tools"
+            tools_dir.mkdir()
+            (tools_dir / "custom.yaml").write_text(
+                "tools:\n"
+                "  external_shell:\n"
+                "    name: External Shell\n"
+                "    description: Block external shell execution.\n"
+                "    handler: atlas_voice.tools.external_shell\n"
+                "    permission: deny\n"
+                "    mutating: true\n"
+            )
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(assistant_config),
+                "ATLAS_VOICE_TOOLS_DIR": str(tools_dir),
+                "ATLAS_ASSISTANT_ENABLED": "true",
+                "ATLAS_VOICE_TTS_PROVIDER": "none",
+                "ATLAS_VOICE_STUB_MODE": "true",
+                "WHISPERX_DEVICE": "cpu",
+                "WHISPERX_MODEL": "tiny.en",
+                "WHISPERX_COMPUTE_TYPE": "int8",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                client = TestClient(web_app.app)
+                reply = RealtimeReply(
+                    text="I can call local tools.",
+                    latency_ms=8,
+                    tokens_in=2,
+                    tokens_out=4,
+                    tool_calls=[
+                        {"id": "call_search", "name": "search_recordings", "arguments": {"query": "Atlas"}},
+                        {"id": "call_purge", "name": "privacy_purge", "arguments": {"keyword": "secret"}},
+                        {"id": "call_shell", "name": "external_shell", "arguments": {"cmd": "rm -rf /"}},
+                        {"id": "call_missing", "name": "missing_tool", "arguments": {}},
+                    ],
+                )
+
+                with patch.object(web_app, "generate_realtime_reply", return_value=reply):
+                    with client.websocket_connect("/v1/realtime") as websocket:
+                        created = websocket.receive_json()
+                        session_id = created["session"]["id"]
+                        websocket.send_json({"type": "input_text", "text": "Use tools"})
+                        events = _receive_until(websocket, "response.done")
+
+                by_type = {}
+                for event in events:
+                    by_type.setdefault(event["type"], []).append(event)
+                stored_calls = web_app.db.list_assistant_turns(session_id)[0]["tool_calls"]
+                stored_by_id = {call["id"]: call for call in stored_calls}
+
+                ready = by_type["response.tool_call.ready"][0]["tool_call"]
+                confirmation = by_type["response.tool_call.requires_confirmation"][0]["tool_call"]
+                denied = [event["tool_call"] for event in by_type["response.tool_call.denied"]]
+
+                self.assertEqual(ready["id"], "call_search")
+                self.assertEqual(ready["status"], "ready")
+                self.assertEqual(confirmation["id"], "call_purge")
+                self.assertEqual(confirmation["status"], "requires_confirmation")
+                self.assertEqual({call["id"] for call in denied}, {"call_shell", "call_missing"})
+                self.assertEqual(stored_by_id["call_search"]["status"], "ready")
+                self.assertEqual(stored_by_id["call_purge"]["status"], "requires_confirmation")
+                self.assertEqual(stored_by_id["call_shell"]["status"], "denied")
+                self.assertEqual(stored_by_id["call_shell"]["reason"], "permission_denied")
+                self.assertEqual(stored_by_id["call_missing"]["status"], "denied")
+                self.assertEqual(stored_by_id["call_missing"]["reason"], "unknown_tool")
+
+
     def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
