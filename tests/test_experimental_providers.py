@@ -179,6 +179,19 @@ class ExperimentalProviderTests(unittest.TestCase):
         self.assertEqual(realtime_asr_provider_chain(provider_settings), ["faster-whisper"])
 
 
+    def test_realtime_asr_chain_falls_back_when_configured_hyprwhspr_is_unreliable(self) -> None:
+        provider_settings = replace(
+            settings(Path("/tmp/atlas-test"), asr_provider="hyprwhspr"),
+            hyprwhspr_cli="/tmp/missing-hyprwhspr",
+            hyprwhspr_endpoint=None,
+            realtime_asr_prefer_hyprwhspr=True,
+            realtime_asr_fallback_provider="faster-whisper",
+        )
+
+        self.assertEqual(realtime_asr_provider_chain(provider_settings), ["faster-whisper", "hyprwhspr"])
+        self.assertEqual(select_realtime_asr_provider(provider_settings), "faster-whisper")
+
+
     def test_realtime_transcription_falls_back_to_configured_provider(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

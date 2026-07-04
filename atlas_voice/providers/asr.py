@@ -15,11 +15,10 @@ from atlas_voice.providers.whisperx_provider import transcribe_audio as transcri
 
 def realtime_asr_provider_chain(settings: Settings) -> list[str]:
     configured_provider = _normalize_provider(settings.asr_provider)
-    if configured_provider == "hyprwhspr":
-        return ["hyprwhspr"]
-
     providers: list[str] = []
-    if getattr(settings, "realtime_asr_prefer_hyprwhspr", True) and hyprwhspr_reliable(settings):
+
+    prefer_hyprwhspr = getattr(settings, "realtime_asr_prefer_hyprwhspr", True)
+    if prefer_hyprwhspr and hyprwhspr_reliable(settings):
         providers.append("hyprwhspr")
 
     fallback_provider = _normalize_provider(
@@ -27,7 +26,8 @@ def realtime_asr_provider_chain(settings: Settings) -> list[str]:
     )
     if fallback_provider and fallback_provider != "none":
         providers.append(fallback_provider)
-    providers.append(configured_provider)
+    if configured_provider and configured_provider != "none":
+        providers.append(configured_provider)
     return _dedupe(providers)
 
 

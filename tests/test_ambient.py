@@ -126,6 +126,56 @@ class AmbientTests(unittest.TestCase):
             self.assertEqual(session["retention_policy"], "retain_audio_window")
             self.assertTrue((settings.artifacts_dir / "ambient" / result.session_id).exists())
 
+    def test_process_ambient_file_uses_low_latency_asr_fallback_provider(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio_path = root / "meeting.wav"
+            _write_test_wav(audio_path)
+            settings = replace(
+                _settings(root),
+                stub_mode=False,
+                asr_provider="hyprwhspr",
+                hyprwhspr_cli=str(root / "missing-hyprwhspr"),
+                hyprwhspr_endpoint=None,
+                realtime_asr_fallback_provider="faster-whisper",
+            )
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+
+            with mock.patch(
+                "atlas_voice.providers.asr.transcribe_faster_whisper",
+                return_value={
+                    "provider": "faster-whisper",
+                    "model": "large-v3-turbo",
+                    "segments": [
+                        {
+                            "start": 0.0,
+                            "end": 0.8,
+                            "text": "fallback transcript",
+                        }
+                    ],
+                },
+            ) as fallback_mock:
+                result = process_ambient_file(
+                    audio_path,
+                    settings,
+                    db,
+                    mode="meeting",
+                    retain_audio=False,
+                    vad_threshold=1000,
+                    min_speech_seconds=0.2,
+                )
+
+            utterance = db.list_utterances(result.session_id)[0]
+            model_run = db.list_model_runs()[0]
+            self.assertEqual(utterance["text"], "fallback transcript")
+            self.assertEqual(utterance["source_provider"], "faster-whisper")
+            self.assertEqual(model_run["provider"], "faster-whisper")
+            self.assertEqual(model_run["model"], "large-v3-turbo")
+            fallback_mock.assert_called_once()
+
+
     def test_process_ambient_file_stores_speaker_from_speaker_aware_asr(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

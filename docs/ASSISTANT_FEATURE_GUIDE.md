@@ -468,12 +468,16 @@ this deep model unless its own profile explicitly selects it.
 
 
 Hyprwhspr is the primary always-on STT target only after a reliability probe
-passes. For socket mode, set `ATLAS_VOICE_HYPRWHSPR_ENDPOINT` plus
+passes. Ambient capture and realtime voice both use this low-latency ASR chain,
+so a busy or unavailable Hyprwhspr sidecar does not break microphone capture. For
+socket mode, set `ATLAS_VOICE_HYPRWHSPR_ENDPOINT` plus
 `ATLAS_VOICE_HYPRWHSPR_HEALTH_URL`; Atlas checks the health URL before putting
-Hyprwhspr first in the realtime ASR chain. For CLI mode, set
-`ATLAS_VOICE_HYPRWHSPR_CLI`; Atlas runs a short `--version` probe before using it
-as primary. If either probe fails, realtime ASR falls back to
-`ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER` and then the configured ASR provider.
+Hyprwhspr first. For CLI mode, set `ATLAS_VOICE_HYPRWHSPR_CLI`; Atlas runs a
+short `--version` probe before using it as primary. If either probe fails, ASR
+falls back to `ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER` and then the
+configured ASR provider. Ambient utterances and `model_runs` store the provider
+that actually handled each segment, which makes Jetson latency and fallback
+behavior auditable after a run.
 
 Keep the always-on path lightweight. Do not keep Qwen 27B, high-quality ASR,
 diarization, and TTS hot unless memory and swap remain stable. Watch

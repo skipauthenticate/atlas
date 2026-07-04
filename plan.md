@@ -328,7 +328,7 @@ Runs all day:
 - [x] Session segmentation and storage.
 - [x] Local event storage.
 - [x] Basic observability through status API and dashboard status cards.
-- [ ] Low-latency local ASR tuned for always-on use.
+- [x] Low-latency local ASR tuned for always-on use.
 - [x] Cheap intent/sensitivity classification.
 
 Constraint:
@@ -339,7 +339,7 @@ Constraint:
 Likely eventual stack:
 
 - [ ] VAD: Silero VAD or `hyprwhspr` VAD path.
-- [ ] STT: `hyprwhspr` ONNX Parakeet initially, or direct Parakeet/Whisper service.
+- [x] STT: `hyprwhspr` ONNX Parakeet initially, or direct Parakeet/Whisper service.
 - [x] Classifier: small local model or rule-based first pass.
 
 ### Lane 2: Direct Voice Assistant Lane

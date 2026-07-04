@@ -81,6 +81,8 @@ class AmbientTranscriptResult:
     text: str
     speaker: str | None = None
     confidence: float | None = None
+    provider: str | None = None
+    model: str | None = None
 
 
 def classify_ambient_utterance(text: str, *, mode: str = "ambient") -> AmbientUtteranceClassification:
@@ -191,7 +193,7 @@ def process_ambient_file(
                 start=segment.start,
                 end=segment.end,
                 confidence=transcript.confidence,
-                source_provider="stub" if settings.stub_mode else settings.asr_provider,
+                source_provider=transcript.provider or ("stub" if settings.stub_mode else settings.asr_provider),
                 is_directed_to_assistant=classification.is_directed_to_assistant,
                 sensitivity=classification.sensitivity,
             )
@@ -508,14 +510,18 @@ def _transcribe_ambient_segment(
     input_ref = f"ambient_segment:{session_id}:{index}"
     try:
         if settings.stub_mode:
-            transcript = AmbientTranscriptResult(text=f"Ambient segment {index} captured.")
+            transcript = AmbientTranscriptResult(
+                text=f"Ambient segment {index} captured.",
+                provider="stub",
+                model=model,
+            )
         else:
             from .providers.asr import transcribe_audio
 
-            transcript = _ambient_transcript_result(transcribe_audio(segment_path, settings))
+            transcript = _ambient_transcript_result(transcribe_audio(segment_path, settings, realtime=True))
         db.log_model_run(
-            provider=provider,
-            model=model,
+            provider=transcript.provider or provider,
+            model=transcript.model or model,
             task="ambient_transcribe",
             input_ref=input_ref,
             latency_ms=_elapsed_ms(started),
@@ -542,7 +548,15 @@ def _ambient_transcript_result(payload: dict[str, Any]) -> AmbientTranscriptResu
         if segment
         else None
     )
-    return AmbientTranscriptResult(text=text, speaker=speaker, confidence=confidence)
+    provider = _clean_optional_text(payload.get("provider"))
+    model = _clean_optional_text(payload.get("model"))
+    return AmbientTranscriptResult(
+        text=text,
+        speaker=speaker,
+        confidence=confidence,
+        provider=provider,
+        model=model,
+    )
 
 
 def _ambient_speaker(payload: dict[str, Any], segment: dict[str, Any] | None) -> str | None:
