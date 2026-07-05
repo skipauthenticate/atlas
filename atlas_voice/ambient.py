@@ -150,12 +150,7 @@ def process_ambient_file(
 ) -> AmbientResult:
     mode = _clean_mode(mode)
     if mode in {"private", "paused"}:
-        db.log_privacy_event(
-            "ambient.skipped",
-            f"Ambient mode {mode} skipped audio processing.",
-            metadata={"source": str(source_path), "mode": mode},
-        )
-        return AmbientResult(None, mode, str(source_path), mode)
+        return _skip_ambient_processing(db, mode=mode, source=str(source_path))
 
     source_path = source_path.expanduser().resolve()
     if not is_audio_file(source_path):
@@ -216,6 +211,15 @@ def process_ambient_file(
         if not retain:
             with suppress(FileNotFoundError):
                 shutil.rmtree(artifact_dir)
+
+
+def _skip_ambient_processing(db: Database, *, mode: str, source: str) -> AmbientResult:
+    db.log_privacy_event(
+        "ambient.skipped",
+        f"Ambient mode {mode} skipped audio processing.",
+        metadata={"source": source, "mode": mode},
+    )
+    return AmbientResult(None, mode, source, mode)
 
 
 def _retain_ambient_audio(settings: Settings, retain_audio: bool | None) -> bool:
@@ -351,6 +355,10 @@ def process_microphone_once(
     device: str | None = None,
     retain_audio: bool | None = None,
 ) -> AmbientResult:
+    mode = _clean_mode(mode)
+    if mode in {"private", "paused"}:
+        return _skip_ambient_processing(db, mode=mode, source="mic")
+
     capture_dir = settings.artifacts_dir / "ambient-capture"
     capture_path = capture_dir / f"mic-{int(time.time())}.wav"
     capture_microphone_chunk(

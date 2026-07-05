@@ -13,6 +13,7 @@ from atlas_voice.ambient import (
     VoiceSegment,
     classify_ambient_utterance,
     process_ambient_file,
+    process_microphone_once,
     validate_microphone_asr,
     vad_segments,
 )
@@ -347,6 +348,27 @@ class AmbientTests(unittest.TestCase):
             self.assertIsNone(result.session_id)
             self.assertEqual(result.status, "private")
             self.assertEqual(db.list_privacy_events()[0]["event_type"], "ambient.skipped")
+
+    def test_microphone_private_and_paused_modes_skip_capture_and_log_privacy_event(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = _settings(root)
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+
+            with mock.patch("atlas_voice.ambient.capture_microphone_chunk") as capture_mock:
+                private_result = process_microphone_once(settings, db, mode="private", seconds=1.0)
+                paused_result = process_microphone_once(settings, db, mode="paused", seconds=1.0)
+
+            events = db.list_privacy_events()
+            self.assertIsNone(private_result.session_id)
+            self.assertEqual(private_result.status, "private")
+            self.assertIsNone(paused_result.session_id)
+            self.assertEqual(paused_result.status, "paused")
+            capture_mock.assert_not_called()
+            self.assertEqual([event["event_type"] for event in events], ["ambient.skipped", "ambient.skipped"])
+            self.assertEqual([event["metadata"]["source"] for event in events], ["mic", "mic"])
 
 
 def _write_test_wav(path: Path) -> None:

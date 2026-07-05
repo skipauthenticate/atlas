@@ -305,8 +305,10 @@ atlas-voice privacy retention --yes
 ```
 
 Use `private` or `paused` modes when capture should be skipped and logged as a
-local privacy event. Set these from the dashboard Assistant mode segmented
-control or by exporting `ATLAS_VOICE_AMBIENT_MODE=private` or `paused`.
+local privacy event. File inputs skip transcription/storage, and microphone mode
+returns before invoking `ffmpeg`/ALSA capture. Set these from the dashboard
+Assistant mode segmented control or by exporting `ATLAS_VOICE_AMBIENT_MODE=private`
+or `paused`.
 
 Recent direct voice sessions are available at:
 
