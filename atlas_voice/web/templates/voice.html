@@ -55,6 +55,7 @@
         </div>
 
         <form class="voice-mode-panel" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
+          <input type="hidden" name="redirect_to" value="/voice">
           <div>
             <span>Assistant mode</span>
             <strong>{{ runtime.ambient_mode | capitalize }}</strong>

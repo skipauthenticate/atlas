@@ -311,6 +311,47 @@ class WebTests(unittest.TestCase):
                 refreshed = client.get("/")
                 self.assertIn('data-mode="private" aria-pressed="true"', refreshed.text)
 
+    def test_assistant_mode_redirects_to_safe_requested_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env_file = root / ".env"
+            env_file.write_text("ATLAS_VOICE_AMBIENT_MODE=ambient\n")
+            env = {
+                "ATLAS_VOICE_ENV_FILE": str(env_file),
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(root / "config" / "atlas.assistant.yaml"),
+                "ATLAS_ASSISTANT_ENABLED": "true",
+                "ATLAS_VOICE_TTS_PROVIDER": "none",
+                "ATLAS_VOICE_STUB_MODE": "true",
+                "LLM_BASE_URL": "http://127.0.0.1:8080/v1/chat/completions",
+                "WHISPERX_DEVICE": "cpu",
+                "WHISPERX_MODEL": "tiny.en",
+                "WHISPERX_COMPUTE_TYPE": "int8",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                client = TestClient(web_app.app, follow_redirects=False)
+
+                voice_response = client.post(
+                    "/settings/assistant-mode",
+                    data={"mode": "paused", "redirect_to": "/voice"},
+                )
+                external_response = client.post(
+                    "/settings/assistant-mode",
+                    data={"mode": "private", "redirect_to": "//example.com"},
+                )
+
+                self.assertEqual(voice_response.status_code, 303)
+                self.assertEqual(voice_response.headers["location"], "/voice?assistant_mode=saved")
+                self.assertEqual(external_response.status_code, 303)
+                self.assertEqual(external_response.headers["location"], "/?assistant_mode=saved")
+
     def test_assistant_privacy_api_surfaces_external_endpoint_errors(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

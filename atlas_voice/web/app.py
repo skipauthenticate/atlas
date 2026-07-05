@@ -859,7 +859,7 @@ def api_voice_playground_tts(payload: dict[str, Any]) -> JSONResponse:
 
 
 @app.post("/settings/assistant-mode")
-def update_assistant_mode(mode: str = Form(...)) -> Response:
+def update_assistant_mode(mode: str = Form(...), redirect_to: str = Form("/")) -> Response:
     selected = mode.strip().lower()
     if selected not in ASSISTANT_MODE_OPTIONS:
         raise HTTPException(status_code=400, detail="Unknown assistant mode")
@@ -874,7 +874,15 @@ def update_assistant_mode(mode: str = Form(...)) -> Response:
         f"Dashboard set assistant mode to {selected}.",
         metadata={"mode": selected, "source": "dashboard"},
     )
-    return RedirectResponse("/?assistant_mode=saved", status_code=303)
+    target = _safe_local_redirect_path(redirect_to)
+    separator = "&" if "?" in target else "?"
+    return RedirectResponse(f"{target}{separator}assistant_mode=saved", status_code=303)
+
+
+def _safe_local_redirect_path(path: str) -> str:
+    if not path or not path.startswith("/") or path.startswith("//") or "\\" in path:
+        return "/"
+    return path
 
 
 @app.post("/settings/runtime")
