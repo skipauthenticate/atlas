@@ -7,25 +7,108 @@
 {% block content %}
   <div class="voice-workbench" data-layout="atlas-voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
     <nav class="voice-rail" aria-label="Voice workspace">
-      <a href="/">Home</a>
-      <a href="/voice" class="active">Voice</a>
-      <a href="/api/ambient/sessions">Ambient</a>
-      <a href="#voice-memory">Memory</a>
-      <a href="#voice-coaching">Coaching</a>
-      <a href="/search">Search</a>
-      <a href="#voice-settings">Settings</a>
+      <a href="/voice" class="active"><span>Studio</span><small>Live voice</small></a>
+      <a href="#voice-conversation"><span>Talk</span><small>Transcript</small></a>
+      <a href="/api/ambient/sessions"><span>Ambient</span><small>Timeline</small></a>
+      <a href="#voice-tts-playground"><span>TTS</span><small>Synthesize</small></a>
+      <a href="#voice-stt-playground"><span>STT</span><small>Transcribe</small></a>
+      <a href="#voice-model-playground"><span>Model</span><small>Prompt</small></a>
+      <a href="#voice-memory"><span>Memory</span><small>Profile</small></a>
+      <a href="#voice-coaching"><span>Coaching</span><small>Signals</small></a>
+      <a href="#voice-settings"><span>Settings</span><small>Runtime</small></a>
     </nav>
 
     <section class="voice-main" aria-label="Voice console">
       <div class="voice-titlebar">
         <div>
-          <h1>Voice</h1>
-          <p>{{ "Realtime enabled" if assistant_enabled else "Realtime disabled" }}</p>
+          <h1>Voice Studio</h1>
+          <p>{{ "Realtime enabled" if assistant_enabled else "Realtime disabled" }} · {{ runtime.asr_provider }} · {{ runtime.asr_model }}</p>
         </div>
         <span class="status {{ 'status-done' if assistant_enabled else 'status-queued' }}" data-voice-connection>
           {{ 'ready' if assistant_enabled else 'off' }}
         </span>
       </div>
+
+      <section class="voice-launchpad" aria-label="Voice feature launcher">
+        <span class="voice-eyebrow">Voice Playground</span>
+        <div class="voice-status-strip">
+          <div class="voice-status-tile">
+            <span>Realtime</span>
+            <strong>{{ 'Ready' if assistant_enabled else 'Disabled' }}</strong>
+            <small>{{ voice_settings.websocket_path }}</small>
+          </div>
+          <div class="voice-status-tile">
+            <span>Ambient</span>
+            <strong>{{ runtime.ambient_mode }}</strong>
+            <small>{{ status.active_listeners | length }} active listener{{ '' if status.active_listeners | length == 1 else 's' }}</small>
+          </div>
+          <div class="voice-status-tile">
+            <span>Privacy</span>
+            <strong>{{ status.privacy.status }}</strong>
+            <small>{{ status.privacy.issue_count }} issue{{ '' if status.privacy.issue_count == 1 else 's' }}</small>
+          </div>
+          <div class="voice-status-tile">
+            <span>Models</span>
+            <strong>{{ status.active_models | length }} active</strong>
+            <small>{{ runtime.accelerator }}</small>
+          </div>
+        </div>
+
+        <form class="voice-mode-panel" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
+          <div>
+            <span>Assistant mode</span>
+            <strong>{{ runtime.ambient_mode | capitalize }}</strong>
+          </div>
+          <div class="voice-mode-switch" role="group" aria-label="Ambient capture mode">
+            {% for mode in runtime.assistant_mode_options %}
+              <button type="submit" name="mode" value="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">{{ mode | capitalize }}</button>
+            {% endfor %}
+          </div>
+        </form>
+
+        <div class="voice-feature-grid" aria-label="Feature launcher">
+          <a class="voice-feature-card primary" href="#voice-conversation">
+            <span>Talk now</span>
+            <strong>Live conversation</strong>
+            <small>Use mic or typed input when realtime is enabled.</small>
+          </a>
+          <a class="voice-feature-card" href="/api/ambient/sessions">
+            <span>Capture</span>
+            <strong>Ambient timeline</strong>
+            <small>Review ambient, meeting, private, and paused sessions.</small>
+          </a>
+          <a class="voice-feature-card" href="#voice-tts-playground">
+            <span>Create</span>
+            <strong>Text to Speech</strong>
+            <small>Try the configured local speech provider.</small>
+          </a>
+          <a class="voice-feature-card" href="#voice-stt-playground">
+            <span>Convert</span>
+            <strong>Speech to Text</strong>
+            <small>Upload audio and inspect transcription latency.</small>
+          </a>
+          <a class="voice-feature-card" href="#voice-model-playground">
+            <span>Think</span>
+            <strong>Model Response</strong>
+            <small>Prompt the local model without leaving the console.</small>
+          </a>
+          <a class="voice-feature-card" href="#voice-memory">
+            <span>Remember</span>
+            <strong>Memory</strong>
+            <small>Edit local memories and delete anything stale.</small>
+          </a>
+          <a class="voice-feature-card" href="#voice-coaching">
+            <span>Improve</span>
+            <strong>Coaching</strong>
+            <small>Track conversation and writing signal progress.</small>
+          </a>
+          <a class="voice-feature-card" href="#voice-settings">
+            <span>Tune</span>
+            <strong>Runtime settings</strong>
+            <small>Check ASR, TTS, audio, and model configuration.</small>
+          </a>
+        </div>
+      </section>
 
       <div class="voice-call-surface" aria-label="Realtime call surface">
         <div class="voice-waveform" aria-hidden="true">
@@ -37,7 +120,7 @@
         </div>
       </div>
 
-      <section class="voice-transcript" aria-label="Conversation transcript" data-transcript-stream>
+      <section id="voice-conversation" class="voice-transcript" aria-label="Conversation transcript" data-transcript-stream>
         <div class="section-heading compact">
           <h2>Conversation</h2>
           <small>{{ sessions | length }} recent sessions</small>
@@ -89,10 +172,10 @@
         {% endif %}
       </section>
 
-      <section class="voice-playground" data-tts-playground data-endpoint="/api/voice/playground/tts">
+      <section id="voice-tts-playground" class="voice-playground" data-tts-playground data-endpoint="/api/voice/playground/tts">
         <div class="section-heading compact">
-          <h2>Voice Playground</h2>
-          <small>Text to Speech</small>
+          <h2>Text to Speech</h2>
+          <small>{{ voice_settings.tts_provider }}</small>
         </div>
         <form class="voice-playground-form">
           <input type="text" name="tts_text" placeholder="Text to synthesize" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>
@@ -101,10 +184,10 @@
         <output data-tts-playground-result data-playground-latency="tts">{{ voice_settings.tts_provider }}</output>
       </section>
 
-      <section class="voice-playground" data-stt-playground data-endpoint="/api/voice/playground/stt">
+      <section id="voice-stt-playground" class="voice-playground" data-stt-playground data-endpoint="/api/voice/playground/stt">
         <div class="section-heading compact">
-          <h2>Voice Playground</h2>
-          <small>Speech to Text</small>
+          <h2>Speech to Text</h2>
+          <small>{{ runtime.asr_provider }}</small>
         </div>
         <form class="voice-playground-form" enctype="multipart/form-data">
           <input type="file" name="stt_audio" accept="audio/*" {% if not assistant_enabled %}disabled{% endif %}>
@@ -113,10 +196,10 @@
         <output data-stt-playground-result data-playground-latency="stt">{{ runtime.asr_provider }}</output>
       </section>
 
-      <section class="voice-playground" data-model-playground data-endpoint="/api/voice/playground/model">
+      <section id="voice-model-playground" class="voice-playground" data-model-playground data-endpoint="/api/voice/playground/model">
         <div class="section-heading compact">
-          <h2>Voice Playground</h2>
-          <small>Model Response</small>
+          <h2>Model Response</h2>
+          <small>{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</small>
         </div>
         <form class="voice-playground-form">
           <input type="text" name="model_text" placeholder="Prompt the local model" {% if not assistant_enabled %}disabled{% endif %}>

@@ -219,15 +219,18 @@ Open the assistant console at:
 http://127.0.0.1:8787/voice
 ```
 
-The workbench includes the voice rail, realtime call surface, browser text
-console for `/v1/realtime`, transcript streaming, right inspector with voice
-settings, privacy, local model state, session history, memory/coaching toggles,
-and bottom transport controls for mic state, pause/private mode, interrupt,
-browser playback, volume, and session timer. The Voice Playground text-to-speech
-control calls `POST /api/voice/playground/tts`; the speech-to-text control uploads
-a local audio file to `POST /api/voice/playground/stt`; the model response control
-calls `POST /api/voice/playground/model`. These paths log latency in `model_runs`
-with tasks `voice_playground_tts`, `voice_playground_stt`, and
+The workbench includes the voice rail, a status strip, assistant mode switch,
+feature launcher, realtime call surface, browser text console for `/v1/realtime`,
+transcript streaming, right inspector with voice settings, privacy, local model
+state, session history, memory/coaching controls, and bottom transport controls
+for mic state, pause/private mode, interrupt, browser playback, volume, and
+session timer. The feature launcher links directly to live conversation, ambient
+timeline, Text to Speech, Speech to Text, model response, memory, coaching, and
+runtime settings so the first screen exposes the full local workflow. The
+text-to-speech control calls `POST /api/voice/playground/tts`; the speech-to-text
+control uploads a local audio file to `POST /api/voice/playground/stt`; the model
+response control calls `POST /api/voice/playground/model`. These paths log latency
+in `model_runs` with tasks `voice_playground_tts`, `voice_playground_stt`, and
 `voice_playground_model`, and the workbench displays the returned latency next to
 each playground result. The Ambient Timeline on `/voice` surfaces recent ambient,
 meeting, private, and paused sessions with their latest utterance preview. The

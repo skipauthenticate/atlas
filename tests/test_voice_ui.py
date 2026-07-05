@@ -78,6 +78,29 @@ class VoiceUiStaticTests(unittest.TestCase):
         for term in prohibited:
             self.assertNotIn(term, production_ui)
 
+    def test_voice_console_surfaces_feature_launcher_status_and_mode_switch(self) -> None:
+        template = Path("atlas_voice/web/templates/voice.html").read_text()
+        css = Path("atlas_voice/web/static/app.css").read_text()
+
+        for marker in (
+            'class="voice-status-strip"',
+            'class="voice-feature-grid"',
+            'aria-label="Feature launcher"',
+            'action="/settings/assistant-mode"',
+            'href="#voice-conversation"',
+            'href="#voice-tts-playground"',
+            'href="#voice-stt-playground"',
+            'href="#voice-model-playground"',
+            'href="#voice-memory"',
+            'href="#voice-coaching"',
+        ):
+            self.assertIn(marker, template)
+
+        feature_grid = self._css_block(css, ".voice-feature-grid")
+        mode_switch = self._css_block(css, ".voice-mode-switch")
+        self.assertIn("grid-template-columns: repeat(auto-fit, minmax(140px, 1fr))", feature_grid)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr))", mode_switch)
+
     def test_voice_transport_and_status_text_have_stable_readable_bounds(self) -> None:
         css = Path("atlas_voice/web/static/app.css").read_text()
         transport_button = self._css_block(css, ".voice-transport button")
