@@ -63,7 +63,7 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
 
 ## HTTP
 
-- `GET /`: recordings dashboard.
+- `GET /`: local chat workspace and recent recordings.
 - `POST /upload`: upload audio.
 - `GET /recordings/{id}`: detail view with audio, transcript, speakers, jobs,
   summary, and exports.
@@ -72,7 +72,7 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
   into an AnythingLLM workspace.
 - `GET /search?q=...`: full-text transcript and summary search.
 - `GET /api/recordings/{id}`: structured JSON export.
-- `GET /voice`: assistant workbench console.
+- `GET /voice`: realtime Voice Studio.
 - `GET /api/status`: local system, model, service, listener, and privacy status.
 - `GET /api/assistant/health`: focused assistant readiness and component health.
 - `GET /api/assistant/sessions`: direct voice session history.
@@ -98,11 +98,10 @@ show local-only validation, RAM/swap/GPU status, active models, active listeners
 and service health. Audit tables for `model_runs` and `privacy_events` are stored
 in the existing SQLite database.
 
-Open `/voice` for the assistant workbench console. It shows the voice rail,
-conversation surface, recent direct voice sessions, local model status, privacy
-state, memory/coaching placeholders, and transport controls for the browser voice
-path, including pause/private state, interrupt, playback state, volume, and a
-session timer.
+Open `/voice` for Voice Studio. It provides an audio-reactive call bubble,
+live transcript, typed fallback, explicit start/end and mic controls, barge-in,
+pause/private modes, interrupt, playback, volume, and a session timer. The
+desktop conversation panel becomes a dedicated Transcript tab on narrow screens.
 
 Enable direct realtime sessions explicitly with `ATLAS_ASSISTANT_ENABLED=true`.
 `ATLAS_REALTIME_HOST=127.0.0.1` is the default bind-host alias for the realtime
@@ -111,16 +110,22 @@ service and takes precedence over `ATLAS_VOICE_HOST`. When disabled,
 probe optional TTS services.
 
 The realtime endpoint accepts `input_text`, `conversation.item.create` plus
-`response.create`, and `input_audio_buffer.append` / `commit` JSON events. Audio
-commits are written under `data/artifacts/realtime/` and use the configured local
-ASR provider unless the commit includes a transcript. Assistant replies use the
-local OpenAI-compatible LLM endpoint. Set
-`ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts` with
-`ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech` to stream WAV
-audio deltas from a local OpenAI-compatible TTS sidecar. Atlas checks
-`ATLAS_TTS_HEALTH_URL`, stores synthesized audio under
-`data/artifacts/realtime/`, and logs sidecar latency in `model_runs`. Piper
-remains available with `ATLAS_VOICE_TTS_PROVIDER=piper` and
+`response.create`, and `input_audio_buffer.append` / `commit` JSON events.
+The browser streams 24 kHz mono PCM16 from an AudioWorklet, while server VAD
+detects speech, bounds idle preroll, and commits turns after trailing silence.
+Assistant replies use the local OpenAI-compatible LLM endpoint and the built-in
+Qwen3 TTS sidecar by default:
+
+```text
+ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts
+ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech
+ATLAS_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+ATLAS_TTS_VOICE=Aiden
+```
+
+Atlas stores synthesized audio under `data/artifacts/realtime/` and logs LLM
+and TTS latency in `model_runs`. Piper remains available with
+`ATLAS_VOICE_TTS_PROVIDER=piper` and
 `ATLAS_VOICE_PIPER_VOICE=/path/to/voice.onnx`.
 
 Phase 2 adds `atlas-voice ambient`. It can process a file once, watch a directory,
@@ -198,28 +203,35 @@ ignored `.env` file.
 
 ## Jetson Host Mode
 
-This repository can run directly on Jetson-class hosts without the llama.cpp
-Docker service by pointing summaries at an existing OpenAI-compatible local LLM
-server.
+This repository can run directly on Jetson-class hosts by pointing Atlas at an
+existing OpenAI-compatible local LLM server. Install the CUDA worker environment
+and the pinned Qwen3 TTS runtime separately so model-specific dependencies stay
+isolated from the lightweight web environment:
 
 ```bash
 scripts/install-gpu-venv.sh
+scripts/install-qwen-tts.sh
 cp .env.example .env
 ```
 
-Configure `.env` for the local LLM endpoint and GPU worker venv:
+Configure `.env` for the local LLM endpoint and direct voice runtime:
 
 ```text
 ATLAS_VOICE_VENV=.venv-gpu
+ATLAS_TTS_VENV=.venv-gpu
+ATLAS_ASSISTANT_ENABLED=true
 LLM_BASE_URL=http://127.0.0.1:8080/v1/chat/completions
+ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts
+ATLAS_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+ATLAS_TTS_VOICE=Aiden
 WHISPERX_DEVICE=cuda
 WHISPERX_COMPUTE_TYPE=float16
 ATLAS_VOICE_ALLOW_SINGLE_SPEAKER_FALLBACK=false
 ```
 
-`scripts/install-gpu-venv.sh` installs CUDA-enabled PyTorch wheels and verifies
-that both PyTorch and CTranslate2 can see a CUDA device before the worker is
-started.
+`scripts/install-gpu-venv.sh` verifies that PyTorch and CTranslate2 can see
+CUDA. `scripts/install-qwen-tts.sh` installs the pinned faster-qwen3-tts
+runtime and verifies its import, CUDA device, and compute capability.
 
 Experimental ASR providers can be installed and benchmarked separately:
 
@@ -248,7 +260,7 @@ and a local endpoint or executable CLI is configured; failures fall back through
 `vibevoice` because VibeVoice-ASR emits speaker/timestamp segments directly. Parakeet
 and Canary are ASR-only in this app and should normally keep pyannote diarization enabled.
 
-Start and manage the local web/worker processes:
+Start and manage the local TTS, web, and worker processes:
 
 ```bash
 scripts/start-local.sh
@@ -256,7 +268,16 @@ scripts/status-local.sh
 scripts/stop-local.sh
 ```
 
-To run the local web/worker processes automatically after restart, install the
+The first TTS start downloads and warms the model, so `/health` may report
+`loading` for several minutes. Wait for `status: ready`, then validate a real
+synthesis through the configured sidecar:
+
+```bash
+curl -fsS http://127.0.0.1:8008/health | python -m json.tool
+.venv-gpu/bin/atlas-voice validate-tts-sidecar --output-dir ./data/artifacts/tts-validation
+```
+
+To run the local services automatically after restart, install the
 user systemd units:
 
 ```bash

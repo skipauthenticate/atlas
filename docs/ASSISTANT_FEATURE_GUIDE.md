@@ -57,40 +57,48 @@ web process. Database or privacy errors are treated as hard errors.
 
 ## Phase 1: Local TTS Sidecar
 
-Atlas can call an OpenAI-compatible local TTS sidecar, expected at:
+Atlas ships an OpenAI-compatible Qwen3 TTS sidecar at:
 
 ```text
 http://127.0.0.1:8008/v1/audio/speech
 ```
 
-The direct voice profile uses `faster-qwen3-tts` as the primary local TTS path
-when no other TTS provider is configured. Recommended sidecar environment:
+On Jetson, install it into the GPU environment after the worker runtime:
+
+```bash
+scripts/install-gpu-venv.sh
+scripts/install-qwen-tts.sh
+```
+
+The direct voice profile defaults to the 0.6B CustomVoice checkpoint and Aiden,
+which fit alongside the local LLM on an AGX Orin 64GB while materially improving
+prosody over the legacy fallback:
 
 ```bash
 export ATLAS_ASSISTANT_ENABLED=true
+export ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts
 export ATLAS_TTS_BASE_URL=http://127.0.0.1:8008/v1/audio/speech
 export ATLAS_TTS_HEALTH_URL=http://127.0.0.1:8008/health
-export ATLAS_TTS_MODEL=faster-qwen3-tts-0.6b
-export ATLAS_TTS_RESPONSE_FORMAT=wav
+export ATLAS_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+export ATLAS_TTS_VOICE=Aiden
+export QWEN_TTS_INSTRUCT="Speak like a warm, grounded conversational partner with natural pacing and gentle emphasis."
 ```
 
-Keep the sidecar outside the Atlas virtualenv so heavy model dependencies do not
-pollute the application runtime. Start with the 0.6B model on Jetson AGX Orin
-64GB, then test 1.7B only after Qwen plus TTS latency and memory are stable.
+`scripts/start-local.sh` launches the TTS sidecar before web and worker services.
+The sidecar exposes health immediately, loads the model in a background thread,
+and reports `loading`, `ready`, or `error`. The first start downloads model files
+and can take several minutes; later starts use the local Hugging Face cache.
 
-Validate service health and a real synthesis response before using the sidecar in
-voice sessions:
+Validate health and a real synthesis response before using voice sessions:
 
 ```bash
-curl -fsS http://127.0.0.1:8787/api/assistant/health | python -m json.tool
-atlas-voice validate-tts-sidecar --output-dir ./data/artifacts/tts-validation
+curl -fsS http://127.0.0.1:8008/health | python -m json.tool
+.venv-gpu/bin/atlas-voice validate-tts-sidecar --output-dir ./data/artifacts/tts-validation
 ```
 
-Use `--json` for benchmark logs or automation. The command uses the direct voice
-profile, first rejects non-loopback sidecar URLs or synthesis URLs that do not
-expose `/v1/audio/speech`, probes the configured health URL, synthesizes a
-short local phrase, writes the returned audio file, and exits non-zero if the
-sidecar is disabled, unhealthy, unreachable, or returns empty audio.
+Use `--json` for automation. Validation rejects non-loopback sidecar URLs, probes
+health, synthesizes a local phrase, writes the returned waveform, and exits
+non-zero for disabled, unhealthy, empty, or unreachable responses.
 
 Piper remains available as a local fallback:
 
@@ -139,34 +147,30 @@ emitted as `response.tool_call.created`, then emitted as `response.tool_call.rea
 Registry `confirm` or `mutating` tools always require confirmation, unknown or
 `deny` tools are blocked, and the direct voice profile can require confirmation
 for all calls. Calls are shown in the `/voice` transcript and persisted on the
-assistant turn; local tool execution remains a separate runtime concern. When TTS
-is configured, assistant
-audio is returned as `response.audio.delta`, queued in the browser playback
-control on `/voice`, and stored under `data/artifacts/realtime/`. Use the
-transport Mic button to request browser microphone access, stream
-`MediaRecorder` audio chunks to
-`input_audio_buffer.append`, and commit the buffer when the mic is stopped.
-Entering Pause or Private while the mic is active stops capture, clears the
-buffer, and leaves text input disabled until the mode is toggled off. Use
-the transport Play button to enable or pause assistant audio playback and the
-Volume slider to set playback level. Realtime sessions use an internal turn state
-module to track buffered audio, browser audio media type, pending text, audio
-format, lightweight PCM16 VAD state, and active responses. Every assistant
-text turn and TTS run is logged in SQLite `model_runs` for latency review.
+assistant turn; local tool execution remains a separate runtime concern. When
+TTS is configured, assistant audio is returned as `response.audio.delta`, queued
+for browser playback, analysed for bubble motion, and stored under
+`data/artifacts/realtime/`.
 
-Realtime end-of-turn detection is enabled by default for raw PCM16 audio sent
-through `input_audio_buffer.append`. It emits
-`input_audio_buffer.speech_started` after enough voiced audio and automatically
-commits the buffer after trailing silence by emitting
+Start call requests a mono browser stream with echo cancellation, noise
+suppression, and automatic gain control. An AudioWorklet captures frames,
+downsamples them to the configured 24 kHz rate, and sends little-endian PCM16 in
+`input_audio_buffer.append`. A ScriptProcessor fallback supports browsers without
+AudioWorklet. Pause, Private, mute, and end-call stop the capture graph and clear
+or commit the server buffer as appropriate.
+
+Realtime sessions track pending text, recent PCM preroll, streaming transcripts,
+VAD state, and active responses. While VAD is idle Atlas retains only a bounded
+500 ms PCM preroll; active speech is kept intact through trailing-silence commit.
+Every assistant text turn and TTS run is logged in SQLite `model_runs`.
+
+Realtime end-of-turn detection emits `input_audio_buffer.speech_started` after
+enough voiced audio and automatically commits after trailing silence with
 `input_audio_buffer.speech_stopped` and `input_audio_buffer.committed`. Streaming
-STT clients or local sidecars can attach `transcript_delta` to each
-`input_audio_buffer.append`; Atlas immediately emits
-`conversation.item.input_audio_transcription.delta`, accumulates the transcript,
-and reuses it on commit instead of running commit-time transcription. If no
-streaming transcript arrives, commit-time local ASR remains the fallback. Browser
-`MediaRecorder` container audio such as WebM is still accepted, but it requires
-explicit `input_audio_buffer.commit` until decoded container VAD is added. Tune
-the energy detector with:
+STT clients can attach `transcript_delta` to each append; Atlas accumulates it and
+reuses it on commit. Explicit container audio is still accepted but requires an
+explicit commit because server energy VAD operates on PCM16.
+Tune the energy detector with:
 
 ```bash
 export ATLAS_VOICE_REALTIME_VAD_ENABLED=true
@@ -211,7 +215,7 @@ latency, audio bytes, max RSS, and component-specific errors. Run it with
 `ATLAS_VOICE_TTS_PROVIDER=faster-qwen3-tts` for the primary sidecar and with
 `ATLAS_VOICE_TTS_PROVIDER=piper` when comparing the fallback path.
 
-## Phase 3: Voice Workbench Console
+## Phase 3: Voice Studio
 
 Open the assistant console at:
 
@@ -219,31 +223,23 @@ Open the assistant console at:
 http://127.0.0.1:8787/voice
 ```
 
-The workbench includes the voice rail, a status strip, assistant mode switch,
-feature launcher, realtime call surface, browser text console for `/v1/realtime`,
-transcript streaming, right inspector with voice settings, privacy, local model
-state, session history, memory/coaching controls, and bottom transport controls
-for mic state, pause/private mode, interrupt, browser playback, volume, and
-session timer. The feature launcher links directly to live conversation, ambient
-timeline, Text to Speech, Speech to Text, model response, memory, coaching, and
-runtime settings so the first screen exposes the full local workflow. The
-text-to-speech control calls `POST /api/voice/playground/tts`; the speech-to-text
-control uploads a local audio file to `POST /api/voice/playground/stt`; the model
-response control calls `POST /api/voice/playground/model`. These paths log latency
-in `model_runs` with tasks `voice_playground_tts`, `voice_playground_stt`, and
-`voice_playground_model`, and the workbench displays the returned latency next to
-each playground result. The Ambient Timeline on `/voice` surfaces recent ambient,
-meeting, private, and paused sessions with their latest utterance preview. The
-workbench keeps card framing restrained to repeated row items such as sessions,
-models, and timeline entries; playground sections remain unframed inside the main
-work surface. The workbench root carries the Atlas-owned
-`data-layout="atlas-voice-workbench"` marker, and production UI static checks
-reject ElevenLabs branding, URLs, or copied external assets. The
-desktop/tablet/mobile layout is covered by static QA checks
-for bounded workbench columns, stacked narrow-screen controls, fixed-size
-transport buttons, bounded playback/status text, clear privacy/service state
-pills, and reduced mobile waveform density. Realtime VAD/end-of-turn behavior
-and local tool execution are still tracked separately in `plan.md`.
+Voice Studio is the focused realtime surface. Desktop keeps the animated call
+object and typed composer beside a live Conversation panel; narrow screens move
+that panel into the Transcript tab. Start call requests microphone access and
+begins PCM capture. The central canvas responds to browser microphone RMS while
+the user speaks and to the response audio analyser while Atlas speaks.
+
+The bottom transport provides stable start/end, mic, pause, private, interrupt,
+playback, and volume controls. Barge-in clears queued response audio and cancels
+the active response task. The typed composer remains available when the mic is
+muted, and the transcript surfaces input, response text, tool calls, confirmation
+requirements, and recoverable errors without leaving the call surface.
+
+The TTS, STT, and model playground APIs remain available at
+`POST /api/voice/playground/tts`, `POST /api/voice/playground/stt`, and
+`POST /api/voice/playground/model`; their runs are logged in `model_runs`.
+Static UI contracts and Playwright checks cover neutral theme tokens, fixed
+transport geometry, canvas rendering, mobile transcript switching, and overflow.
 
 ## Phase 6: Ambient Listener MVP
 
