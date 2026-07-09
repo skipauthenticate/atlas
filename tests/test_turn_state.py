@@ -30,6 +30,22 @@ class RealtimeTurnStateTests(unittest.TestCase):
         self.assertEqual(media_type, "audio/webm")
         self.assertIsNone(state.audio_media_type)
 
+    def test_idle_pcm_buffer_can_be_trimmed_to_recent_audio(self) -> None:
+        state = RealtimeTurnState(sample_rate=16000, channels=1)
+        one_second = _pcm_silence(16000, 1.0)
+
+        state.append_audio(one_second, media_type="audio/pcm")
+
+        self.assertEqual(state.retain_recent_pcm(500), len(one_second) // 2)
+        self.assertEqual(state.commit_audio(), one_second[len(one_second) // 2 :])
+
+    def test_container_audio_is_not_trimmed_as_pcm(self) -> None:
+        state = RealtimeTurnState(sample_rate=16000, channels=1)
+
+        state.append_audio(b"webm-container", media_type="audio/webm")
+
+        self.assertEqual(state.retain_recent_pcm(0), len(b"webm-container"))
+
     def test_session_audio_format_updates_from_event(self) -> None:
         state = RealtimeTurnState(sample_rate=24000, channels=1)
 
@@ -94,7 +110,6 @@ class RealtimeTurnStateTests(unittest.TestCase):
         state.clear_audio()
 
         self.assertIsNone(state.pending_streaming_transcript)
-
 
     def test_pending_text_and_response_lifecycle(self) -> None:
         state = RealtimeTurnState(sample_rate=24000, channels=1)

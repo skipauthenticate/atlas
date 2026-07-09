@@ -50,6 +50,18 @@ class RealtimeTurnState:
         self._audio_buffer.extend(payload)
         return len(self._audio_buffer)
 
+    def retain_recent_pcm(self, duration_ms: int) -> int:
+        if duration_ms < 0 or not _is_pcm_audio(self.audio_media_type):
+            return len(self._audio_buffer)
+        bytes_per_second = max(self.sample_rate, 1) * max(self.channels, 1) * 2
+        max_bytes = int(bytes_per_second * duration_ms / 1000)
+        if len(self._audio_buffer) > max_bytes:
+            if max_bytes:
+                del self._audio_buffer[:-max_bytes]
+            else:
+                self._audio_buffer.clear()
+        return len(self._audio_buffer)
+
     def clear_audio(self) -> None:
         self._audio_buffer.clear()
         self.audio_media_type = None

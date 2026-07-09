@@ -1342,14 +1342,24 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 media_type = event.get("media_type") or event.get("mime_type")
                 try:
                     audio_payload = decode_audio_delta(event)
-                    buffered_bytes = state.append_audio(audio_payload, media_type=media_type)
+                    state.append_audio(audio_payload, media_type=media_type)
                 except ValueError as exc:
                     await _send_realtime_error(websocket, str(exc), event_type=event_type)
                     continue
+                vad = state.update_realtime_vad(
+                    audio_payload,
+                    enabled=realtime_settings.realtime_vad_enabled,
+                    media_type=media_type or state.audio_media_type,
+                    energy_threshold=realtime_settings.realtime_vad_threshold,
+                    min_speech_ms=realtime_settings.realtime_vad_min_speech_ms,
+                    silence_duration_ms=realtime_settings.realtime_vad_silence_ms,
+                )
+                if vad.analyzed and not state.vad_speech_started:
+                    state.retain_recent_pcm(max(realtime_settings.realtime_vad_min_speech_ms, 500))
                 await _send_realtime_event(
                     websocket,
                     "input_audio_buffer.appended",
-                    byte_count=buffered_bytes,
+                    byte_count=state.buffered_audio_bytes,
                 )
                 transcript_delta = extract_streaming_transcript_delta(event)
                 if transcript_delta:
@@ -1365,14 +1375,6 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         text=transcript_text_so_far or "",
                         final=bool(event.get("transcript_final") or event.get("final")),
                     )
-                vad = state.update_realtime_vad(
-                    audio_payload,
-                    enabled=realtime_settings.realtime_vad_enabled,
-                    media_type=media_type or state.audio_media_type,
-                    energy_threshold=realtime_settings.realtime_vad_threshold,
-                    min_speech_ms=realtime_settings.realtime_vad_min_speech_ms,
-                    silence_duration_ms=realtime_settings.realtime_vad_silence_ms,
-                )
                 if vad.speech_started:
                     await _send_realtime_event(
                         websocket,
