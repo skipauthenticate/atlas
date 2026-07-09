@@ -26,7 +26,7 @@
       });
     });
   </script>
-  <script src="/static/voice.js" defer></script>
+  <script src="/static/voice.js?v=20260709.2" defer></script>
 {% endblock %}
 
 {% block content %}
@@ -71,13 +71,12 @@
 
       <form class="chat-command-bar dashboard-command-bar chat-composer" action="/upload" method="post" enctype="multipart/form-data" aria-label="Ask Atlas" data-voice-prompt data-chat-composer data-upload-endpoint="/upload">
         <input id="dashboard-chat-file-input" class="chat-file-input" type="file" name="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac" multiple aria-label="Attach audio or video" data-chat-file-input>
-        <label class="sr-only" for="voice-prompt-input">Message Atlas</label>
-        <div class="dashboard-prompt-field">
+        <div class="dashboard-chat-row">
+          <button class="composer-icon chat-attach-button" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
+            <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
+          </button>
+          <label class="sr-only" for="voice-prompt-input">Message Atlas</label>
           <input id="voice-prompt-input" class="chat-text-input" type="text" name="prompt" autocomplete="off" placeholder="Message Atlas..." {% if not assistant_enabled %}disabled{% endif %}>
-          <span class="chat-attachment-tray" data-chat-attachments hidden></span>
-          <span class="chat-upload-status" data-chat-upload-status aria-live="polite"></span>
-        </div>
-        <div class="dashboard-composer-footer">
           <label class="chat-source-field">
             <span class="sr-only">Source</span>
             <select class="chat-source-select" name="source_context" aria-label="Select source" data-chat-source>
@@ -87,19 +86,15 @@
               <option value="voice">Voice</option>
             </select>
           </label>
-          <div class="chat-actions">
-            <button class="composer-icon chat-attach-button" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
-              <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
-            </button>
-            <button class="composer-icon voice-mic-button" type="button" data-chat-voice-toggle aria-label="Start voice input" title="Start voice input" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>
-              <img class="ui-icon" src="/static/icons/mic.svg" alt="">
-            </button>
-            <button id="voice-prompt-submit" class="dashboard-send" type="submit">
-              <img class="ui-icon" src="/static/icons/send.svg" alt="">
-              <span>Send</span>
-            </button>
-          </div>
+          <button class="composer-icon voice-mic-button" type="button" data-chat-voice-toggle aria-label="Start voice input" title="Start voice input" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>
+            <img class="ui-icon" src="/static/icons/mic.svg" alt="">
+          </button>
+          <button id="voice-prompt-submit" class="dashboard-send" type="submit" aria-label="Send message" title="Send message">
+            <img class="ui-icon" src="/static/icons/send.svg" alt="">
+          </button>
         </div>
+        <span class="chat-attachment-tray" data-chat-attachments hidden></span>
+        <span class="chat-upload-status" data-chat-upload-status aria-live="polite"></span>
       </form>
     </section>
 

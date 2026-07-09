@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Atlas Voice{% endblock %}</title>
     {% block head_extra %}{% endblock %}
-    <link rel="stylesheet" href="/static/app.css">
+    <link rel="stylesheet" href="/static/app.css?v=20260709.2">
     <link rel="icon" href="/static/icons/audio-waveform.svg" type="image/svg+xml">
   </head>
   <body class="{% block body_class %}{% endblock %}">
@@ -65,73 +65,94 @@
     </div>
 
     <dialog class="settings-dialog" id="app-settings-dialog" aria-labelledby="settings-title">
-      <div class="settings-header">
-        <div>
-          <h2 id="settings-title">Settings</h2>
-          <p>Choose how Atlas listens, which local models run, and where summaries are sent.</p>
+      <header class="settings-header">
+        <div class="settings-heading">
+          <span class="settings-heading-icon" aria-hidden="true">
+            <img class="ui-icon" src="/static/icons/settings.svg" alt="">
+          </span>
+          <div>
+            <span class="settings-eyebrow">Local runtime</span>
+            <h2 id="settings-title">Settings</h2>
+          </div>
         </div>
         <form method="dialog">
-          <button class="dialog-close" type="submit" aria-label="Close settings">Done</button>
+          <button class="dialog-close" type="submit" aria-label="Close settings" title="Close settings">
+            <img class="ui-icon" src="/static/icons/x.svg" alt="">
+          </button>
         </form>
-      </div>
+      </header>
 
-      {% if runtime is defined %}
-        {% if runtime.assistant_mode_options is defined %}
+      <div class="settings-scroll">
+        {% if runtime is defined %}
+          {% if runtime.assistant_mode_options is defined %}
+            <section class="dialog-section">
+              <div class="dialog-section-heading">
+                <h3>Capture mode</h3>
+                <span>Local only</span>
+              </div>
+              <form class="dialog-mode" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
+                <input type="hidden" name="redirect_to" value="{{ request.url.path }}">
+                <div class="assistant-mode-segments" role="group" aria-label="Ambient capture mode">
+                  {% for mode in runtime.assistant_mode_options %}
+                    {% set mode_icon = 'audio-lines.svg' if mode == 'ambient' else ('pause.svg' if mode == 'paused' else 'lock-keyhole.svg') %}
+                    <button type="submit" name="mode" value="{{ mode }}" data-mode="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">
+                      <img class="ui-icon" src="/static/icons/{{ mode_icon }}" alt="">
+                      <span>{{ mode | title }}</span>
+                    </button>
+                  {% endfor %}
+                </div>
+              </form>
+            </section>
+          {% endif %}
+
           <section class="dialog-section">
-            <h3>Listening</h3>
-            <form class="dialog-mode" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
-              <input type="hidden" name="redirect_to" value="{{ request.url.path }}">
-              <div class="assistant-mode-segments" role="group" aria-label="Ambient capture mode">
-                {% for mode in runtime.assistant_mode_options %}
-                  <button type="submit" name="mode" value="{{ mode }}" data-mode="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">{{ mode | title }}</button>
-                {% endfor %}
+            <div class="dialog-section-heading">
+              <h3>Models</h3>
+              <span>On device</span>
+            </div>
+            <form class="dialog-settings-grid" action="/settings/runtime" method="post">
+              <label>
+                <span>Speech provider</span>
+                <select name="asr_provider">
+                  {% for provider in runtime.asr_providers %}
+                    <option value="{{ provider }}" {% if runtime.asr_provider == provider %}selected{% endif %}>{{ provider }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                <span>Speech model</span>
+                <input type="text" name="asr_model" value="{{ runtime.asr_model_value }}" list="asr-models" autocomplete="off">
+                <datalist id="asr-models">
+                  {% for model in runtime.asr_model_options %}
+                    <option value="{{ model }}"></option>
+                  {% endfor %}
+                </datalist>
+              </label>
+              <label>
+                <span>Speaker detection</span>
+                <select name="diarization_provider">
+                  {% for provider in runtime.diarization_providers %}
+                    <option value="{{ provider }}" {% if runtime.diarization_provider == provider %}selected{% endif %}>{{ provider }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>
+                <span>Summary model</span>
+                <input type="text" name="summary_llm_model" value="{{ runtime.summary_llm_model_value }}" autocomplete="off">
+              </label>
+              <label class="wide-field">
+                <span>Summary endpoint</span>
+                <input type="url" name="summary_llm_base_url" value="{{ runtime.summary_llm_base_url_value }}" autocomplete="off">
+              </label>
+              <div class="dialog-actions">
+                <button class="dialog-apply" type="submit">Save changes</button>
               </div>
             </form>
           </section>
         {% endif %}
 
-        <section class="dialog-section">
-          <h3>Models</h3>
-          <form class="dialog-settings-grid" action="/settings/runtime" method="post">
-            <label>
-              <span>Speech model</span>
-              <select name="asr_provider">
-                {% for provider in runtime.asr_providers %}
-                  <option value="{{ provider }}" {% if runtime.asr_provider == provider %}selected{% endif %}>{{ provider }}</option>
-                {% endfor %}
-              </select>
-            </label>
-            <label>
-              <span>Model name</span>
-              <input type="text" name="asr_model" value="{{ runtime.asr_model_value }}" list="asr-models" autocomplete="off">
-              <datalist id="asr-models">
-                {% for model in runtime.asr_model_options %}
-                  <option value="{{ model }}"></option>
-                {% endfor %}
-              </datalist>
-            </label>
-            <label>
-              <span>Speakers</span>
-              <select name="diarization_provider">
-                {% for provider in runtime.diarization_providers %}
-                  <option value="{{ provider }}" {% if runtime.diarization_provider == provider %}selected{% endif %}>{{ provider }}</option>
-                {% endfor %}
-              </select>
-            </label>
-            <label>
-              <span>Summary model</span>
-              <input type="text" name="summary_llm_model" value="{{ runtime.summary_llm_model_value }}" autocomplete="off">
-            </label>
-            <label class="wide-field">
-              <span>Summary endpoint</span>
-              <input type="url" name="summary_llm_base_url" value="{{ runtime.summary_llm_base_url_value }}" autocomplete="off">
-            </label>
-            <button type="submit">Apply</button>
-          </form>
-        </section>
-      {% endif %}
-
-      {% block settings_dialog_extra %}{% endblock %}
+        {% block settings_dialog_extra %}{% endblock %}
+      </div>
     </dialog>
 
     <script>

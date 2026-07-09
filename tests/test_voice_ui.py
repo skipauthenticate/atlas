@@ -200,6 +200,45 @@ class VoiceUiStaticTests(unittest.TestCase):
         self.assertIn("Memory and coaching", settings)
         self.assertIn("data-tts-playground", settings)
 
+    def test_static_assets_are_versioned_and_legacy_gradients_are_absent(self) -> None:
+        base = Path("atlas_voice/web/templates/base.html").read_text().lower()
+        index = Path("atlas_voice/web/templates/index.html").read_text().lower()
+        voice = Path("atlas_voice/web/templates/voice.html").read_text().lower()
+        css = Path("atlas_voice/web/static/app.css").read_text().lower()
+
+        self.assertRegex(base, r'/static/app\.css\?v=[^"\']+')
+        self.assertRegex(index, r'/static/voice\.js\?v=[^"\']+')
+        self.assertRegex(voice, r'/static/voice\.js\?v=[^"\']+')
+        for token in ("gradient(", "purple", "violet", "indigo"):
+            self.assertNotIn(token, css)
+
+    def test_settings_use_edge_aligned_drawer_and_icon_close(self) -> None:
+        base = Path("atlas_voice/web/templates/base.html").read_text()
+        css = Path("atlas_voice/web/static/app.css").read_text()
+        drawer = self._last_css_block(css, ".settings-dialog")
+
+        self.assertIn('class="settings-scroll"', base)
+        self.assertIn('src="/static/icons/x.svg"', base)
+        self.assertNotIn(">Done</button>", base)
+        self.assertIn("inset: 0 0 0 auto", drawer)
+        self.assertIn("height: 100dvh", drawer)
+        self.assertIn("max-width: none", drawer)
+        self.assertIn("border-radius: 0", drawer)
+
+    def test_dashboard_chat_uses_compact_icon_led_composer(self) -> None:
+        template = Path("atlas_voice/web/templates/index.html").read_text()
+        css = Path("atlas_voice/web/static/app.css").read_text()
+        composer = self._last_css_block(css, ".dashboard-command-bar")
+        row = self._last_css_block(css, ".dashboard-chat-row")
+
+        self.assertIn('class="dashboard-chat-row"', template)
+        self.assertIn('aria-label="Send message"', template)
+        self.assertNotIn("dashboard-prompt-field", template)
+        self.assertNotIn("dashboard-composer-footer", template)
+        self.assertIn("min-height: 0", composer)
+        self.assertIn("grid-template-columns", row)
+        self.assertIn('"attach prompt mic send"', css)
+
 
 if __name__ == "__main__":
     unittest.main()
