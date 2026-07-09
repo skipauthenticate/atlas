@@ -21,7 +21,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
@@ -90,10 +92,22 @@ class WebTests(unittest.TestCase):
             ambient_sessions = client.get("/api/ambient/sessions")
 
             self.assertEqual(dashboard.status_code, 200)
+            self.assertIn("Local workspace", dashboard.text)
+            self.assertIn('action="/upload"', dashboard.text)
+            self.assertIn('enctype="multipart/form-data"', dashboard.text)
+            self.assertIn("data-chat-file-input", dashboard.text)
+            self.assertIn("data-chat-attachments", dashboard.text)
+            self.assertIn("data-chat-source", dashboard.text)
+            self.assertIn("All sources", dashboard.text)
+            self.assertIn('data-upload-endpoint="/upload"', dashboard.text)
+            self.assertIn("data-chat-voice-toggle", dashboard.text)
+            self.assertIn('id="recordings"', dashboard.text)
+            self.assertIn("data-dashboard-recording-list", dashboard.text)
+            self.assertIn("Recordings", dashboard.text)
             self.assertIn("Test Audio", dashboard.text)
+            self.assertIn(f"/recordings/{recording_id}", dashboard.text)
             self.assertIn("CPU", dashboard.text)
             self.assertIn("tiny.en", dashboard.text)
-            self.assertIn("Privacy", dashboard.text)
             self.assertEqual(status.status_code, 200)
             self.assertEqual(status.json()["privacy"]["status"], "ok")
             self.assertEqual(ambient_sessions.status_code, 200)
@@ -110,6 +124,47 @@ class WebTests(unittest.TestCase):
             self.assertEqual(search.status_code, 200)
             self.assertIn("[Atlas]", search.text)
             self.assertNotIn("&lt;mark&gt;", search.text)
+
+    def test_chat_upload_endpoint_can_enqueue_file_without_navigation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+
+            response = client.post(
+                "/upload",
+                files={"file": ("chat-input.wav", b"RIFFtest", "audio/wav")},
+                headers={"accept": "application/json"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "queued")
+            self.assertIn("recording_id", payload)
+            self.assertEqual(payload["url"], f"/recordings/{payload['recording_id']}")
+            self.assertIn("chat-input.wav", payload["title"])
+            recording = dict(web_app.db.get_recording(payload["recording_id"]))
+            self.assertEqual(recording["status"], "queued")
+            self.assertTrue(Path(recording["source_path"]).exists())
+            jobs = web_app.db.jobs_for_recording(payload["recording_id"])
+            self.assertEqual(jobs[0]["step"], "ingest")
 
     def test_voice_console_uses_direct_voice_profile_settings(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -165,7 +220,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "false"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -200,7 +257,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "faster-qwen3-tts"
             os.environ["ATLAS_TTS_MODEL"] = "faster-qwen3-tts-0.6b"
@@ -242,7 +301,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
@@ -358,7 +419,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["LLM_BASE_URL"] = "https://api.example.com/v1/chat/completions"
@@ -387,7 +450,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -432,9 +497,11 @@ class WebTests(unittest.TestCase):
             self.assertIn("Realtime coaching check-in", response.text)
             self.assertIn("How direct was my update?", response.text)
             self.assertIn("Your update was direct and specific.", response.text)
-            self.assertIn("Transport", response.text)
+            self.assertIn("Call controls", response.text)
+            self.assertIn("Start call", response.text)
+            self.assertIn("End call", response.text)
             self.assertIn("Privacy", response.text)
-            self.assertIn("Local Models", response.text)
+            self.assertIn("Models", response.text)
 
     def test_voice_console_shows_ambient_session_timeline(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -442,7 +509,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -485,7 +554,7 @@ class WebTests(unittest.TestCase):
             response = client.get("/voice")
 
             self.assertEqual(response.status_code, 200)
-            self.assertIn('data-ambient-timeline', response.text)
+            self.assertIn("data-ambient-timeline", response.text)
             self.assertIn("Ambient Timeline", response.text)
             self.assertIn("Kitchen capture", response.text)
             self.assertIn("Planning meeting", response.text)
@@ -502,7 +571,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -546,11 +617,13 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["event_count"], 2)
             self.assertEqual(payload["events"][0]["event_type"], "privacy.purge")
             self.assertEqual(payload["events"][0]["severity"], "warning")
-            self.assertEqual(payload["events"][0]["metadata_summary"], "artifact_count=1, session_count=2")
+            self.assertEqual(
+                payload["events"][0]["metadata_summary"], "artifact_count=1, session_count=2"
+            )
             self.assertEqual(payload["severity_counts"]["warning"], 1)
             self.assertEqual(payload["severity_counts"]["info"], 1)
             self.assertEqual(voice_response.status_code, 200)
-            self.assertIn('data-privacy-events', voice_response.text)
+            self.assertIn("data-privacy-events", voice_response.text)
             self.assertIn("Privacy Events", voice_response.text)
             self.assertIn("privacy.purge", voice_response.text)
             self.assertIn("Purged 2 privacy session(s).", voice_response.text)
@@ -563,7 +636,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -691,7 +766,7 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["categories"]["conversation_signals"], 1)
             self.assertEqual(payload["categories"]["writing_signals"], 1)
             self.assertEqual(voice_response.status_code, 200)
-            self.assertIn('data-coaching-progress', voice_response.text)
+            self.assertIn("data-coaching-progress", voice_response.text)
             self.assertIn("Progress Dashboard", voice_response.text)
             self.assertIn("Clarity", voice_response.text)
             self.assertIn("Question ratio", voice_response.text)
@@ -726,7 +801,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -785,7 +862,7 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["goals"][0]["latest_score_display"], "60%")
             self.assertEqual(payload["goals"][0]["feedback_count"], 1)
             self.assertEqual(voice_response.status_code, 200)
-            self.assertIn('data-coaching-goals', voice_response.text)
+            self.assertIn("data-coaching-goals", voice_response.text)
             self.assertIn("Coaching Goals", voice_response.text)
             self.assertIn("Ask better follow-up questions", voice_response.text)
             self.assertIn("Review the next daily summary", voice_response.text)
@@ -794,7 +871,9 @@ class WebTests(unittest.TestCase):
             self.assertEqual(created.status_code, 303)
             created_goal = web_app.db.list_coaching_goals(status="active")[0]
             self.assertEqual(created_goal["title"], "Reduce hedging")
-            self.assertEqual(created_goal["metadata"], {"next_action": "Review writing signals weekly"})
+            self.assertEqual(
+                created_goal["metadata"], {"next_action": "Review writing signals weekly"}
+            )
             self.assertEqual(completed.status_code, 303)
             self.assertEqual(web_app.db.get_coaching_goal(goal_id)["status"], "completed")
 
@@ -804,7 +883,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -832,11 +913,11 @@ class WebTests(unittest.TestCase):
             response = client.get("/voice")
 
             self.assertEqual(response.status_code, 200)
-            self.assertIn('data-memory-list', response.text)
+            self.assertIn("data-memory-list", response.text)
             self.assertIn("Reply preference", response.text)
             self.assertIn("The user prefers concise answers first.", response.text)
-            self.assertIn(f'/memory/{memory_id}/edit', response.text)
-            self.assertIn(f'/memory/{memory_id}/delete', response.text)
+            self.assertIn(f"/memory/{memory_id}/edit", response.text)
+            self.assertIn(f"/memory/{memory_id}/delete", response.text)
 
             edited = client.post(
                 f"/memory/{memory_id}/edit",
@@ -869,7 +950,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_REALTIME_HOST"] = "127.0.0.1"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
@@ -903,7 +986,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -925,11 +1010,11 @@ class WebTests(unittest.TestCase):
             self.assertIn('data-voice-console="true"', response.text)
             self.assertIn('data-websocket-path="/v1/realtime"', response.text)
             self.assertIn('data-assistant-enabled="true"', response.text)
-            self.assertIn('data-transcript-stream', response.text)
+            self.assertIn("data-transcript-stream", response.text)
             self.assertIn('id="voice-prompt-input"', response.text)
             self.assertIn('id="voice-prompt-submit"', response.text)
             self.assertNotIn('id="voice-prompt-input" disabled', response.text)
-            self.assertIn('/static/voice.js', response.text)
+            self.assertIn("/static/voice.js", response.text)
 
     def test_voice_console_exposes_tts_playground(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -937,7 +1022,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
             os.environ["ATLAS_VOICE_PIPER_VOICE"] = "/models/voice.onnx"
@@ -959,8 +1046,8 @@ class WebTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("Voice Playground", response.text)
             self.assertIn("Text to Speech", response.text)
-            self.assertIn('data-tts-playground', response.text)
-            self.assertIn('/api/voice/playground/tts', response.text)
+            self.assertIn("data-tts-playground", response.text)
+            self.assertIn("/api/voice/playground/tts", response.text)
 
     def test_voice_tts_playground_api_synthesizes_and_logs(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -968,7 +1055,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
             os.environ["ATLAS_VOICE_PIPER_VOICE"] = "/models/voice.onnx"
@@ -1009,7 +1098,9 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["latency_ms"], 5)
             self.assertEqual(payload["media_type"], "audio/wav")
             synth_mock.assert_called_once()
-            tts_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_tts"]
+            tts_runs = [
+                run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_tts"
+            ]
             self.assertEqual(len(tts_runs), 1)
             self.assertEqual(tts_runs[0]["provider"], "piper")
             self.assertEqual(tts_runs[0]["latency_ms"], 5)
@@ -1020,7 +1111,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1039,13 +1132,34 @@ class WebTests(unittest.TestCase):
             response = client.get("/voice")
 
             self.assertEqual(response.status_code, 200)
-            self.assertIn('data-voice-transport', response.text)
-            for action in ("mic", "pause", "private", "interrupt", "play"):
+            self.assertIn("data-voice-transport", response.text)
+            for action in (
+                "start-call",
+                "end-call",
+                "mic",
+                "pause",
+                "private",
+                "interrupt",
+                "play",
+            ):
                 self.assertIn(f'data-transport-action="{action}"', response.text)
-            self.assertIn('data-voice-timer', response.text)
-            self.assertIn('data-volume-output', response.text)
+            self.assertIn("Start call", response.text)
+            self.assertIn("End call", response.text)
+            self.assertIn("data-call-title", response.text)
+            self.assertIn("data-call-state", response.text)
+            self.assertIn("data-voice-timer", response.text)
+            self.assertIn("data-volume-output", response.text)
             self.assertIn('aria-pressed="false"', response.text)
-            self.assertNotIn('data-transport-action="mic" disabled', response.text)
+            self.assertNotIn(
+                'data-transport-action="start-call" aria-pressed="false" disabled', response.text
+            )
+            self.assertIn(
+                'data-transport-action="end-call" aria-pressed="false" disabled', response.text
+            )
+            self.assertRegex(
+                response.text,
+                r'data-transport-action="mic"[^>]+aria-pressed="false"[^>]+disabled',
+            )
 
     def test_voice_console_exposes_browser_playback_ui(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -1053,7 +1167,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1071,28 +1187,32 @@ class WebTests(unittest.TestCase):
             response = client.get("/voice")
 
             self.assertEqual(response.status_code, 200)
-            self.assertIn('data-response-audio', response.text)
+            self.assertIn("data-response-audio", response.text)
             self.assertIn('aria-label="Assistant audio playback"', response.text)
             self.assertIn('preload="none"', response.text)
-            self.assertIn('data-playback-status', response.text)
+            self.assertIn("data-playback-status", response.text)
 
     def test_voice_static_script_streams_browser_mic_audio(self) -> None:
         script = Path("atlas_voice/web/static/voice.js").read_text()
 
         self.assertIn("navigator.mediaDevices.getUserMedia", script)
-        self.assertIn("new MediaRecorder", script)
+        self.assertIn("AudioWorkletNode", script)
+        self.assertIn("downsampleToPCM16", script)
         self.assertIn("input_audio_buffer.append", script)
         self.assertIn("input_audio_buffer.commit", script)
         self.assertIn("media_type", script)
-        self.assertIn("FileReader", script)
-        self.assertIn("readAsDataURL", script)
-        self.assertIn("audio/webm", script)
+        self.assertIn("audio/pcm", script)
+        self.assertIn("echoCancellation: true", script)
+        self.assertNotIn("new MediaRecorder", script)
 
     def test_voice_static_script_handles_transport_state(self) -> None:
         script = Path("atlas_voice/web/static/voice.js").read_text()
 
         self.assertIn("data-voice-transport", script)
         self.assertIn("data-transport-action", script)
+        self.assertIn("startCall", script)
+        self.assertIn("endCall", script)
+        self.assertIn("callActive", script)
         self.assertIn("data-volume-output", script)
         self.assertIn("data-voice-timer", script)
         self.assertIn("response.cancel", script)
@@ -1120,8 +1240,8 @@ class WebTests(unittest.TestCase):
 
         self.assertIn("response.tool_call.created", script)
         self.assertIn("response.tool_call.requires_confirmation", script)
-        self.assertIn("Tool call requested", script)
-        self.assertIn("Tool confirmation required", script)
+        self.assertIn("Local action:", script)
+        self.assertIn("Confirmation needed:", script)
 
     def test_voice_console_exposes_stt_playground(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -1129,7 +1249,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1149,8 +1271,8 @@ class WebTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertIn("Speech to Text", response.text)
-            self.assertIn('data-stt-playground', response.text)
-            self.assertIn('/api/voice/playground/stt', response.text)
+            self.assertIn("data-stt-playground", response.text)
+            self.assertIn("/api/voice/playground/stt", response.text)
             self.assertIn('name="stt_audio"', response.text)
 
     def test_voice_stt_playground_api_transcribes_and_logs(self) -> None:
@@ -1159,10 +1281,13 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["ATLAS_VOICE_ASR_PROVIDER"] = "whisperx"
             os.environ["LLM_BASE_URL"] = "http://127.0.0.1:8080/v1/chat/completions"
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
@@ -1194,7 +1319,9 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["model"], "tiny.en")
             self.assertEqual(payload["audio_path"], str(audio_path))
             transcribe_mock.assert_called_once()
-            stt_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_stt"]
+            stt_runs = [
+                run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_stt"
+            ]
             self.assertEqual(len(stt_runs), 1)
             self.assertEqual(stt_runs[0]["provider"], "whisperx")
             self.assertIsNotNone(stt_runs[0]["latency_ms"])
@@ -1205,7 +1332,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1225,8 +1354,8 @@ class WebTests(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200)
             self.assertIn("Model Response", response.text)
-            self.assertIn('data-model-playground', response.text)
-            self.assertIn('/api/voice/playground/model', response.text)
+            self.assertIn("data-model-playground", response.text)
+            self.assertIn("/api/voice/playground/model", response.text)
             self.assertIn('name="model_text"', response.text)
 
     def test_voice_model_playground_api_replies_and_logs(self) -> None:
@@ -1235,7 +1364,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1263,7 +1394,11 @@ class WebTests(unittest.TestCase):
             self.assertEqual(payload["model"], "qwen2.5-7b-instruct")
             self.assertEqual(payload["text"], "Atlas heard: Summarize this update")
             self.assertIsNotNone(payload["latency_ms"])
-            model_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "voice_playground_model"]
+            model_runs = [
+                run
+                for run in web_app.db.list_model_runs()
+                if run["task"] == "voice_playground_model"
+            ]
             self.assertEqual(len(model_runs), 1)
             self.assertEqual(model_runs[0]["provider"], "stub")
             self.assertEqual(model_runs[0]["model"], "qwen2.5-7b-instruct")
@@ -1274,7 +1409,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "piper"
             os.environ["ATLAS_VOICE_PIPER_VOICE"] = "/models/voice.onnx"
@@ -1306,7 +1443,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "false"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1366,7 +1505,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["WHISPERX_DEVICE"] = "cpu"
@@ -1407,13 +1548,17 @@ class WebTests(unittest.TestCase):
             remaining = client.get("/api/ambient/sessions")
 
             self.assertEqual(search.status_code, 200)
-            self.assertEqual([session["id"] for session in search.json()["sessions"]], [matching_id])
+            self.assertEqual(
+                [session["id"] for session in search.json()["sessions"]], [matching_id]
+            )
             self.assertEqual(search.json()["query"], "blocker")
             self.assertEqual(deleted.status_code, 200)
             self.assertEqual(deleted.json()["session_count"], 1)
             self.assertEqual(deleted.json()["utterance_count"], 1)
             self.assertIsNone(web_app.db.get_ambient_session(matching_id))
-            self.assertEqual([session["id"] for session in remaining.json()["sessions"]], [other_id])
+            self.assertEqual(
+                [session["id"] for session in remaining.json()["sessions"]], [other_id]
+            )
             self.assertEqual(web_app.db.list_privacy_events()[0]["event_type"], "ambient.delete")
 
     def test_ambient_sessions_delete_returns_404_for_missing_session(self) -> None:
@@ -1422,7 +1567,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
 
@@ -1444,7 +1591,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "false"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1472,7 +1621,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1512,7 +1663,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1565,7 +1718,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1615,7 +1770,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1636,8 +1793,12 @@ class WebTests(unittest.TestCase):
                 if text == "First request":
                     first_started.set()
                     release_first.wait(2.0)
-                    return RealtimeReply(text="Stale reply", latency_ms=200, tokens_in=2, tokens_out=2)
-                return RealtimeReply(text=f"Fresh reply: {text}", latency_ms=5, tokens_in=2, tokens_out=3)
+                    return RealtimeReply(
+                        text="Stale reply", latency_ms=200, tokens_in=2, tokens_out=2
+                    )
+                return RealtimeReply(
+                    text=f"Fresh reply: {text}", latency_ms=5, tokens_in=2, tokens_out=3
+                )
 
             with patch.object(web_app, "generate_realtime_reply", side_effect=reply_for_barge_in):
                 with client.websocket_connect("/v1/realtime") as websocket:
@@ -1652,7 +1813,9 @@ class WebTests(unittest.TestCase):
                     release_first.set()
 
             event_types = [event["type"] for event in barge_events]
-            cancelled = next(event for event in barge_events if event["type"] == "response.cancelled")
+            cancelled = next(
+                event for event in barge_events if event["type"] == "response.cancelled"
+            )
             done = barge_events[-1]
             utterances = web_app.db.list_utterances(session_id)
             assistant_turns = web_app.db.list_assistant_turns(session_id)
@@ -1663,8 +1826,12 @@ class WebTests(unittest.TestCase):
             self.assertIn("conversation.item.input_text.done", event_types)
             self.assertEqual(done["type"], "response.done")
             self.assertEqual(done["response"]["output"][0]["text"], "Fresh reply: Second request")
-            self.assertEqual([utterance["text"] for utterance in utterances], ["First request", "Second request"])
-            self.assertEqual([turn["text"] for turn in assistant_turns], ["Fresh reply: Second request"])
+            self.assertEqual(
+                [utterance["text"] for utterance in utterances], ["First request", "Second request"]
+            )
+            self.assertEqual(
+                [turn["text"] for turn in assistant_turns], ["Fresh reply: Second request"]
+            )
             self.assertEqual(len(model_runs), 1)
             self.assertEqual(model_runs[0]["input_ref"], f"utterance:{utterances[1]['id']}")
 
@@ -1694,7 +1861,9 @@ class WebTests(unittest.TestCase):
                 os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
                 os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
                 os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                    root / "config" / "atlas.assistant.yaml"
+                )
                 os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
                 os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
                 os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1753,14 +1922,15 @@ class WebTests(unittest.TestCase):
                 else:
                     os.environ[key] = value
 
-
     def test_realtime_websocket_emits_confirmation_gated_tool_call_events(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -1797,9 +1967,13 @@ class WebTests(unittest.TestCase):
                     events = _receive_until(websocket, "response.done")
 
             event_types = [event["type"] for event in events]
-            created_call = next(event for event in events if event["type"] == "response.tool_call.created")
+            created_call = next(
+                event for event in events if event["type"] == "response.tool_call.created"
+            )
             confirmation = next(
-                event for event in events if event["type"] == "response.tool_call.requires_confirmation"
+                event
+                for event in events
+                if event["type"] == "response.tool_call.requires_confirmation"
             )
             turn = web_app.db.list_assistant_turns(session_id)[0]
 
@@ -1817,9 +1991,7 @@ class WebTests(unittest.TestCase):
             assistant_config = root / "config" / "atlas.assistant.yaml"
             assistant_config.parent.mkdir(parents=True)
             assistant_config.write_text(
-                "profiles:\n"
-                "  direct_voice:\n"
-                "    require_tool_confirmation: false\n"
+                "profiles:\n  direct_voice:\n    require_tool_confirmation: false\n"
             )
             tools_dir = root / "tools"
             tools_dir.mkdir()
@@ -1858,9 +2030,21 @@ class WebTests(unittest.TestCase):
                     tokens_in=2,
                     tokens_out=4,
                     tool_calls=[
-                        {"id": "call_search", "name": "search_recordings", "arguments": {"query": "Atlas"}},
-                        {"id": "call_purge", "name": "privacy_purge", "arguments": {"keyword": "secret"}},
-                        {"id": "call_shell", "name": "external_shell", "arguments": {"cmd": "rm -rf /"}},
+                        {
+                            "id": "call_search",
+                            "name": "search_recordings",
+                            "arguments": {"query": "Atlas"},
+                        },
+                        {
+                            "id": "call_purge",
+                            "name": "privacy_purge",
+                            "arguments": {"keyword": "secret"},
+                        },
+                        {
+                            "id": "call_shell",
+                            "name": "external_shell",
+                            "arguments": {"cmd": "rm -rf /"},
+                        },
                         {"id": "call_missing", "name": "missing_tool", "arguments": {}},
                     ],
                 )
@@ -1894,14 +2078,15 @@ class WebTests(unittest.TestCase):
                 self.assertEqual(stored_by_id["call_missing"]["status"], "denied")
                 self.assertEqual(stored_by_id["call_missing"]["reason"], "unknown_tool")
 
-
     def test_realtime_websocket_uses_tts_sidecar_and_logs_model_run(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "faster-qwen3-tts"
             os.environ["ATLAS_TTS_MODEL"] = "faster-qwen3-tts-0.6b"
@@ -1938,7 +2123,9 @@ class WebTests(unittest.TestCase):
             self.assertIn("response.audio.delta", event_types)
             self.assertIn("response.audio.done", event_types)
             synth_mock.assert_called_once()
-            tts_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "realtime_tts"]
+            tts_runs = [
+                run for run in web_app.db.list_model_runs() if run["task"] == "realtime_tts"
+            ]
             self.assertEqual(len(tts_runs), 1)
             self.assertEqual(tts_runs[0]["provider"], "faster-qwen3-tts")
             self.assertEqual(tts_runs[0]["model"], "faster-qwen3-tts-0.6b")
@@ -1950,11 +2137,17 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ.pop("ATLAS_VOICE_TTS_PROVIDER", None)
             os.environ.pop("ATLAS_TTS_MODEL", None)
+            os.environ["ATLAS_VOICE_ASR_PROVIDER"] = "whisperx"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            # Point env file at a non-existent path so load_dotenv() is a no-op.
+            # This prevents the workspace .env from polluting the test fixture.
+            os.environ["ATLAS_VOICE_ENV_FILE"] = str(root / ".env.nonexistent")
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
             os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
@@ -1987,12 +2180,13 @@ class WebTests(unittest.TestCase):
             self.assertIn("response.audio.delta", event_types)
             self.assertIn("response.audio.done", event_types)
             synth_mock.assert_called_once()
-            tts_runs = [run for run in web_app.db.list_model_runs() if run["task"] == "realtime_tts"]
+            tts_runs = [
+                run for run in web_app.db.list_model_runs() if run["task"] == "realtime_tts"
+            ]
             self.assertEqual(len(tts_runs), 1)
             self.assertEqual(tts_runs[0]["provider"], "faster-qwen3-tts")
-            self.assertEqual(tts_runs[0]["model"], "faster-qwen3-tts-0.6b")
+            self.assertEqual(tts_runs[0]["model"], "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
             self.assertEqual(tts_runs[0]["latency_ms"], 7)
-
 
     def test_realtime_websocket_accepts_audio_buffer_with_transcript(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -2000,10 +2194,13 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["ATLAS_VOICE_ASR_PROVIDER"] = "whisperx"
             os.environ["WHISPERX_DEVICE"] = "cpu"
             os.environ["WHISPERX_MODEL"] = "tiny.en"
             os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
@@ -2021,10 +2218,12 @@ class WebTests(unittest.TestCase):
                 session_id = created["session"]["id"]
                 websocket.send_json({"type": "input_audio_buffer.append", "audio": audio})
                 appended = websocket.receive_json()
-                websocket.send_json({
-                    "type": "input_audio_buffer.commit",
-                    "transcript": "Audio hello",
-                })
+                websocket.send_json(
+                    {
+                        "type": "input_audio_buffer.commit",
+                        "transcript": "Audio hello",
+                    }
+                )
                 events = _receive_until(websocket, "response.done")
 
             event_types = [event["type"] for event in events]
@@ -2040,7 +2239,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -2064,19 +2265,23 @@ class WebTests(unittest.TestCase):
                 with client.websocket_connect("/v1/realtime") as websocket:
                     created = websocket.receive_json()
                     session_id = created["session"]["id"]
-                    websocket.send_json({
-                        "type": "input_audio_buffer.append",
-                        "audio": audio,
-                        "transcript_delta": "Hello",
-                    })
+                    websocket.send_json(
+                        {
+                            "type": "input_audio_buffer.append",
+                            "audio": audio,
+                            "transcript_delta": "Hello",
+                        }
+                    )
                     first = websocket.receive_json()
                     first_delta = websocket.receive_json()
-                    websocket.send_json({
-                        "type": "input_audio_buffer.append",
-                        "audio": audio,
-                        "transcript_delta": " Atlas",
-                        "transcript_final": True,
-                    })
+                    websocket.send_json(
+                        {
+                            "type": "input_audio_buffer.append",
+                            "audio": audio,
+                            "transcript_delta": " Atlas",
+                            "transcript_final": True,
+                        }
+                    )
                     second = websocket.receive_json()
                     second_delta = websocket.receive_json()
                     websocket.send_json({"type": "input_audio_buffer.commit"})
@@ -2085,10 +2290,14 @@ class WebTests(unittest.TestCase):
             event_types = [event["type"] for event in events]
             self.assertEqual(first["type"], "input_audio_buffer.appended")
             self.assertEqual(second["type"], "input_audio_buffer.appended")
-            self.assertEqual(first_delta["type"], "conversation.item.input_audio_transcription.delta")
+            self.assertEqual(
+                first_delta["type"], "conversation.item.input_audio_transcription.delta"
+            )
             self.assertEqual(first_delta["delta"], "Hello")
             self.assertFalse(first_delta["final"])
-            self.assertEqual(second_delta["type"], "conversation.item.input_audio_transcription.delta")
+            self.assertEqual(
+                second_delta["type"], "conversation.item.input_audio_transcription.delta"
+            )
             self.assertEqual(second_delta["delta"], " Atlas")
             self.assertTrue(second_delta["final"])
             self.assertIn("input_audio_buffer.committed", event_types)
@@ -2096,7 +2305,6 @@ class WebTests(unittest.TestCase):
             utterance = web_app.db.list_utterances(session_id)[0]
             self.assertEqual(utterance["text"], "Hello Atlas")
             self.assertEqual(utterance["source_provider"], "streaming_stt")
-
 
     def test_realtime_websocket_auto_commits_audio_after_vad_silence(self) -> None:
         keys = [
@@ -2124,7 +2332,9 @@ class WebTests(unittest.TestCase):
                 os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
                 os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
                 os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                    root / "config" / "atlas.assistant.yaml"
+                )
                 os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
                 os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
                 os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
@@ -2197,7 +2407,9 @@ class WebTests(unittest.TestCase):
                 os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
                 os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
                 os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+                os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                    root / "config" / "atlas.assistant.yaml"
+                )
                 os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
                 os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
                 os.environ["ATLAS_VOICE_ASR_PROVIDER"] = "whisperx"
@@ -2238,7 +2450,6 @@ class WebTests(unittest.TestCase):
                     os.environ.pop(key, None)
                 else:
                     os.environ[key] = value
-
 
     def test_runtime_settings_form_persists_summary_model_config(self) -> None:
         keys = [
@@ -2330,7 +2541,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["WHISPERX_DEVICE"] = "cpu"
@@ -2376,7 +2589,9 @@ class WebTests(unittest.TestCase):
             os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
             os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
             os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
-            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(root / "config" / "atlas.assistant.yaml")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
             os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
             os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
             os.environ["WHISPERX_DEVICE"] = "cpu"

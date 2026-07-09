@@ -6,28 +6,149 @@
     <title>{% block title %}Atlas Voice{% endblock %}</title>
     {% block head_extra %}{% endblock %}
     <link rel="stylesheet" href="/static/app.css">
+    <link rel="icon" href="/static/icons/audio-waveform.svg" type="image/svg+xml">
   </head>
-  <body>
-    <header class="topbar">
-      <div class="brand-group">
-        <a class="brand" href="/">Atlas Voice</a>
-        <a class="topbar-link" href="/voice">Voice</a>
-      </div>
-      <div class="topbar-tools">
-        {% if runtime is defined %}
-          <div class="runtime-pill" title="{{ runtime.asr_provider }} · {{ runtime.asr_model }}">
-            <strong>{{ runtime.accelerator }}</strong>
-            <span>{{ runtime.asr_provider }} · {{ runtime.asr_model }}</span>
-          </div>
-        {% endif %}
-        <form class="search" action="/search" method="get">
-          <input name="q" type="search" value="{{ query | default('') }}" placeholder="Search transcripts">
-          <button type="submit">Search</button>
+  <body class="{% block body_class %}{% endblock %}">
+    <div class="app-chrome">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+          <span>
+            <strong>Atlas Voice</strong>
+          </span>
+        </a>
+
+        <form class="sidebar-search" action="/search" method="get">
+          <label>
+            <span>Search transcripts</span>
+            <input name="q" type="search" value="{{ query | default('') }}" placeholder="Keyword or phrase">
+          </label>
+        </form>
+
+        <nav class="sidebar-nav" aria-label="Main">
+          <span class="nav-section">Workspace</span>
+          <a class="nav-item{% if request.url.path == '/' %} active{% endif %}" href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>
+            <img class="ui-icon" src="/static/icons/house.svg" alt="">
+            <span>Chat</span>
+          </a>
+          <a class="nav-item{% if request.url.path == '/voice' %} active{% endif %}" href="/voice" {% if request.url.path == '/voice' %}aria-current="page"{% endif %}>
+            <img class="ui-icon" src="/static/icons/audio-waveform.svg" alt="">
+            <span>Voice Studio</span>
+          </a>
+          <a class="nav-item" href="/#recordings">
+            <img class="ui-icon" src="/static/icons/library.svg" alt="">
+            <span>Recordings</span>
+          </a>
+          <a class="nav-item{% if request.url.path == '/search' %} active{% endif %}" href="/search" {% if request.url.path == '/search' %}aria-current="page"{% endif %}>
+            <img class="ui-icon" src="/static/icons/search.svg" alt="">
+            <span>Search</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-footer">
+          {% if runtime is defined %}
+            <div class="runtime-pill" title="{{ runtime.asr_provider }} / {{ runtime.asr_model }}">
+              <strong>{{ runtime.accelerator }}</strong>
+              <span>{{ runtime.asr_provider }} / {{ runtime.asr_model }}</span>
+            </div>
+          {% endif %}
+          <button class="settings-button" type="button" data-settings-open>
+            <img class="ui-icon" src="/static/icons/settings.svg" alt="">
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="shell">
+        {% block content %}{% endblock %}
+      </main>
+    </div>
+
+    <dialog class="settings-dialog" id="app-settings-dialog" aria-labelledby="settings-title">
+      <div class="settings-header">
+        <div>
+          <h2 id="settings-title">Settings</h2>
+          <p>Choose how Atlas listens, which local models run, and where summaries are sent.</p>
+        </div>
+        <form method="dialog">
+          <button class="dialog-close" type="submit" aria-label="Close settings">Done</button>
         </form>
       </div>
-    </header>
-    <main class="shell">
-      {% block content %}{% endblock %}
-    </main>
+
+      {% if runtime is defined %}
+        {% if runtime.assistant_mode_options is defined %}
+          <section class="dialog-section">
+            <h3>Listening</h3>
+            <form class="dialog-mode" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
+              <input type="hidden" name="redirect_to" value="{{ request.url.path }}">
+              <div class="assistant-mode-segments" role="group" aria-label="Ambient capture mode">
+                {% for mode in runtime.assistant_mode_options %}
+                  <button type="submit" name="mode" value="{{ mode }}" data-mode="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">{{ mode | title }}</button>
+                {% endfor %}
+              </div>
+            </form>
+          </section>
+        {% endif %}
+
+        <section class="dialog-section">
+          <h3>Models</h3>
+          <form class="dialog-settings-grid" action="/settings/runtime" method="post">
+            <label>
+              <span>Speech model</span>
+              <select name="asr_provider">
+                {% for provider in runtime.asr_providers %}
+                  <option value="{{ provider }}" {% if runtime.asr_provider == provider %}selected{% endif %}>{{ provider }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Model name</span>
+              <input type="text" name="asr_model" value="{{ runtime.asr_model_value }}" list="asr-models" autocomplete="off">
+              <datalist id="asr-models">
+                {% for model in runtime.asr_model_options %}
+                  <option value="{{ model }}"></option>
+                {% endfor %}
+              </datalist>
+            </label>
+            <label>
+              <span>Speakers</span>
+              <select name="diarization_provider">
+                {% for provider in runtime.diarization_providers %}
+                  <option value="{{ provider }}" {% if runtime.diarization_provider == provider %}selected{% endif %}>{{ provider }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>
+              <span>Summary model</span>
+              <input type="text" name="summary_llm_model" value="{{ runtime.summary_llm_model_value }}" autocomplete="off">
+            </label>
+            <label class="wide-field">
+              <span>Summary endpoint</span>
+              <input type="url" name="summary_llm_base_url" value="{{ runtime.summary_llm_base_url_value }}" autocomplete="off">
+            </label>
+            <button type="submit">Apply</button>
+          </form>
+        </section>
+      {% endif %}
+
+      {% block settings_dialog_extra %}{% endblock %}
+    </dialog>
+
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        const dialog = document.getElementById('app-settings-dialog');
+        const openers = document.querySelectorAll('[data-settings-open]');
+        if (!dialog) return;
+        openers.forEach((button) => {
+          button.addEventListener('click', () => {
+            if (typeof dialog.showModal === 'function') dialog.showModal();
+            else dialog.setAttribute('open', '');
+          });
+        });
+        dialog.addEventListener('click', (event) => {
+          if (event.target === dialog) dialog.close();
+        });
+      });
+    </script>
   </body>
 </html>

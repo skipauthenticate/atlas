@@ -1,417 +1,408 @@
 {% extends "base.html" %}
 {% block title %}Voice - Atlas Voice{% endblock %}
+{% block body_class %}voice-page{% endblock %}
 {% block head_extra %}
   <script src="/static/voice.js" defer></script>
 {% endblock %}
 
 {% block content %}
-  <div class="voice-workbench" data-layout="atlas-voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
-    <nav class="voice-rail" aria-label="Voice workspace">
-      <a href="/voice" class="active"><span>Studio</span><small>Live voice</small></a>
-      <a href="#voice-conversation"><span>Talk</span><small>Transcript</small></a>
-      <a href="/api/ambient/sessions"><span>Ambient</span><small>Timeline</small></a>
-      <a href="#voice-tts-playground"><span>TTS</span><small>Synthesize</small></a>
-      <a href="#voice-stt-playground"><span>STT</span><small>Transcribe</small></a>
-      <a href="#voice-model-playground"><span>Model</span><small>Prompt</small></a>
-      <a href="#voice-memory"><span>Memory</span><small>Profile</small></a>
-      <a href="#voice-coaching"><span>Coaching</span><small>Signals</small></a>
-      <a href="#voice-settings"><span>Settings</span><small>Runtime</small></a>
-    </nav>
-
-    <section class="voice-main" aria-label="Voice console">
-      <div class="voice-titlebar">
+  <div class="voice-workbench" data-layout="atlas-voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}" data-audio-sample-rate="{{ voice_settings.sample_rate }}">
+    <header class="voice-appbar" aria-label="Voice workspace header">
+      <div class="voice-page-identity">
+        <span class="voice-page-icon" aria-hidden="true"><img src="/static/icons/audio-waveform.svg" alt=""></span>
         <div>
-          <h1>Voice Studio</h1>
-          <p>{{ "Realtime enabled" if assistant_enabled else "Realtime disabled" }} · {{ runtime.asr_provider }} · {{ runtime.asr_model }}</p>
-        </div>
-        <span class="status {{ 'status-done' if assistant_enabled else 'status-queued' }}" data-voice-connection>
-          {{ 'ready' if assistant_enabled else 'off' }}
-        </span>
-      </div>
-
-      <section class="voice-launchpad" aria-label="Voice feature launcher">
-        <span class="voice-eyebrow">Voice Playground</span>
-        <div class="voice-status-strip">
-          <div class="voice-status-tile">
-            <span>Realtime</span>
-            <strong>{{ 'Ready' if assistant_enabled else 'Disabled' }}</strong>
-            <small>{{ voice_settings.websocket_path }}</small>
-          </div>
-          <div class="voice-status-tile">
-            <span>Ambient</span>
-            <strong>{{ runtime.ambient_mode }}</strong>
-            <small>{{ status.active_listeners | length }} active listener{{ '' if status.active_listeners | length == 1 else 's' }}</small>
-          </div>
-          <div class="voice-status-tile">
-            <span>Privacy</span>
-            <strong>{{ status.privacy.status }}</strong>
-            <small>{{ status.privacy.issue_count }} issue{{ '' if status.privacy.issue_count == 1 else 's' }}</small>
-          </div>
-          <div class="voice-status-tile">
-            <span>Models</span>
-            <strong>{{ status.active_models | length }} active</strong>
-            <small>{{ runtime.accelerator }}</small>
-          </div>
-        </div>
-
-        <form class="voice-mode-panel" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
-          <input type="hidden" name="redirect_to" value="/voice">
-          <div>
-            <span>Assistant mode</span>
-            <strong>{{ runtime.ambient_mode | capitalize }}</strong>
-          </div>
-          <div class="voice-mode-switch" role="group" aria-label="Ambient capture mode">
-            {% for mode in runtime.assistant_mode_options %}
-              <button type="submit" name="mode" value="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">{{ mode | capitalize }}</button>
-            {% endfor %}
-          </div>
-        </form>
-
-        <div class="voice-feature-grid" aria-label="Feature launcher">
-          <a class="voice-feature-card primary" href="#voice-conversation">
-            <span>Talk now</span>
-            <strong>Live conversation</strong>
-            <small>Use mic or typed input when realtime is enabled.</small>
-          </a>
-          <a class="voice-feature-card" href="/api/ambient/sessions">
-            <span>Capture</span>
-            <strong>Ambient timeline</strong>
-            <small>Review ambient, meeting, private, and paused sessions.</small>
-          </a>
-          <a class="voice-feature-card" href="#voice-tts-playground">
-            <span>Create</span>
-            <strong>Text to Speech</strong>
-            <small>Try the configured local speech provider.</small>
-          </a>
-          <a class="voice-feature-card" href="#voice-stt-playground">
-            <span>Convert</span>
-            <strong>Speech to Text</strong>
-            <small>Upload audio and inspect transcription latency.</small>
-          </a>
-          <a class="voice-feature-card" href="#voice-model-playground">
-            <span>Think</span>
-            <strong>Model Response</strong>
-            <small>Prompt the local model without leaving the console.</small>
-          </a>
-          <a class="voice-feature-card" href="#voice-memory">
-            <span>Remember</span>
-            <strong>Memory</strong>
-            <small>Edit local memories and delete anything stale.</small>
-          </a>
-          <a class="voice-feature-card" href="#voice-coaching">
-            <span>Improve</span>
-            <strong>Coaching</strong>
-            <small>Track conversation and writing signal progress.</small>
-          </a>
-          <a class="voice-feature-card" href="#voice-settings">
-            <span>Tune</span>
-            <strong>Runtime settings</strong>
-            <small>Check ASR, TTS, audio, and model configuration.</small>
-          </a>
-        </div>
-      </section>
-
-      <div class="voice-call-surface" aria-label="Realtime call surface">
-        <div class="voice-waveform" aria-hidden="true">
-          {% for _ in range(24) %}<span></span>{% endfor %}
-        </div>
-        <div class="voice-call-meta">
-          <strong>{{ runtime.asr_model }}</strong>
-          <small>{{ runtime.asr_provider }} · {{ runtime.accelerator }} · {{ status.realtime.transport if status.realtime is defined else 'websocket' }}</small>
+          <h1>Voice</h1>
+          <small>Atlas Studio</small>
         </div>
       </div>
 
-      <section id="voice-conversation" class="voice-transcript" aria-label="Conversation transcript" data-transcript-stream>
-        <div class="section-heading compact">
-          <h2>Conversation</h2>
-          <small>{{ sessions | length }} recent sessions</small>
-        </div>
-        {% if sessions %}
-          {% set latest = sessions[0] %}
-          {% if latest.last_utterance %}
-            <div class="voice-message user">
-              <span>User</span>
-              <p>{{ latest.last_utterance }}</p>
-            </div>
-          {% endif %}
-          {% if latest.last_reply %}
-            <div class="voice-message assistant">
-              <span>Atlas</span>
-              <p>{{ latest.last_reply }}</p>
-            </div>
-          {% endif %}
-        {% else %}
-          <div class="empty">No direct voice sessions yet.</div>
-        {% endif %}
-      </section>
-
-      <form class="voice-prompt" aria-label="Typed prompt" data-voice-prompt>
-        <input id="voice-prompt-input" type="text" name="prompt" placeholder="Message Atlas" {% if not assistant_enabled %}disabled{% endif %}>
-        <button id="voice-prompt-submit" type="submit" {% if not assistant_enabled %}disabled{% endif %}>Send</button>
+      <form class="voice-search" action="/search" method="get" role="search">
+        <img class="ui-icon" src="/static/icons/search.svg" alt="">
+        <label class="sr-only" for="voice-search-input">Search everything</label>
+        <input id="voice-search-input" name="q" type="search" placeholder="Search everything..." autocomplete="off">
       </form>
 
-      <section class="voice-timeline" data-ambient-timeline aria-label="Ambient session timeline">
-        <div class="section-heading compact">
-          <h2>Ambient Timeline</h2>
-          <small>{{ ambient_timeline | length }} recent sessions</small>
-        </div>
-        {% if ambient_timeline %}
-          <div class="voice-timeline-list">
-            {% for session in ambient_timeline %}
-              <a class="voice-timeline-row" href="/api/ambient/sessions">
-                <span class="voice-timeline-dot voice-timeline-{{ session.mode }}" aria-hidden="true"></span>
-                <span class="voice-timeline-copy">
-                  <strong>{{ session.title or session.mode }}</strong>
-                  <small>{{ session.started_at_display }} · {{ session.mode }} · {{ session.source }} · {{ session.utterance_count }} utterances{% if session.last_utterance %} · {{ session.last_intent_label }}{% if session.last_sensitivity %} · {{ session.last_sensitivity }}{% endif %}{% endif %}</small>
-                  {% if session.last_utterance %}<em>{{ session.last_utterance }}</em>{% endif %}
-                </span>
-              </a>
-            {% endfor %}
+      <div class="voice-app-actions">
+        <span class="local-badge"><img class="ui-icon" src="/static/icons/shield.svg" alt="">Local only</span>
+        <button class="icon-button" type="button" data-settings-open aria-label="Open voice settings" title="Voice settings">
+          <img class="ui-icon" src="/static/icons/settings.svg" alt="">
+        </button>
+        <span class="voice-avatar" aria-label="Atlas profile">A</span>
+      </div>
+    </header>
+
+    <div class="voice-tool-tabs" role="tablist" aria-label="Voice views">
+      <button type="button" role="tab" aria-selected="true" data-voice-view="live">
+        <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">Live call
+      </button>
+      <button type="button" role="tab" aria-selected="false" data-voice-view="transcript">
+        <img class="ui-icon" src="/static/icons/message-square-text.svg" alt="">Transcript
+      </button>
+      <span class="voice-model-chip">{{ voice_settings.tts_model }} / {{ voice_settings.tts_provider }}</span>
+    </div>
+
+    <div class="voice-session-layout">
+      <main class="voice-main" aria-label="Voice console">
+        <section class="voice-live-stage" aria-label="Realtime call" data-voice-stage data-voice-state="idle">
+          <header class="voice-stage-meta">
+            <span class="voice-connection-dot" aria-hidden="true"></span>
+            <span class="voice-connection-label" data-voice-connection>{{ 'ready' if assistant_enabled else 'offline' }}</span>
+            <span class="voice-stage-model">{{ voice_settings.tts_voice if voice_settings.tts_voice is defined else 'Aiden' }}</span>
+          </header>
+
+          <div class="voice-bubble-wrap">
+            <canvas class="voice-bubble" width="560" height="560" data-voice-bubble aria-hidden="true"></canvas>
+            <div class="voice-bubble-label" aria-live="polite">
+              <span data-bubble-kicker>{{ 'Local voice' if assistant_enabled else 'Voice unavailable' }}</span>
+              <strong data-call-title>{{ 'Call Atlas' if assistant_enabled else 'Assistant is off' }}</strong>
+              <small data-call-state>{{ voice_settings.sample_rate }} Hz / {{ voice_settings.channels }} channel</small>
+            </div>
           </div>
-        {% else %}
-          <div class="empty tight">No ambient sessions yet.</div>
-        {% endif %}
-      </section>
 
-      <section id="voice-tts-playground" class="voice-playground" data-tts-playground data-endpoint="/api/voice/playground/tts">
-        <div class="section-heading compact">
-          <h2>Text to Speech</h2>
-          <small>{{ voice_settings.tts_provider }}</small>
+          <div class="voice-live-caption" aria-live="polite" aria-atomic="true">
+            <span class="caption-pulse" aria-hidden="true"></span>
+            <p data-live-caption>{{ 'Ready when you are' if assistant_enabled else 'Enable the assistant in settings' }}</p>
+          </div>
+        </section>
+
+        <form class="voice-prompt voice-composer" action="/upload" method="post" enctype="multipart/form-data" aria-label="Typed prompt" data-voice-prompt data-chat-composer data-upload-endpoint="/upload">
+          <input id="voice-chat-file-input" class="chat-file-input" type="file" name="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac" multiple aria-label="Attach audio or video" data-chat-file-input>
+          <button class="composer-icon" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
+            <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
+          </button>
+          <label class="sr-only" for="voice-prompt-input">Message Atlas</label>
+          <input id="voice-prompt-input" class="chat-text-input" type="text" name="prompt" value="{{ initial_prompt }}" placeholder="Message Atlas..." autocomplete="off" {% if not assistant_enabled %}disabled{% endif %}>
+          <button class="composer-icon composer-mic" type="button" data-chat-voice-toggle aria-label="Toggle microphone" title="Toggle microphone" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>
+            <img class="ui-icon" src="/static/icons/mic.svg" alt="">
+          </button>
+          <button id="voice-prompt-submit" class="composer-send" type="submit" aria-label="Send message" title="Send message" {% if not assistant_enabled %}disabled{% endif %}>
+            <img class="ui-icon" src="/static/icons/send.svg" alt="">
+          </button>
+          <span class="chat-attachment-tray" data-chat-attachments hidden></span>
+          <span class="chat-upload-status" data-chat-upload-status aria-live="polite"></span>
+        </form>
+      </main>
+
+      {% set latest = sessions[0] if sessions else none %}
+      <aside id="voice-conversation" class="voice-transcript-panel" aria-label="Conversation transcript" data-transcript-stream>
+        <header>
+          <div>
+            <span class="transcript-eyebrow">{{ latest.title if latest and latest.title else 'Current call' }}</span>
+            <h2>Conversation</h2>
+          </div>
+          <span class="transcript-count" data-transcript-count>{{ sessions | length }}</span>
+        </header>
+        <div class="voice-transcript-scroll" data-transcript-messages>
+          {% if sessions %}
+            {% if latest.last_utterance %}
+              <div class="voice-message user">
+                <span>You</span>
+                <p>{{ latest.last_utterance }}</p>
+              </div>
+            {% endif %}
+            {% if latest.last_reply %}
+              <div class="voice-message assistant">
+                <span>Atlas</span>
+                <p>{{ latest.last_reply }}</p>
+              </div>
+            {% endif %}
+          {% else %}
+            <div class="voice-transcript-empty" data-transcript-empty>
+              <img class="ui-icon" src="/static/icons/message-square-text.svg" alt="">
+              <p>No conversation yet</p>
+            </div>
+          {% endif %}
         </div>
-        <form class="voice-playground-form">
+      </aside>
+    </div>
+
+    <footer class="voice-transport" aria-label="Call controls" data-voice-transport>
+      <div class="voice-transport-status">
+        <span class="transport-state-dot" aria-hidden="true"></span>
+        <span data-playback-status>Call idle</span>
+        <time data-voice-timer>00:00</time>
+      </div>
+
+      <div class="voice-transport-actions">
+        <button class="transport-primary call-start" type="button" data-transport-action="start-call" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>
+          <img class="ui-icon" src="/static/icons/phone.svg" alt=""><span>Start call</span>
+        </button>
+        <button class="transport-primary call-end" type="button" data-transport-action="end-call" aria-pressed="false" disabled>
+          <img class="ui-icon" src="/static/icons/phone-off.svg" alt=""><span>End call</span>
+        </button>
+        <button class="transport-icon" type="button" data-transport-action="mic" aria-label="Mute microphone" title="Mute microphone" aria-pressed="false" disabled>
+          <img class="ui-icon icon-on" src="/static/icons/mic.svg" alt=""><img class="ui-icon icon-off" src="/static/icons/mic-off.svg" alt="">
+        </button>
+        <button class="transport-icon" type="button" data-transport-action="pause" aria-label="Pause call" title="Pause call" aria-pressed="false" disabled>
+          <img class="ui-icon" src="/static/icons/pause.svg" alt="">
+        </button>
+        <button class="transport-icon" type="button" data-transport-action="private" aria-label="Private mode" title="Private mode" aria-pressed="false" disabled>
+          <img class="ui-icon" src="/static/icons/lock-keyhole.svg" alt="">
+        </button>
+        <button class="transport-icon" type="button" data-transport-action="interrupt" aria-label="Interrupt response" title="Interrupt response" aria-pressed="false" disabled>
+          <img class="ui-icon" src="/static/icons/circle-stop.svg" alt="">
+        </button>
+        <button class="transport-icon" type="button" data-transport-action="play" aria-label="Toggle assistant audio" title="Toggle assistant audio" aria-pressed="false" disabled>
+          <img class="ui-icon icon-on" src="/static/icons/volume-2.svg" alt=""><img class="ui-icon icon-off" src="/static/icons/volume-x.svg" alt="">
+        </button>
+      </div>
+
+      <label class="voice-volume" aria-label="Assistant volume">
+        <img class="ui-icon" src="/static/icons/volume-2.svg" alt="">
+        <span class="sr-only">Assistant volume</span>
+        <input type="range" min="0" max="100" value="72" data-transport-volume disabled>
+        <output data-volume-output>72</output>
+      </label>
+      <audio data-response-audio aria-label="Assistant audio playback" preload="none"></audio>
+    </footer>
+  </div>
+{% endblock %}
+
+{% block settings_dialog_extra %}
+  <section class="dialog-section" id="voice-settings">
+    <h3>Voice Settings</h3>
+    <div class="voice-setting-list compact-list">
+      <div>
+        <span>Realtime</span>
+        <strong>{{ 'Ready' if assistant_enabled else 'Disabled' }}</strong>
+        <small>{{ voice_settings.realtime_host }}{{ voice_settings.websocket_path }}</small>
+      </div>
+      <div>
+        <span>Ambient</span>
+        <strong>{{ runtime.ambient_mode }}</strong>
+        <small>{{ status.active_listeners | length }} active listener{{ '' if status.active_listeners | length == 1 else 's' }}</small>
+      </div>
+      <div>
+        <span>Input Audio</span>
+        <strong>{{ voice_settings.sample_rate }} Hz</strong>
+        <small>{{ voice_settings.channels }} channel{{ '' if voice_settings.channels == 1 else 's' }}</small>
+      </div>
+      <div>
+        <span>TTS</span>
+        <strong>{{ voice_settings.tts_model }}</strong>
+        <small>{{ voice_settings.tts_provider }}{% if voice_settings.tts_base_url %}, {{ voice_settings.tts_base_url }}{% endif %}</small>
+      </div>
+    </div>
+  </section>
+
+  <details class="dialog-section dialog-details">
+    <summary>Voice Playground</summary>
+    <section id="voice-tts-playground" class="voice-playground" data-tts-playground data-endpoint="/api/voice/playground/tts">
+      <div class="section-heading compact">
+        <h3>Text to Speech</h3>
+        <small>{{ voice_settings.tts_provider }}</small>
+      </div>
+      <form class="voice-playground-form">
+        <label>
+          <span>Text</span>
           <input type="text" name="tts_text" placeholder="Text to synthesize" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>
-          <button type="submit" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>Test</button>
-        </form>
-        <output data-tts-playground-result data-playground-latency="tts">{{ voice_settings.tts_provider }}</output>
-      </section>
-
-      <section id="voice-stt-playground" class="voice-playground" data-stt-playground data-endpoint="/api/voice/playground/stt">
-        <div class="section-heading compact">
-          <h2>Speech to Text</h2>
-          <small>{{ runtime.asr_provider }}</small>
-        </div>
-        <form class="voice-playground-form" enctype="multipart/form-data">
-          <input type="file" name="stt_audio" accept="audio/*" {% if not assistant_enabled %}disabled{% endif %}>
-          <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Transcribe</button>
-        </form>
-        <output data-stt-playground-result data-playground-latency="stt">{{ runtime.asr_provider }}</output>
-      </section>
-
-      <section id="voice-model-playground" class="voice-playground" data-model-playground data-endpoint="/api/voice/playground/model">
-        <div class="section-heading compact">
-          <h2>Model Response</h2>
-          <small>{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</small>
-        </div>
-        <form class="voice-playground-form">
-          <input type="text" name="model_text" placeholder="Prompt the local model" {% if not assistant_enabled %}disabled{% endif %}>
-          <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Run</button>
-        </form>
-        <output data-model-playground-result data-playground-latency="model">{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</output>
-      </section>
+        </label>
+        <button type="submit" {% if voice_settings.tts_provider == 'none' %}disabled{% endif %}>Test</button>
+      </form>
+      <output data-tts-playground-result data-playground-latency="tts">{{ voice_settings.tts_provider }}</output>
     </section>
 
-    <aside class="voice-inspector" aria-label="Voice inspector">
-      <section id="voice-privacy" data-privacy-events>
-        <h2>Privacy</h2>
-        <strong class="privacy-state privacy-{{ status.privacy.status }}">{{ status.privacy.status }}</strong>
-        <small>{{ status.privacy.issue_count }} local-only issues</small>
-        <div class="voice-privacy-summary">
-          {% for severity, count in privacy_events.severity_counts.items() %}
-            <span>{{ count }} {{ severity }}</span>
-          {% else %}
-            <span>0 events</span>
-          {% endfor %}
-        </div>
-        <h3>Privacy Events</h3>
-        <div class="voice-privacy-list">
-          {% for event in privacy_events.events %}
-            <article class="voice-privacy-event privacy-event-{{ event.severity }}">
-              <div>
-                <strong>{{ event.event_type }}</strong>
-                <small>{{ event.created_at_display }} · {{ event.severity }}</small>
-              </div>
-              <p>{{ event.message }}</p>
-              {% if event.metadata_summary %}<em>{{ event.metadata_summary }}</em>{% endif %}
-            </article>
-          {% else %}
-            <div class="empty tight">No privacy events.</div>
-          {% endfor %}
-        </div>
-      </section>
+    <section id="voice-stt-playground" class="voice-playground" data-stt-playground data-endpoint="/api/voice/playground/stt">
+      <div class="section-heading compact">
+        <h3>Speech to Text</h3>
+        <small>{{ runtime.asr_provider }}</small>
+      </div>
+      <form class="voice-playground-form" enctype="multipart/form-data">
+        <label>
+          <span>Audio file</span>
+          <input type="file" name="stt_audio" accept="audio/*" {% if not assistant_enabled %}disabled{% endif %}>
+        </label>
+        <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Transcribe</button>
+      </form>
+      <output data-stt-playground-result data-playground-latency="stt">{{ runtime.asr_provider }}</output>
+    </section>
 
-      <section id="voice-settings">
-        <h2>Voice Settings</h2>
-        <div class="voice-setting-list">
-          <div>
-            <span>Realtime Host</span>
-            <strong>{{ voice_settings.realtime_host }}</strong>
-            <small>{{ voice_settings.websocket_path }}</small>
-          </div>
-          <div>
-            <span>Input Audio</span>
-            <strong>{{ voice_settings.sample_rate }} Hz</strong>
-            <small>{{ voice_settings.channels }} channel{{ '' if voice_settings.channels == 1 else 's' }}</small>
-          </div>
-          <div>
-            <span>TTS</span>
-            <strong>{{ voice_settings.tts_model }}</strong>
-            <small>{{ voice_settings.tts_provider }}{% if voice_settings.tts_base_url %} · {{ voice_settings.tts_base_url }}{% endif %}</small>
-          </div>
-        </div>
-      </section>
+    <section id="voice-model-playground" class="voice-playground" data-model-playground data-endpoint="/api/voice/playground/model">
+      <div class="section-heading compact">
+        <h3>Model Response</h3>
+        <small>{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</small>
+      </div>
+      <form class="voice-playground-form">
+        <label>
+          <span>Prompt</span>
+          <input type="text" name="model_text" placeholder="Prompt the local model" {% if not assistant_enabled %}disabled{% endif %}>
+        </label>
+        <button type="submit" {% if not assistant_enabled %}disabled{% endif %}>Run</button>
+      </form>
+      <output data-model-playground-result data-playground-latency="model">{{ voice_settings.llm_model if voice_settings.llm_model is defined else 'model' }}</output>
+    </section>
+  </details>
 
-      <section>
-        <h2>Local Models</h2>
-        <div class="voice-model-list">
-          {% for model in status.active_models %}
+  <details class="dialog-section dialog-details">
+    <summary>Privacy and sessions</summary>
+    <section id="voice-privacy" data-privacy-events>
+      <h3>Privacy Events</h3>
+      <strong class="privacy-state privacy-{{ status.privacy.status }}">{{ status.privacy.status }}</strong>
+      <small>{{ status.privacy.issue_count }} local-only issues</small>
+      <div class="voice-privacy-list">
+        {% for event in privacy_events.events %}
+          <article class="voice-privacy-event privacy-event-{{ event.severity }}">
             <div>
-              <span>{{ model.role }}</span>
-              <strong>{{ model.model }}</strong>
-              <small>{{ model.provider }}</small>
+              <strong>{{ event.event_type }}</strong>
+              <small>{{ event.created_at_display }}, {{ event.severity }}</small>
+            </div>
+            <p>{{ event.message }}</p>
+            {% if event.metadata_summary %}<em>{{ event.metadata_summary }}</em>{% endif %}
+          </article>
+        {% else %}
+          <div class="empty tight">No privacy events.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="voice-timeline" data-ambient-timeline aria-label="Ambient session timeline">
+      <h3>Ambient Timeline</h3>
+      {% if ambient_timeline %}
+        <div class="voice-timeline-list">
+          {% for session in ambient_timeline %}
+            <a class="voice-timeline-row" href="/api/ambient/sessions">
+              <span class="voice-timeline-dot voice-timeline-{{ session.mode }}" aria-hidden="true"></span>
+              <span class="voice-timeline-copy">
+                <strong>{{ session.title or session.mode }}</strong>
+                <small>{{ session.started_at_display }}, {{ session.mode }}, {{ session.source }}, {{ session.utterance_count }} utterances{% if session.last_utterance %}, {{ session.last_intent_label }}{% if session.last_sensitivity %}, {{ session.last_sensitivity }}{% endif %}{% endif %}</small>
+                {% if session.last_utterance %}<em>{{ session.last_utterance }}</em>{% endif %}
+              </span>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty tight">No ambient sessions yet.</div>
+      {% endif %}
+    </section>
+
+    <section>
+      <h3>Session History</h3>
+      <div class="voice-session-list">
+        {% for session in sessions %}
+          <a href="/api/assistant/sessions?mode=direct_voice" class="voice-session-row">
+            <strong>{{ session.title or session.id }}</strong>
+            <small>{{ session.started_at_display }}, {{ session.utterance_count }} turns</small>
+          </a>
+        {% else %}
+          <div class="empty tight">No sessions.</div>
+        {% endfor %}
+      </div>
+    </section>
+  </details>
+
+  <details class="dialog-section dialog-details">
+    <summary>Memory and coaching</summary>
+    <section id="voice-memory">
+      <h3>Memory</h3>
+      <div class="voice-memory-list" data-memory-list>
+        {% for memory in memory_items %}
+          <article class="voice-memory-item">
+            <form action="/memory/{{ memory.id }}/edit" method="post" class="voice-memory-form">
+              <div class="voice-memory-fields">
+                <label>
+                  <span>Kind</span>
+                  <input type="text" name="kind" value="{{ memory.kind }}" required>
+                </label>
+                <label>
+                  <span>Title</span>
+                  <input type="text" name="title" value="{{ memory.title }}" required>
+                </label>
+                <label class="voice-memory-text">
+                  <span>Text</span>
+                  <textarea name="text" rows="3" required>{{ memory.text }}</textarea>
+                </label>
+                <label>
+                  <span>Importance</span>
+                  <input type="number" name="importance" min="0" max="1" step="0.05" value="{{ memory.importance_value }}">
+                </label>
+                <label>
+                  <span>Confidence</span>
+                  <input type="number" name="confidence" min="0" max="1" step="0.05" value="{{ memory.confidence_value }}">
+                </label>
+                <label>
+                  <span>Valid Until</span>
+                  <input type="text" name="valid_until" value="{{ memory.valid_until_value }}" placeholder="optional ISO time">
+                </label>
+              </div>
+              <small>{{ memory.source_type }}{% if memory.source_id %}, {{ memory.source_id }}{% endif %}, updated {{ memory.updated_at_display }}</small>
+              <button type="submit">Save</button>
+            </form>
+            <form action="/memory/{{ memory.id }}/delete" method="post" class="voice-memory-delete">
+              <button type="submit">Delete</button>
+            </form>
+          </article>
+        {% else %}
+          <div class="empty tight">No memory items.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section id="voice-goals" data-coaching-goals>
+      <h3>Coaching Goals</h3>
+      <div class="voice-goal-summary">
+        <span>{{ coaching_goals.active_count }} active</span>
+        <span>{{ coaching_goals.completed_count }} completed</span>
+      </div>
+      <form action="/coaching/goals" method="post" class="voice-goal-form">
+        <label><span>Title</span><input type="text" name="title" placeholder="New coaching goal" required></label>
+        <label><span>Metric</span><input type="text" name="metric" placeholder="Talk/listen ratio"></label>
+        <label><span>Target date</span><input type="text" name="target_date" placeholder="YYYY-MM-DD"></label>
+        <label class="voice-goal-description"><span>Description</span><textarea name="description" rows="2" placeholder="What should improve?"></textarea></label>
+        <label><span>Next action</span><input type="text" name="next_action" placeholder="One action to try next"></label>
+        <button type="submit">Add Goal</button>
+      </form>
+      <div class="voice-goal-list">
+        {% for goal in coaching_goals.goals %}
+          <article class="voice-goal-item">
+            <div class="voice-goal-copy">
+              <strong>{{ goal.title }}</strong>
+              <small>{{ goal.metric or 'no metric' }}, {{ goal.target_date_display }}, {{ goal.feedback_count }} feedback event{{ '' if goal.feedback_count == 1 else 's' }}</small>
+              {% if goal.description %}<p>{{ goal.description }}</p>{% endif %}
+              {% if goal.next_action %}<em>{{ goal.next_action }}</em>{% endif %}
+            </div>
+            <div class="voice-goal-actions">
+              <span>{{ goal.latest_score_display }}</span>
+              <form action="/coaching/goals/{{ goal.id }}/status" method="post">
+                <input type="hidden" name="status" value="completed">
+                <button type="submit">Complete</button>
+              </form>
+              <form action="/coaching/goals/{{ goal.id }}/status" method="post">
+                <input type="hidden" name="status" value="archived">
+                <button type="submit">Archive</button>
+              </form>
+            </div>
+          </article>
+        {% else %}
+          <div class="empty tight">No active coaching goals.</div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section id="voice-coaching" data-coaching-progress>
+      <h3>Progress Dashboard</h3>
+      {% if coaching_progress.event_count %}
+        <div class="voice-progress-metrics">
+          {% for metric in coaching_progress.headline_metrics %}
+            <div class="voice-progress-card">
+              <span>{{ metric.label }}</span>
+              <strong>{{ metric.display }}</strong>
             </div>
           {% endfor %}
         </div>
-      </section>
-
-      <section>
-        <h2>Session History</h2>
-        <div class="voice-session-list">
-          {% for session in sessions %}
-            <a href="/api/assistant/sessions?mode=direct_voice" class="voice-session-row">
-              <strong>{{ session.title or session.id }}</strong>
-              <small>{{ session.started_at_display }} · {{ session.utterance_count }} turns</small>
-            </a>
-          {% else %}
-            <div class="empty tight">No sessions.</div>
-          {% endfor %}
-        </div>
-      </section>
-
-      <section id="voice-memory">
-        <h2>Memory</h2>
-        <div class="voice-memory-list" data-memory-list>
-          {% for memory in memory_items %}
-            <article class="voice-memory-item">
-              <form action="/memory/{{ memory.id }}/edit" method="post" class="voice-memory-form">
-                <div class="voice-memory-fields">
-                  <label>
-                    <span>Kind</span>
-                    <input type="text" name="kind" value="{{ memory.kind }}" required>
-                  </label>
-                  <label>
-                    <span>Title</span>
-                    <input type="text" name="title" value="{{ memory.title }}" required>
-                  </label>
-                  <label class="voice-memory-text">
-                    <span>Text</span>
-                    <textarea name="text" rows="3" required>{{ memory.text }}</textarea>
-                  </label>
-                  <label>
-                    <span>Importance</span>
-                    <input type="number" name="importance" min="0" max="1" step="0.05" value="{{ memory.importance_value }}">
-                  </label>
-                  <label>
-                    <span>Confidence</span>
-                    <input type="number" name="confidence" min="0" max="1" step="0.05" value="{{ memory.confidence_value }}">
-                  </label>
-                  <label>
-                    <span>Valid Until</span>
-                    <input type="text" name="valid_until" value="{{ memory.valid_until_value }}" placeholder="optional ISO time">
-                  </label>
-                </div>
-                <small>{{ memory.source_type }}{% if memory.source_id %} · {{ memory.source_id }}{% endif %} · updated {{ memory.updated_at_display }}</small>
-                <button type="submit">Save</button>
-              </form>
-              <form action="/memory/{{ memory.id }}/delete" method="post" class="voice-memory-delete">
-                <button type="submit">Delete</button>
-              </form>
+        <div class="voice-progress-list">
+          {% for event in coaching_progress.latest_events %}
+            <article class="voice-progress-event">
+              <div>
+                <strong>{{ event.title }}</strong>
+                <small>{{ event.created_at_display }}, {{ event.category_label }}</small>
+              </div>
+              <span>{{ event.primary_score_display }}</span>
             </article>
-          {% else %}
-            <div class="empty tight">No memory items.</div>
           {% endfor %}
         </div>
-      </section>
-
-      <section id="voice-goals" data-coaching-goals>
-        <h2>Coaching Goals</h2>
-        <div class="voice-goal-summary">
-          <span>{{ coaching_goals.active_count }} active</span>
-          <span>{{ coaching_goals.completed_count }} completed</span>
-        </div>
-        <form action="/coaching/goals" method="post" class="voice-goal-form">
-          <input type="text" name="title" placeholder="New coaching goal" required>
-          <input type="text" name="metric" placeholder="Metric">
-          <input type="text" name="target_date" placeholder="Target date">
-          <textarea name="description" rows="2" placeholder="Description"></textarea>
-          <input type="text" name="next_action" placeholder="Next action">
-          <button type="submit">Add Goal</button>
-        </form>
-        <div class="voice-goal-list">
-          {% for goal in coaching_goals.goals %}
-            <article class="voice-goal-item">
-              <div class="voice-goal-copy">
-                <strong>{{ goal.title }}</strong>
-                <small>{{ goal.metric or 'no metric' }} · {{ goal.target_date_display }} · {{ goal.feedback_count }} feedback event{{ '' if goal.feedback_count == 1 else 's' }}</small>
-                {% if goal.description %}<p>{{ goal.description }}</p>{% endif %}
-                {% if goal.next_action %}<em>{{ goal.next_action }}</em>{% endif %}
-              </div>
-              <div class="voice-goal-actions">
-                <span>{{ goal.latest_score_display }}</span>
-                <form action="/coaching/goals/{{ goal.id }}/status" method="post">
-                  <input type="hidden" name="status" value="completed">
-                  <button type="submit">Complete</button>
-                </form>
-                <form action="/coaching/goals/{{ goal.id }}/status" method="post">
-                  <input type="hidden" name="status" value="archived">
-                  <button type="submit">Archive</button>
-                </form>
-              </div>
-            </article>
-          {% else %}
-            <div class="empty tight">No active coaching goals.</div>
-          {% endfor %}
-        </div>
-      </section>
-
-      <section id="voice-coaching" data-coaching-progress>
-        <h2>Progress Dashboard</h2>
-        {% if coaching_progress.event_count %}
-          <div class="voice-progress-metrics">
-            {% for metric in coaching_progress.headline_metrics %}
-              <div class="voice-progress-card">
-                <span>{{ metric.label }}</span>
-                <strong>{{ metric.display }}</strong>
-              </div>
-            {% endfor %}
-          </div>
-          <div class="voice-progress-list">
-            {% for event in coaching_progress.latest_events %}
-              <article class="voice-progress-event">
-                <div>
-                  <strong>{{ event.title }}</strong>
-                  <small>{{ event.created_at_display }} · {{ event.category_label }}</small>
-                </div>
-                <span>{{ event.primary_score_display }}</span>
-              </article>
-            {% endfor %}
-          </div>
-        {% else %}
-          <div class="empty tight">No coaching progress yet.</div>
-        {% endif %}
-      </section>
-    </aside>
-
-    <footer class="voice-transport" aria-label="Transport" data-voice-transport>
-      <h2>Transport</h2>
-      <button type="button" data-transport-action="mic" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Mic</button>
-      <button type="button" data-transport-action="pause" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Pause</button>
-      <button type="button" data-transport-action="private" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Private</button>
-      <button type="button" data-transport-action="interrupt" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Interrupt</button>
-      <button type="button" data-transport-action="play" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Play</button>
-      <label><span>Volume</span><input type="range" min="0" max="100" value="70" data-transport-volume {% if not assistant_enabled %}disabled{% endif %}><output data-volume-output>70</output></label>
-      <span class="voice-playback-status" data-playback-status>playback idle</span>
-      <audio data-response-audio aria-label="Assistant audio playback" preload="none"></audio>
-      <time data-voice-timer>00:00</time>
-    </footer>
-  </div>
+      {% else %}
+        <div class="empty tight">No coaching progress yet.</div>
+      {% endif %}
+    </section>
+  </details>
 {% endblock %}

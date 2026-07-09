@@ -95,7 +95,7 @@
             <strong>{{ label }}</strong>
             <small>
               {% if state.job %}
-                {{ state.job.status }}{% if state.job.attempts is not none %} · attempt {{ state.job.attempts }}/{{ state.job.max_attempts }}{% endif %} · {{ state.job.duration_label }}
+                {{ state.job.status }}{% if state.job.attempts is not none %}, attempt {{ state.job.attempts }}/{{ state.job.max_attempts }}{% endif %}, {{ state.job.duration_label }}
               {% else %}
                 waiting
               {% endif %}
@@ -124,7 +124,7 @@
           </div>
         </div>
         {% if is_resummarizing %}
-          <p class="muted resummarizing-banner">⟳ Switching to "{{ preferred_template.name }}" — your current "{{ cached_summary.template_id }}" summary is cached and will be replaced shortly.</p>
+          <p class="muted resummarizing-banner">Switching to "{{ preferred_template.name }}". Current "{{ cached_summary.template_id }}" summary stays visible until the new one is ready.</p>
           <div class="summary summary-readable summary-cached">
             {% for section in cached_summary_sections %}
               <details class="summary-section summary-section-{{ section.slug }}" open>

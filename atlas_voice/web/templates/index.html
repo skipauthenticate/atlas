@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Recordings - Atlas Voice{% endblock %}
+{% block title %}Dashboard - Atlas Voice{% endblock %}
 
 {% block head_extra %}
   <script>
@@ -26,150 +26,139 @@
       });
     });
   </script>
+  <script src="/static/voice.js" defer></script>
 {% endblock %}
+
 {% block content %}
-  <section class="panel">
-    <div class="panel-heading">
-      <div>
-        <h1>Recordings</h1>
-        <p>{{ recordings | length }} local audio files</p>
-      </div>
-      <form class="upload" action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" accept="audio/*" required>
-        <button type="submit">Upload</button>
-      </form>
-    </div>
+  <section class="assistant-home dashboard-simple dashboard-chat-only" aria-label="Atlas assistant dashboard" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
     {% if runtime_settings_message %}
       <div class="notice">{{ runtime_settings_message }}</div>
     {% endif %}
     {% if assistant_mode_message %}
       <div class="notice">{{ assistant_mode_message }}</div>
     {% endif %}
-    <section class="runtime-summary" aria-label="Worker runtime">
-      <div>
-        <span>Compute</span>
-        <strong>{{ runtime.accelerator }}</strong>
-        <small>{{ runtime.device }} · {{ runtime.compute_type }}</small>
-      </div>
-      <div>
-        <span>ASR</span>
-        <strong>{{ runtime.asr_model }}</strong>
-        <small>{{ runtime.asr_provider }}</small>
-      </div>
-      <div>
-        <span>Diarization</span>
-        <strong>{{ runtime.pyannote_model if runtime.diarization_provider == "pyannote" else runtime.diarization_provider }}</strong>
-        <small>{{ runtime.diarization_provider }}</small>
-      </div>
-      <div>
-        <span>RAM</span>
-        <strong>{{ status.system.ram.label }}</strong>
-        <small>{% if status.system.ram.used_percent is not none %}{{ status.system.ram.used_percent }}% used{% else %}unknown{% endif %}</small>
-      </div>
-      <div>
-        <span>Swap</span>
-        <strong>{{ status.system.swap.label }}</strong>
-        <small>{% if status.system.swap.used_percent is not none %}{{ status.system.swap.used_percent }}% used{% else %}unknown{% endif %}</small>
-      </div>
-      <div>
-        <span>GPU</span>
-        <strong>{{ status.system.gpu.label }}</strong>
-        <small>{{ "available" if status.system.gpu.available else "not active" }}</small>
-      </div>
-      <div>
-        <span>Privacy</span>
-        <strong class="privacy-state privacy-{{ status.privacy.status }}">{{ status.privacy.status }}</strong>
-        <small>{{ status.privacy.issue_count }} local-only issues</small>
-      </div>
-      <div>
-        <span>Listeners</span>
-        <strong>{{ status.active_listeners | length }}</strong>
-        <small>{% if status.active_listeners %}{% for listener in status.active_listeners %}{{ listener.profile }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}none{% endif %}</small>
-      </div>
-    </section>
-    <form class="assistant-mode-controls" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
-      <div>
-        <span>Assistant mode</span>
-        <strong>{{ runtime.ambient_mode }}</strong>
-      </div>
-      <div class="assistant-mode-segments" role="group" aria-label="Ambient capture mode">
-        {% for mode in runtime.assistant_mode_options %}
-          <button type="submit" name="mode" value="{{ mode }}" data-mode="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">{{ mode | title }}</button>
-        {% endfor %}
-      </div>
-    </form>
-    <section class="system-status" aria-label="System status">
-      <div class="status-list">
-        {% for service in status.services %}
+
+    <section class="assistant-command-panel" aria-label="Atlas Assistant">
+      <header class="assistant-command-header">
+        <div class="assistant-command-title">
+          <span class="command-icon" aria-hidden="true">
+            <img class="ui-icon" src="/static/icons/message-square-text.svg" alt="">
+          </span>
           <div>
-            <span class="service-state service-{{ service.status }}">{{ service.status }}</span>
-            <strong>{{ service.name }}</strong>
-            <small>{{ service.detail }}</small>
+            <span class="command-eyebrow">Local workspace</span>
+            <h1>Chat</h1>
           </div>
-        {% endfor %}
-      </div>
-      <div class="model-list">
-        {% for model in status.active_models %}
+        </div>
+        <dl class="command-runtime" aria-label="Runtime snapshot">
           <div>
-            <span>{{ model.role }}</span>
-            <strong>{{ model.model }}</strong>
-            <small>{{ model.provider }}</small>
+            <dt>Compute</dt>
+            <dd>{{ runtime.accelerator }}</dd>
           </div>
-        {% endfor %}
-      </div>
+          <div>
+            <dt>Speech</dt>
+            <dd>{{ runtime.asr_model }}</dd>
+          </div>
+          <div>
+            <dt>Sessions</dt>
+            <dd>{{ sessions | length }}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd data-voice-connection>{{ 'Ready' if assistant_enabled else 'Off' }}</dd>
+          </div>
+        </dl>
+      </header>
+
+      <form class="chat-command-bar dashboard-command-bar chat-composer" action="/upload" method="post" enctype="multipart/form-data" aria-label="Ask Atlas" data-voice-prompt data-chat-composer data-upload-endpoint="/upload">
+        <input id="dashboard-chat-file-input" class="chat-file-input" type="file" name="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac" multiple aria-label="Attach audio or video" data-chat-file-input>
+        <label class="sr-only" for="voice-prompt-input">Message Atlas</label>
+        <div class="dashboard-prompt-field">
+          <input id="voice-prompt-input" class="chat-text-input" type="text" name="prompt" autocomplete="off" placeholder="Message Atlas..." {% if not assistant_enabled %}disabled{% endif %}>
+          <span class="chat-attachment-tray" data-chat-attachments hidden></span>
+          <span class="chat-upload-status" data-chat-upload-status aria-live="polite"></span>
+        </div>
+        <div class="dashboard-composer-footer">
+          <label class="chat-source-field">
+            <span class="sr-only">Source</span>
+            <select class="chat-source-select" name="source_context" aria-label="Select source" data-chat-source>
+              <option value="">All sources</option>
+              <option value="recordings">Recordings</option>
+              <option value="uploads">Uploads</option>
+              <option value="voice">Voice</option>
+            </select>
+          </label>
+          <div class="chat-actions">
+            <button class="composer-icon chat-attach-button" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
+              <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
+            </button>
+            <button class="composer-icon voice-mic-button" type="button" data-chat-voice-toggle aria-label="Start voice input" title="Start voice input" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>
+              <img class="ui-icon" src="/static/icons/mic.svg" alt="">
+            </button>
+            <button id="voice-prompt-submit" class="dashboard-send" type="submit">
+              <img class="ui-icon" src="/static/icons/send.svg" alt="">
+              <span>Send</span>
+            </button>
+          </div>
+        </div>
+      </form>
     </section>
-    <form class="runtime-settings" action="/settings/runtime" method="post">
-      <label>
-        <span>ASR provider</span>
-        <select name="asr_provider">
-          {% for provider in runtime.asr_providers %}
-            <option value="{{ provider }}" {% if runtime.asr_provider == provider %}selected{% endif %}>{{ provider }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>
-        <span>Model</span>
-        <input type="text" name="asr_model" value="{{ runtime.asr_model_value }}" list="asr-models" autocomplete="off">
-        <datalist id="asr-models">
-          {% for model in runtime.asr_model_options %}
-            <option value="{{ model }}"></option>
-          {% endfor %}
-        </datalist>
-      </label>
-      <label>
-        <span>Diarization</span>
-        <select name="diarization_provider">
-          {% for provider in runtime.diarization_providers %}
-            <option value="{{ provider }}" {% if runtime.diarization_provider == provider %}selected{% endif %}>{{ provider }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>
-        <span>Summary model</span>
-        <input type="text" name="summary_llm_model" value="{{ runtime.summary_llm_model_value }}" autocomplete="off">
-      </label>
-      <label>
-        <span>Summary endpoint</span>
-        <input type="url" name="summary_llm_base_url" value="{{ runtime.summary_llm_base_url_value }}" autocomplete="off">
-      </label>
-      <button type="submit">Apply</button>
-    </form>
-    {% if recordings %}
-      <div class="recording-list">
+
+    <section id="voice-conversation" class="voice-transcript assistant-transcript" aria-label="Conversation transcript" data-transcript-stream>
+      <div class="section-heading compact">
+        <h2>Current Thread</h2>
+        <small>{{ sessions | length }} recent voice session{{ '' if sessions | length == 1 else 's' }}</small>
+      </div>
+      {% if sessions %}
+        {% set latest = sessions[0] %}
+        {% if latest.last_utterance %}
+          <div class="voice-message user">
+            <span>User</span>
+            <p>{{ latest.last_utterance }}</p>
+          </div>
+        {% endif %}
+        {% if latest.last_reply %}
+          <div class="voice-message assistant">
+            <span>Atlas</span>
+            <p>{{ latest.last_reply }}</p>
+          </div>
+        {% endif %}
+      {% else %}
+        <div class="empty tight">No live thread yet.</div>
+      {% endif %}
+    </section>
+
+    <div class="assistant-transport" data-voice-transport aria-hidden="true">
+      <button type="button" data-transport-action="mic" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Mic</button>
+      <button type="button" data-transport-action="pause" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Pause</button>
+      <button type="button" data-transport-action="private" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Private</button>
+      <button type="button" data-transport-action="interrupt" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Interrupt</button>
+      <button type="button" data-transport-action="play" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Audio</button>
+      <input type="range" min="0" max="100" value="70" data-transport-volume {% if not assistant_enabled %}disabled{% endif %}>
+      <output data-volume-output>70</output>
+      <span data-playback-status>audio idle</span>
+      <audio data-response-audio aria-label="Assistant audio playback" preload="none"></audio>
+      <time data-voice-timer>00:00</time>
+    </div>
+
+    <section id="recordings" class="dashboard-recordings" aria-label="Past recordings">
+      <div class="section-heading compact">
+        <h2>Recordings</h2>
+        <small data-recording-count data-count="{{ recordings | length }}">{{ recordings | length }} recent</small>
+      </div>
+      <div class="recording-list dashboard-recording-list" data-dashboard-recording-list {% if not recordings %}hidden{% endif %}>
         {% for recording in recordings %}
           <a class="recording-row" href="/recordings/{{ recording.id }}">
             <span>
               <strong>{{ recording.title }}</strong>
-              <small>{{ recording.created_at }}</small>
+              <small>{{ recording.created_at_display }}</small>
             </span>
             <span class="status status-{{ recording.status }}">{{ recording.status }}</span>
           </a>
         {% endfor %}
       </div>
-    {% else %}
-      <div class="empty">
-        Drop audio into <code>data/inbox/</code> or upload a file to begin.
-      </div>
-    {% endif %}
+      {% if not recordings %}
+        <div class="empty tight" data-recordings-empty>No recordings yet.</div>
+      {% endif %}
+    </section>
   </section>
 {% endblock %}

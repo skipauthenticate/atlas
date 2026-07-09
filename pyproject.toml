@@ -62,7 +62,7 @@ where = ["."]
 include = ["atlas_voice*"]
 
 [tool.setuptools.package-data]
-atlas_voice = ["web/templates/*.html", "web/static/*.css", "web/static/*.js", "web/static/icons/*.svg"]
+atlas_voice = ["web/templates/*.html", "web/static/*.css", "web/static/*.js", "web/static/icons/*"]
 
 [tool.ruff]
 line-length = 100
