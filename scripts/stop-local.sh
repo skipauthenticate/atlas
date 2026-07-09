@@ -3,10 +3,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 if systemctl --user is-active --quiet atlas-voice-web.service 2>/dev/null || \
-   systemctl --user is-active --quiet atlas-voice-worker.service 2>/dev/null; then
-  systemctl --user stop atlas-voice-web.service atlas-voice-worker.service
+   systemctl --user is-active --quiet atlas-voice-worker.service 2>/dev/null || \
+   systemctl --user is-active --quiet atlas-voice-tts.service 2>/dev/null; then
+  systemctl --user stop atlas-voice-web.service atlas-voice-worker.service atlas-voice-tts.service
 fi
-for name in web worker; do
+for name in web worker tts; do
   pid_file=".run/${name}.pid"
   if [[ -f "$pid_file" ]]; then
     pid="$(cat "$pid_file")"

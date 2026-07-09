@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 .venv/
+config/atlas.assistant.yaml
 .venv-gpu/
 __pycache__/
 *.py[cod]

@@ -55,6 +55,13 @@ print(f'{name} pid={proc.pid}')
 PY
 }
 
+TTS_PROVIDER="${ATLAS_VOICE_TTS_PROVIDER:-none}"
+case "${TTS_PROVIDER,,}" in
+  faster-qwen3-tts|faster-qwen3|qwen3|qwen3-tts|sidecar)
+    start_service tts "${ROOT_DIR}/scripts/run-local-service.sh" tts
+    ;;
+esac
+
 start_service web "${ROOT_DIR}/scripts/run-local-service.sh" web
 start_service worker "${ROOT_DIR}/scripts/run-local-service.sh" worker
 echo "Atlas Voice: http://127.0.0.1:${ATLAS_VOICE_PORT:-8787}"

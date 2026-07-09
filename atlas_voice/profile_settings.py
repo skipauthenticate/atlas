@@ -115,7 +115,7 @@ def _apply_default_tts_profile_updates(
     if "ATLAS_VOICE_TTS_PROVIDER" in settings.configured_env:
         return
     profile = assistant_config.profiles.get(profile_name, {})
-    for profile_key in ("tts_provider", "tts_model", "tts_base_url", "tts_health_url"):
+    for profile_key in ("tts_provider", "tts_model", "tts_voice", "tts_base_url", "tts_health_url"):
         if profile_key not in profile:
             continue
         setting_name = PROFILE_SETTING_KEYS[profile_key]

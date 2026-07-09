@@ -15,10 +15,14 @@ from .config import Settings
 
 
 REALTIME_SYSTEM_PROMPT = (
-    "You are Atlas Voice, a private local realtime assistant. "
-    "Answer conversationally, stay concise, and do not claim to access cloud services. "
-    "Use only local context provided in the session."
+    "You are Atlas, a private local voice assistant in a live conversation. "
+    "Respond like a thoughtful person speaking aloud: use natural contractions, varied sentence "
+    "rhythm, and brief acknowledgements only when they add value. Keep most replies to one or two "
+    "short sentences unless the user asks for detail. Never use markdown, headings, bullet points, "
+    "stage directions, or canned phrases such as 'How can I assist you today?'. Do not narrate your "
+    "reasoning. Do not claim to access cloud services. Use only local context provided in the session."
 )
+MAX_REALTIME_HISTORY_MESSAGES = 12
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,8 @@ TTS_SIDECAR_ALIASES = {
     "qwen3-tts",
     "sidecar",
 }
+ESPEAK_TTS_PROVIDER = "espeak-ng"
+ESPEAK_TTS_ALIASES = {"espeak", "espeak-ng"}
 
 
 def extract_text_input(event: dict[str, Any]) -> str | None:
@@ -168,6 +174,7 @@ def generate_realtime_reply(
     settings: Settings,
     *,
     instructions: str | None = None,
+    history: list[dict[str, str]] | None = None,
     timeout_seconds: float = 120.0,
 ) -> RealtimeReply:
     started = time.perf_counter()
@@ -182,20 +189,26 @@ def generate_realtime_reply(
     import httpx
 
     system_prompt = instructions or REALTIME_SYSTEM_PROMPT
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(_realtime_history_messages(history))
+    messages.append({"role": "user", "content": text})
+    body: dict[str, object] = {
+        "model": settings.llm_model,
+        "messages": messages,
+        "temperature": settings.llm_temperature,
+        "max_tokens": min(settings.llm_max_tokens, 600),
+        "stream": False,
+    }
+    # Disable chain-of-thought / extended thinking for voice replies.
+    # These keys are only understood by KoboldCpp / certain local backends.
+    # Include them unconditionally — most OpenAI-compatible servers ignore
+    # unknown fields, and the ones that don't are rare in local deployments.
+    body["chat_template_kwargs"] = {"enable_thinking": False}
+    body["reasoning_format"] = "deepseek"
+    body["thinking_budget_tokens"] = 0
+
     with httpx.Client(timeout=timeout_seconds) as client:
-        response = client.post(
-            settings.llm_base_url,
-            json={
-                "model": settings.llm_model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                "temperature": settings.llm_temperature,
-                "max_tokens": min(settings.llm_max_tokens, 600),
-                "stream": False,
-            },
-        )
+        response = client.post(settings.llm_base_url, json=body)
         response.raise_for_status()
         payload = response.json()
 
@@ -209,6 +222,23 @@ def generate_realtime_reply(
         tokens_out=usage.get("completion_tokens") if isinstance(usage, dict) else None,
         tool_calls=_extract_tool_calls(message.get("tool_calls")),
     )
+
+
+def _realtime_history_messages(
+    history: list[dict[str, str]] | None,
+) -> list[dict[str, str]]:
+    if not history:
+        return []
+    messages: list[dict[str, str]] = []
+    for item in history[-MAX_REALTIME_HISTORY_MESSAGES:]:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = _clean_text(item.get("content"))
+        if role not in {"assistant", "user"} or not content:
+            continue
+        messages.append({"role": role, "content": content})
+    return messages
 
 
 def synthesize_with_piper(text: str, settings: Settings, output_dir: Path) -> RealtimeAudio:
@@ -239,6 +269,44 @@ def synthesize_with_piper(text: str, settings: Settings, output_dir: Path) -> Re
     return RealtimeAudio(
         path=output_path,
         payload=output_path.read_bytes(),
+        latency_ms=_elapsed_ms(started),
+    )
+
+
+def synthesize_with_espeak_ng(text: str, settings: Settings, output_dir: Path) -> RealtimeAudio:
+    cleaned = _clean_text(text)
+    if not cleaned:
+        raise RuntimeError("espeak-ng TTS requires non-empty input text")
+
+    started = time.perf_counter()
+    resolved = shutil.which("espeak-ng")
+    if not resolved:
+        raise RuntimeError("espeak-ng executable not found")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"assistant-{uuid.uuid4().hex}.wav"
+    command = [resolved, "--stdin", "-w", str(output_path)]
+    voice = _clean_text(getattr(settings, "tts_voice", "")) or ""
+    if voice and voice.lower() != "default":
+        command.extend(["-v", voice])
+
+    result = subprocess.run(
+        command,
+        input=cleaned.encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=float(getattr(settings, "tts_timeout", 60.0)),
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"espeak-ng failed: {stderr or result.returncode}")
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("espeak-ng did not create an audio file")
+    return RealtimeAudio(
+        path=output_path,
+        payload=output_path.read_bytes(),
+        media_type="audio/wav",
         latency_ms=_elapsed_ms(started),
     )
 
@@ -323,6 +391,8 @@ def normalize_tts_provider(provider: str | None) -> str:
     normalized = (provider or "none").strip().lower().replace("_", "-")
     if normalized in TTS_SIDECAR_ALIASES:
         return TTS_SIDECAR_PROVIDER
+    if normalized in ESPEAK_TTS_ALIASES:
+        return ESPEAK_TTS_PROVIDER
     return normalized or "none"
 
 
@@ -416,7 +486,11 @@ def _audio_extension(media_type: str, response_format: str | None) -> str:
     if media_type in {"audio/wav", "audio/wave", "audio/x-wav"}:
         return "wav"
     clean_format = (response_format or "wav").strip().lower().lstrip(".")
-    return clean_format if clean_format in {"aac", "flac", "mp3", "ogg", "opus", "pcm", "wav"} else "wav"
+    return (
+        clean_format
+        if clean_format in {"aac", "flac", "mp3", "ogg", "opus", "pcm", "wav"}
+        else "wav"
+    )
 
 
 def _response_detail(response: Any) -> str:

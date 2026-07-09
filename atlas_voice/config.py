@@ -88,8 +88,8 @@ class Settings:
     tts_provider: str = "none"
     tts_base_url: str = "http://127.0.0.1:8008/v1/audio/speech"
     tts_health_url: str = "http://127.0.0.1:8008/health"
-    tts_model: str = "faster-qwen3-tts-0.6b"
-    tts_voice: str = "default"
+    tts_model: str = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+    tts_voice: str = "Aiden"
     tts_response_format: str = "wav"
     tts_timeout: float = 60.0
     tts_health_timeout: float = 2.0
@@ -113,9 +113,7 @@ class Settings:
     ambient_retain_audio: bool = False
     ambient_raw_audio_retention_days: float = 0.0
     ambient_transcript_retention_days: int | None = None
-    configured_env: frozenset[str] = field(
-        default_factory=frozenset, repr=False, compare=False
-    )
+    configured_env: frozenset[str] = field(default_factory=frozenset, repr=False, compare=False)
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -137,9 +135,7 @@ class Settings:
                 "PYANNOTE_MODEL", "pyannote/speaker-diarization-community-1"
             ),
             hf_token=os.environ.get("HF_TOKEN") or None,
-            llm_base_url=os.environ.get(
-                "LLM_BASE_URL", "http://llm:8080/v1/chat/completions"
-            ),
+            llm_base_url=os.environ.get("LLM_BASE_URL", "http://llm:8080/v1/chat/completions"),
             llm_model=os.environ.get("LLM_MODEL", "qwen-local"),
             llm_temperature=float(os.environ.get("LLM_TEMPERATURE", "0.2")),
             llm_max_tokens=int(os.environ.get("LLM_MAX_TOKENS", "1200")),
@@ -149,9 +145,9 @@ class Settings:
             ),
             asr_provider=os.environ.get("ATLAS_VOICE_ASR_PROVIDER", "whisperx").strip().lower(),
             asr_model=os.environ.get("ATLAS_VOICE_ASR_MODEL") or None,
-            diarization_provider=os.environ.get(
-                "ATLAS_VOICE_DIARIZATION_PROVIDER", "pyannote"
-            ).strip().lower(),
+            diarization_provider=os.environ.get("ATLAS_VOICE_DIARIZATION_PROVIDER", "pyannote")
+            .strip()
+            .lower(),
             nemo_source_lang=os.environ.get("ATLAS_VOICE_NEMO_SOURCE_LANG", "en"),
             nemo_target_lang=os.environ.get("ATLAS_VOICE_NEMO_TARGET_LANG", "en"),
             vibevoice_model=os.environ.get(
@@ -170,7 +166,9 @@ class Settings:
             ),
             realtime_asr_fallback_provider=os.environ.get(
                 "ATLAS_VOICE_REALTIME_ASR_FALLBACK_PROVIDER", "faster-whisper"
-            ).strip().lower(),
+            )
+            .strip()
+            .lower(),
             faster_whisper_model=os.environ.get(
                 "ATLAS_VOICE_FASTER_WHISPER_MODEL",
                 os.environ.get("WHISPERX_MODEL", "large-v3-turbo"),
@@ -201,8 +199,8 @@ class Settings:
                 "ATLAS_TTS_HEALTH_URL",
                 os.environ.get("ATLAS_VOICE_TTS_HEALTH_URL", "http://127.0.0.1:8008/health"),
             ).rstrip("/"),
-            tts_model=os.environ.get("ATLAS_TTS_MODEL") or "faster-qwen3-tts-0.6b",
-            tts_voice=os.environ.get("ATLAS_TTS_VOICE") or "default",
+            tts_model=os.environ.get("ATLAS_TTS_MODEL") or "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            tts_voice=os.environ.get("ATLAS_TTS_VOICE") or "Aiden",
             tts_response_format=os.environ.get("ATLAS_TTS_RESPONSE_FORMAT", "wav").strip().lower(),
             tts_timeout=float(os.environ.get("ATLAS_TTS_TIMEOUT", "60")),
             tts_health_timeout=float(os.environ.get("ATLAS_TTS_HEALTH_TIMEOUT", "2")),
@@ -224,20 +222,18 @@ class Settings:
             ),
             ambient_source=os.environ.get("ATLAS_VOICE_AMBIENT_SOURCE", "mic"),
             ambient_mode=os.environ.get("ATLAS_VOICE_AMBIENT_MODE", "ambient").strip().lower(),
-            ambient_chunk_seconds=float(
-                os.environ.get("ATLAS_VOICE_AMBIENT_CHUNK_SECONDS", "15")
-            ),
+            ambient_chunk_seconds=float(os.environ.get("ATLAS_VOICE_AMBIENT_CHUNK_SECONDS", "15")),
             ambient_poll_seconds=float(os.environ.get("ATLAS_VOICE_AMBIENT_POLL_SECONDS", "2")),
             ambient_mic_device=os.environ.get("ATLAS_VOICE_AMBIENT_MIC_DEVICE", "default"),
-            ambient_vad_provider=os.environ.get(
-                "ATLAS_VOICE_AMBIENT_VAD_PROVIDER", "auto"
-            ).strip().lower(),
+            ambient_vad_provider=os.environ.get("ATLAS_VOICE_AMBIENT_VAD_PROVIDER", "auto")
+            .strip()
+            .lower(),
             ambient_vad_fallback_provider=os.environ.get(
                 "ATLAS_VOICE_AMBIENT_VAD_FALLBACK_PROVIDER", "energy"
-            ).strip().lower(),
-            ambient_vad_threshold=float(
-                os.environ.get("ATLAS_VOICE_AMBIENT_VAD_THRESHOLD", "500")
-            ),
+            )
+            .strip()
+            .lower(),
+            ambient_vad_threshold=float(os.environ.get("ATLAS_VOICE_AMBIENT_VAD_THRESHOLD", "500")),
             ambient_min_speech_seconds=float(
                 os.environ.get("ATLAS_VOICE_AMBIENT_MIN_SPEECH_SECONDS", "0.4")
             ),

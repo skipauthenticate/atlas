@@ -259,7 +259,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(custom_tool.parameters["recipient"], "Person receiving the draft.")
         self.assertFalse(custom_tool.requires_confirmation)
         self.assertTrue(registry.get("privacy_purge").requires_confirmation)
-        self.assertEqual(registry.as_dict()["draft_message"]["handler"], "atlas_voice.tools.draft_message")
+        self.assertEqual(
+            registry.as_dict()["draft_message"]["handler"], "atlas_voice.tools.draft_message"
+        )
 
     def test_tool_registry_rejects_invalid_permission_policy(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -357,7 +359,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(reflection.asr_provider, "canary")
         self.assertEqual(reflection.diarization_provider, "none")
 
-
     def test_direct_voice_defaults_to_faster_qwen3_tts_when_tts_unset(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -374,7 +375,8 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.profiles["direct_voice"]["tts_provider"], "faster-qwen3-tts")
         self.assertEqual(direct.tts_provider, "faster-qwen3-tts")
-        self.assertEqual(direct.tts_model, "faster-qwen3-tts-0.6b")
+        self.assertEqual(direct.tts_model, "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice")
+        self.assertEqual(direct.tts_voice, "Aiden")
         self.assertEqual(direct.tts_base_url, "http://127.0.0.1:8008/v1/audio/speech")
 
     def test_explicit_tts_none_disables_direct_voice_default_tts(self) -> None:

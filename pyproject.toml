@@ -37,6 +37,9 @@ worker = [
   "pyannote.audio>=3.3",
   "soundfile>=0.12.1",
 ]
+tts = [
+  "faster-qwen3-tts[demo]==0.2.6",
+]
 vector = [
   "sqlite-vec>=0.1.6",
 ]
@@ -47,6 +50,7 @@ dev = [
 
 [project.scripts]
 atlas-voice = "atlas_voice.cli:main"
+atlas-voice-tts = "atlas_voice.tts_sidecar:main"
 
 [project.urls]
 Homepage = "https://github.com/skipauthenticate/atlas-voice"
@@ -58,7 +62,7 @@ where = ["."]
 include = ["atlas_voice*"]
 
 [tool.setuptools.package-data]
-atlas_voice = ["web/templates/*.html", "web/static/*.css"]
+atlas_voice = ["web/templates/*.html", "web/static/*.css", "web/static/*.js", "web/static/icons/*.svg"]
 
 [tool.ruff]
 line-length = 100

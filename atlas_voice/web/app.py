@@ -14,7 +14,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -33,6 +42,7 @@ from atlas_voice.pipeline import PipelineProcessor
 from atlas_voice.privacy import privacy_summary
 from atlas_voice.profile_settings import settings_for_pipeline, settings_for_profile
 from atlas_voice.realtime import (
+    MAX_REALTIME_HISTORY_MESSAGES,
     REALTIME_SYSTEM_PROMPT,
     audio_delta_payload,
     chunk_text,
@@ -41,6 +51,7 @@ from atlas_voice.realtime import (
     generate_realtime_reply,
     is_tts_sidecar_provider,
     normalize_tts_provider,
+    synthesize_with_espeak_ng,
     synthesize_with_piper,
     synthesize_with_tts_sidecar,
     transcribe_realtime_audio,
@@ -57,6 +68,7 @@ settings = Settings.from_env()
 assistant_config = load_assistant_config(settings.assistant_config_path)
 db = Database(settings.db_path)
 processor = PipelineProcessor(settings_for_pipeline(settings, assistant_config), db)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -148,6 +160,8 @@ def _effective_asr_model(current_settings: Settings) -> str:
         return current_settings.whisperx_model
     if current_settings.asr_model:
         return current_settings.asr_model
+    if provider == "faster-whisper":
+        return current_settings.faster_whisper_model
     if provider == "vibevoice":
         return current_settings.vibevoice_model
     return PROVIDER_DEFAULT_MODELS.get(provider, current_settings.whisperx_model)
@@ -384,13 +398,24 @@ def dashboard(
     assistant_mode: str | None = None,
 ) -> Response:
     recordings = [dict(row) for row in db.list_recordings()]
+    for recording in recordings:
+        recording["created_at_display"] = _timestamp_label(
+            _parse_timestamp(recording.get("created_at"))
+        )
+    voice_runtime_settings = _direct_voice_settings()
+    voice_status = collect_runtime_status(voice_runtime_settings, db, assistant_config)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "recordings": recordings,
-            "runtime": runtime_info(settings),
-            "status": collect_runtime_status(settings, db, assistant_config),
+            "runtime": runtime_info(voice_runtime_settings),
+            "status": voice_status,
+            "assistant_enabled": voice_runtime_settings.assistant_enabled,
+            "sessions": _voice_session_views(
+                db.list_ambient_sessions(limit=3, mode="direct_voice")
+            ),
+            "voice_settings": _voice_settings_view(voice_runtime_settings),
             "runtime_settings_message": _runtime_settings_message(runtime_settings, worker),
             "assistant_mode_message": _assistant_mode_message(assistant_mode),
         },
@@ -398,7 +423,7 @@ def dashboard(
 
 
 @app.get("/voice", response_class=HTMLResponse)
-def voice_console(request: Request) -> Response:
+def voice_console(request: Request, prompt: str | None = None) -> Response:
     voice_runtime_settings = _direct_voice_settings()
     status = collect_runtime_status(voice_runtime_settings, db, assistant_config)
     sessions = _voice_session_views(db.list_ambient_sessions(limit=8, mode="direct_voice"))
@@ -412,6 +437,7 @@ def voice_console(request: Request) -> Response:
             "assistant_enabled": voice_runtime_settings.assistant_enabled,
             "sessions": sessions,
             "ambient_timeline": ambient_timeline,
+            "initial_prompt": (prompt or "").strip()[:1000],
             "voice_settings": _voice_settings_view(voice_runtime_settings),
             "memory_items": _memory_item_views(db.list_memory_items(limit=8)),
             "privacy_events": _privacy_events_view(limit=8),
@@ -495,7 +521,9 @@ def _coaching_goal_view(goal: dict[str, Any]) -> dict[str, Any]:
         "feedback_count": len(events),
         "latest_score": latest_score,
         "latest_score_display": _percent_label(_coerce_score(latest_score)),
-        "latest_event_title": str(latest_event.get("message") or "").splitlines()[0] if latest_event else "",
+        "latest_event_title": str(latest_event.get("message") or "").splitlines()[0]
+        if latest_event
+        else "",
     }
 
 
@@ -580,8 +608,12 @@ def _feedback_signal_metrics(event: dict[str, Any]) -> dict[str, float]:
     return metrics
 
 
-def _coaching_progress_event_view(event: dict[str, Any], metrics: dict[str, float]) -> dict[str, Any]:
-    title = str(event.get("message") or "").splitlines()[0] or str(event.get("event_type") or "feedback")
+def _coaching_progress_event_view(
+    event: dict[str, Any], metrics: dict[str, float]
+) -> dict[str, Any]:
+    title = str(event.get("message") or "").splitlines()[0] or str(
+        event.get("event_type") or "feedback"
+    )
     primary_value = metrics.get("clarity") or metrics.get("score")
     metric_rows = [
         _coaching_metric_view(_metric_title(key), value)
@@ -661,8 +693,13 @@ def _voice_settings_view(current_settings: Settings | None = None) -> dict[str, 
         "sample_rate": current_settings.realtime_audio_sample_rate,
         "channels": current_settings.realtime_audio_channels,
         "tts_provider": tts_provider,
-        "tts_model": _realtime_tts_model(tts_provider, current_settings) if tts_provider != "none" else "none",
-        "tts_base_url": current_settings.tts_base_url if is_tts_sidecar_provider(tts_provider) else None,
+        "tts_model": _realtime_tts_model(tts_provider, current_settings)
+        if tts_provider != "none"
+        else "none",
+        "tts_voice": current_settings.tts_voice,
+        "tts_base_url": current_settings.tts_base_url
+        if is_tts_sidecar_provider(tts_provider)
+        else None,
         "llm_model": current_settings.llm_model,
     }
 
@@ -826,6 +863,8 @@ def api_voice_playground_tts(payload: dict[str, Any]) -> JSONResponse:
     try:
         if tts_provider == "piper":
             audio = synthesize_with_piper(text, current_settings, output_dir)
+        elif tts_provider == "espeak-ng":
+            audio = synthesize_with_espeak_ng(text, current_settings, output_dir)
         else:
             audio = synthesize_with_tts_sidecar(text, current_settings, output_dir)
     except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
@@ -929,13 +968,11 @@ def update_runtime_settings(
     os.environ.update(values)
     _refresh_runtime_settings()
     worker_state = _restart_worker_if_idle()
-    return RedirectResponse(
-        f"/?runtime_settings=saved&worker={worker_state}", status_code=303
-    )
+    return RedirectResponse(f"/?runtime_settings=saved&worker={worker_state}", status_code=303)
 
 
 @app.post("/upload")
-def upload_audio(file: UploadFile = File(...)) -> Response:
+def upload_audio(request: Request, file: UploadFile = File(...)) -> Response:
     settings.ensure_directories()
     upload_dir = settings.inbox_dir / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -944,6 +981,22 @@ def upload_audio(file: UploadFile = File(...)) -> Response:
     with destination.open("wb") as handle:
         shutil.copyfileobj(file.file, handle)
     recording_id = processor.enqueue_source(destination)
+    wants_json = request.query_params.get(
+        "format"
+    ) == "json" or "application/json" in request.headers.get("accept", "")
+    if wants_json:
+        recording = row_to_dict(db.get_recording(recording_id)) or {}
+        created_at = recording.get("created_at")
+        return JSONResponse(
+            {
+                "status": recording.get("status") or "queued",
+                "recording_id": recording_id,
+                "title": recording.get("title") or filename,
+                "url": f"/recordings/{recording_id}",
+                "created_at": created_at,
+                "created_at_display": _timestamp_label(_parse_timestamp(created_at)),
+            }
+        )
     return RedirectResponse(f"/recordings/{recording_id}", status_code=303)
 
 
@@ -1177,6 +1230,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         channels=realtime_settings.realtime_audio_channels,
     )
     active_response_task: asyncio.Task[None] | None = None
+    conversation_history: list[dict[str, str]] = []
 
     await _send_realtime_event(
         websocket,
@@ -1236,7 +1290,9 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     _realtime_artifact_dir(session_id, realtime_settings),
                     sample_rate=state.sample_rate,
                     channels=state.channels,
-                    media_type=event.get("media_type") or event.get("mime_type") or committed_media_type,
+                    media_type=event.get("media_type")
+                    or event.get("mime_type")
+                    or committed_media_type,
                 )
             except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
                 await _send_realtime_error(
@@ -1261,6 +1317,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 source_provider=source_provider,
                 transcript_prefix="conversation.item.input_audio_transcription",
                 instructions=instructions,
+                conversation_history=conversation_history,
                 tts_provider=tts_provider,
                 state=state,
                 current_settings=realtime_settings,
@@ -1320,7 +1377,9 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     await _send_realtime_event(
                         websocket,
                         "input_audio_buffer.speech_started",
-                        audio_start_ms=max(vad.speech_ms - realtime_settings.realtime_vad_min_speech_ms, 0),
+                        audio_start_ms=max(
+                            vad.speech_ms - realtime_settings.realtime_vad_min_speech_ms, 0
+                        ),
                     )
                     await cancel_active_response("barge_in")
                 if vad.end_of_turn:
@@ -1329,7 +1388,9 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         "input_audio_buffer.speech_stopped",
                         silence_ms=vad.silence_ms,
                     )
-                    await commit_audio_buffer({"type": "input_audio_buffer.commit"}, event_type=event_type)
+                    await commit_audio_buffer(
+                        {"type": "input_audio_buffer.commit"}, event_type=event_type
+                    )
                 continue
 
             if event_type == "input_audio_buffer.clear":
@@ -1337,7 +1398,11 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 await _send_realtime_event(websocket, "input_audio_buffer.cleared")
                 continue
 
-            if event_type in {"response.cancel", "response.interrupt", "input_audio_buffer.interrupt"}:
+            if event_type in {
+                "response.cancel",
+                "response.interrupt",
+                "input_audio_buffer.interrupt",
+            }:
                 if active_response_task and not active_response_task.done():
                     await cancel_active_response(str(event.get("reason") or "client_cancelled"))
                 else:
@@ -1366,6 +1431,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         source_provider="text",
                         transcript_prefix="conversation.item.input_text",
                         instructions=instructions,
+                        conversation_history=conversation_history,
                         tts_provider=tts_provider,
                         state=state,
                         current_settings=realtime_settings,
@@ -1400,6 +1466,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         source_provider="text",
                         transcript_prefix="conversation.item.input_text",
                         instructions=instructions,
+                        conversation_history=conversation_history,
                         tts_provider=tts_provider,
                         state=state,
                         current_settings=realtime_settings,
@@ -1489,6 +1556,7 @@ async def _handle_realtime_user_text(
     source_provider: str,
     transcript_prefix: str,
     instructions: str,
+    conversation_history: list[dict[str, str]],
     tts_provider: str,
     state: RealtimeTurnState,
     current_settings: Settings,
@@ -1527,6 +1595,7 @@ async def _handle_realtime_user_text(
             text,
             current_settings,
             instructions=instructions,
+            history=conversation_history,
         )
     except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
         db.log_model_run(
@@ -1544,6 +1613,15 @@ async def _handle_realtime_user_text(
         )
         state.complete_response()
         return
+
+    conversation_history.extend(
+        [
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": reply.text},
+        ]
+    )
+    if len(conversation_history) > MAX_REALTIME_HISTORY_MESSAGES:
+        del conversation_history[:-MAX_REALTIME_HISTORY_MESSAGES]
 
     for delta in chunk_text(reply.text):
         await _send_realtime_event(
@@ -1567,10 +1645,24 @@ async def _handle_realtime_user_text(
 
     audio_path: str | None = None
     if _tts_outputs_audio(tts_provider):
+        await _send_realtime_event(
+            websocket,
+            "response.audio.started",
+            response_id=response_id,
+            provider=tts_provider,
+            model=_realtime_tts_model(tts_provider, current_settings),
+        )
         try:
             if tts_provider == "piper":
                 audio = await asyncio.to_thread(
                     synthesize_with_piper,
+                    reply.text,
+                    current_settings,
+                    _realtime_artifact_dir(session_id, current_settings),
+                )
+            elif tts_provider == "espeak-ng":
+                audio = await asyncio.to_thread(
+                    synthesize_with_espeak_ng,
                     reply.text,
                     current_settings,
                     _realtime_artifact_dir(session_id, current_settings),
@@ -1603,6 +1695,8 @@ async def _handle_realtime_user_text(
                 "response.audio.done",
                 response_id=response_id,
                 audio_path=audio_path,
+                latency_ms=audio.latency_ms,
+                media_type=audio.media_type,
             )
         except Exception as exc:  # noqa: BLE001 - TTS failure should not drop text response.
             db.log_model_run(
@@ -1653,6 +1747,7 @@ async def _handle_realtime_user_text(
             "status": "completed",
             "output": [{"type": "message", "text": reply.text}],
             "turn_id": turn_id,
+            "latency_ms": reply.latency_ms,
         },
     )
     state.complete_response()
@@ -1750,7 +1845,9 @@ def _realtime_tool_call_with_policy(
 
 
 async def _send_realtime_event(websocket: WebSocket, event_type: str, **payload: Any) -> None:
-    await websocket.send_json({"event_id": f"evt_{uuid.uuid4().hex}", "type": event_type, **payload})
+    await websocket.send_json(
+        {"event_id": f"evt_{uuid.uuid4().hex}", "type": event_type, **payload}
+    )
 
 
 async def _send_realtime_error(
@@ -1810,13 +1907,17 @@ def _realtime_requires_tool_confirmation() -> bool:
 
 
 def _tts_outputs_audio(tts_provider: str) -> bool:
-    return tts_provider == "piper" or is_tts_sidecar_provider(tts_provider)
+    return tts_provider in {"piper", "espeak-ng"} or is_tts_sidecar_provider(tts_provider)
 
 
 def _realtime_tts_model(tts_provider: str, current_settings: Settings | None = None) -> str:
     current_settings = current_settings or _direct_voice_settings()
     if tts_provider == "piper":
         return current_settings.piper_voice or "piper"
+    if tts_provider == "espeak-ng":
+        return (
+            current_settings.tts_voice if current_settings.tts_voice != "default" else "espeak-ng"
+        )
     if is_tts_sidecar_provider(tts_provider):
         return current_settings.tts_model
     return tts_provider
@@ -1947,34 +2048,24 @@ async def api_set_template(recording_id: str, request: Request) -> JSONResponse:
     """Set the summary template for a recording and re-run only summarization."""
     recording = db.get_recording(recording_id)
     if recording is None:
-        return JSONResponse(
-            {"error": "Recording not found"}, status_code=404
-        )
+        return JSONResponse({"error": "Recording not found"}, status_code=404)
 
     body = {}
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse(
-            {"error": "Invalid JSON body"}, status_code=400
-        )
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
     if not isinstance(body, dict):
-        return JSONResponse(
-            {"error": "JSON body must be an object"}, status_code=400
-        )
+        return JSONResponse({"error": "JSON body must be an object"}, status_code=400)
 
     template_id = body.get("template_id", "")
     if not template_id:
-        return JSONResponse(
-            {"error": "template_id is required"}, status_code=400
-        )
+        return JSONResponse({"error": "template_id is required"}, status_code=400)
 
     template = get_template(template_id)
     if template is None:
-        return JSONResponse(
-            {"error": f"Unknown template: {template_id}"}, status_code=400
-        )
+        return JSONResponse({"error": f"Unknown template: {template_id}"}, status_code=400)
 
     db.set_recording_template(recording_id, template_id)
 
@@ -1989,9 +2080,11 @@ async def api_set_template(recording_id: str, request: Request) -> JSONResponse:
     else:
         message = f"Template changed to {template.name}; it will be used when summarization runs."
 
-    return JSONResponse({
-        "status": "ok",
-        "template_id": template_id,
-        "queued": queued,
-        "message": message,
-    })
+    return JSONResponse(
+        {
+            "status": "ok",
+            "template_id": template_id,
+            "queued": queued,
+            "message": message,
+        }
+    )

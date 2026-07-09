@@ -17,6 +17,7 @@ from atlas_voice.realtime import (
     extract_text_input,
     generate_realtime_reply,
     normalize_tts_provider,
+    synthesize_with_espeak_ng,
     synthesize_with_tts_sidecar,
     transcript_text,
     transcribe_realtime_audio,
@@ -72,7 +73,6 @@ class RealtimeTests(unittest.TestCase):
                 self.assertEqual(audio.getnchannels(), 1)
                 self.assertEqual(audio.getsampwidth(), 2)
 
-
     def test_transcribe_realtime_audio_marks_asr_call_realtime(self) -> None:
         settings = SimpleNamespace(
             stub_mode=False,
@@ -122,7 +122,10 @@ class RealtimeTests(unittest.TestCase):
         real_client = httpx.Client
         transport = httpx.MockTransport(handler)
         with TemporaryDirectory() as tmp:
-            with patch("httpx.Client", lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs)):
+            with patch(
+                "httpx.Client",
+                lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs),
+            ):
                 audio = synthesize_with_tts_sidecar("Hello Atlas", settings, Path(tmp))
 
         self.assertEqual(seen["method"], "POST")
@@ -141,6 +144,33 @@ class RealtimeTests(unittest.TestCase):
         self.assertEqual(audio.path.suffix, ".wav")
         self.assertIsNotNone(audio.latency_ms)
 
+    def test_synthesize_with_espeak_ng_runs_offline_tts_command(self) -> None:
+        settings = SimpleNamespace(tts_voice="en-us", tts_timeout=5.0)
+        seen: dict[str, object] = {}
+
+        def fake_run(command, *, input, stdout, stderr, timeout, check):
+            seen["command"] = command
+            seen["input"] = input
+            seen["timeout"] = timeout
+            output_path = Path(command[command.index("-w") + 1])
+            output_path.write_bytes(b"RIFFespeak")
+            return SimpleNamespace(returncode=0, stderr=b"")
+
+        with TemporaryDirectory() as tmp:
+            with (
+                patch("shutil.which", return_value="/usr/bin/espeak-ng"),
+                patch("subprocess.run", side_effect=fake_run),
+            ):
+                audio = synthesize_with_espeak_ng("Hello Atlas", settings, Path(tmp))
+
+        self.assertEqual(seen["input"], b"Hello Atlas")
+        self.assertEqual(seen["timeout"], 5.0)
+        self.assertIn("--stdin", seen["command"])
+        self.assertIn("-v", seen["command"])
+        self.assertEqual(audio.payload, b"RIFFespeak")
+        self.assertEqual(audio.media_type, "audio/wav")
+        self.assertEqual(audio.path.suffix, ".wav")
+
     def test_generate_realtime_reply_extracts_openai_style_tool_calls(self) -> None:
         settings = SimpleNamespace(
             stub_mode=False,
@@ -150,7 +180,11 @@ class RealtimeTests(unittest.TestCase):
             llm_max_tokens=256,
         )
 
-        def handler(_request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content.decode("utf-8"))
+            self.assertEqual(payload["chat_template_kwargs"], {"enable_thinking": False})
+            self.assertEqual(payload["reasoning_format"], "deepseek")
+            self.assertEqual(payload["thinking_budget_tokens"], 0)
             return httpx.Response(
                 200,
                 json={
@@ -177,7 +211,10 @@ class RealtimeTests(unittest.TestCase):
 
         real_client = httpx.Client
         transport = httpx.MockTransport(handler)
-        with patch("httpx.Client", lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs)):
+        with patch(
+            "httpx.Client",
+            lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs),
+        ):
             reply = generate_realtime_reply("Find Atlas", settings)
 
         self.assertEqual(reply.text, "I can search locally.")
@@ -193,6 +230,41 @@ class RealtimeTests(unittest.TestCase):
             ],
         )
 
+    def test_generate_realtime_reply_includes_bounded_conversation_history(self) -> None:
+        settings = SimpleNamespace(
+            stub_mode=False,
+            llm_base_url="http://llm.test/v1/chat/completions",
+            llm_model="qwen-local",
+            llm_temperature=0.2,
+            llm_max_tokens=256,
+        )
+        history = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": f"turn {index}"}
+            for index in range(14)
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            messages = json.loads(request.content.decode("utf-8"))["messages"]
+            self.assertEqual(messages[0]["role"], "system")
+            self.assertEqual(messages[1], {"role": "user", "content": "turn 2"})
+            self.assertEqual(messages[-2], {"role": "assistant", "content": "turn 13"})
+            self.assertEqual(messages[-1], {"role": "user", "content": "What did I say?"})
+            self.assertEqual(len(messages), 14)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": "You asked me to remember."}}]},
+            )
+
+        real_client = httpx.Client
+        transport = httpx.MockTransport(handler)
+        with patch(
+            "httpx.Client",
+            lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs),
+        ):
+            reply = generate_realtime_reply("What did I say?", settings, history=history)
+
+        self.assertEqual(reply.text, "You asked me to remember.")
+
     def test_check_tts_sidecar_health_uses_configured_health_url(self) -> None:
         settings = SimpleNamespace(
             tts_health_url="http://tts.test/health",
@@ -206,7 +278,10 @@ class RealtimeTests(unittest.TestCase):
 
         real_client = httpx.Client
         transport = httpx.MockTransport(handler)
-        with patch("httpx.Client", lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs)):
+        with patch(
+            "httpx.Client",
+            lambda *args, **kwargs: real_client(*args, transport=transport, **kwargs),
+        ):
             health = check_tts_sidecar_health(settings)
 
         self.assertEqual(health["status"], "ok")
@@ -216,6 +291,7 @@ class RealtimeTests(unittest.TestCase):
     def test_normalize_tts_provider_aliases_sidecar_names(self) -> None:
         self.assertEqual(normalize_tts_provider("qwen3_tts"), "faster-qwen3-tts")
         self.assertEqual(normalize_tts_provider("piper"), "piper")
+        self.assertEqual(normalize_tts_provider("espeak"), "espeak-ng")
 
 
 if __name__ == "__main__":

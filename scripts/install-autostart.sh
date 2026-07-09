@@ -5,10 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 WEB_UNIT="${UNIT_DIR}/atlas-voice-web.service"
 WORKER_UNIT="${UNIT_DIR}/atlas-voice-worker.service"
+TTS_UNIT="${UNIT_DIR}/atlas-voice-tts.service"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
-  systemctl --user disable --now atlas-voice-web.service atlas-voice-worker.service >/dev/null 2>&1 || true
-  rm -f "$WEB_UNIT" "$WORKER_UNIT"
+  systemctl --user disable --now atlas-voice-web.service atlas-voice-worker.service atlas-voice-tts.service >/dev/null 2>&1 || true
+  rm -f "$WEB_UNIT" "$WORKER_UNIT" "$TTS_UNIT"
   systemctl --user daemon-reload
   echo "Atlas Voice autostart removed."
   exit 0
@@ -30,12 +31,30 @@ if [[ ! -x "${ROOT_DIR}/scripts/run-local-service.sh" ]]; then
 fi
 
 mkdir -p "$UNIT_DIR"
+cat >"$TTS_UNIT" <<UNIT
+[Unit]
+Description=Atlas Voice Qwen3 TTS sidecar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${ROOT_DIR}
+ExecStart=${ROOT_DIR}/scripts/run-local-service.sh tts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
+UNIT
+
 
 cat >"$WEB_UNIT" <<UNIT
 [Unit]
 Description=Atlas Voice web server
-After=network-online.target
-Wants=network-online.target
+After=network-online.target atlas-voice-tts.service
+Wants=network-online.target atlas-voice-tts.service
 
 [Service]
 Type=simple
@@ -69,8 +88,8 @@ UNIT
 
 "${ROOT_DIR}/scripts/stop-local.sh" >/dev/null 2>&1 || true
 systemctl --user daemon-reload
-systemctl --user enable atlas-voice-web.service atlas-voice-worker.service
-systemctl --user restart atlas-voice-web.service atlas-voice-worker.service
+systemctl --user enable atlas-voice-tts.service atlas-voice-web.service atlas-voice-worker.service
+systemctl --user restart atlas-voice-tts.service atlas-voice-web.service atlas-voice-worker.service
 
 if command -v loginctl >/dev/null 2>&1; then
   linger="$(loginctl show-user "$USER" --property=Linger --value 2>/dev/null || true)"
@@ -83,4 +102,4 @@ if command -v loginctl >/dev/null 2>&1; then
   fi
 fi
 
-systemctl --user --no-pager --full status atlas-voice-web.service atlas-voice-worker.service
+systemctl --user --no-pager --full status atlas-voice-tts.service atlas-voice-web.service atlas-voice-worker.service
