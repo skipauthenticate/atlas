@@ -225,19 +225,45 @@ class VoiceUiStaticTests(unittest.TestCase):
         self.assertIn("max-width: none", drawer)
         self.assertIn("border-radius: 0", drawer)
 
-    def test_dashboard_chat_uses_compact_icon_led_composer(self) -> None:
+    def test_workspace_search_uses_navigation_toolbar(self) -> None:
+        base = Path("atlas_voice/web/templates/base.html").read_text()
+        search = Path("atlas_voice/web/templates/search.html").read_text()
+        css = Path("atlas_voice/web/static/app.css").read_text()
+        toolbar = self._last_css_block(css, ".workspace-topbar")
+
+        self.assertNotIn('class="sidebar-search"', base)
+        self.assertIn('class="workspace-topbar"', base)
+        self.assertIn('role="search"', base)
+        self.assertIn("data-global-search", base)
+        self.assertIn('aria-label="Clear search"', base)
+        self.assertIn("position: sticky", toolbar)
+        self.assertIn("grid-template-columns", toolbar)
+        self.assertIn('class="search-result-list"', search)
+        self.assertNotIn("<form", search)
+
+    def test_dashboard_chat_uses_two_tier_prompt_composer(self) -> None:
         template = Path("atlas_voice/web/templates/index.html").read_text()
         css = Path("atlas_voice/web/static/app.css").read_text()
+        script = Path("atlas_voice/web/static/voice.js").read_text()
         composer = self._last_css_block(css, ".dashboard-command-bar")
-        row = self._last_css_block(css, ".dashboard-chat-row")
+        prompt = self._last_css_block(
+            css, ".dashboard-command-bar textarea.dashboard-prompt-input"
+        )
 
-        self.assertIn('class="dashboard-chat-row"', template)
+        self.assertIn("<textarea", template)
+        self.assertIn('class="dashboard-composer-actions"', template)
+        self.assertIn('class="composer-round chat-attach-button"', template)
         self.assertIn('aria-label="Send message"', template)
-        self.assertNotIn("dashboard-prompt-field", template)
-        self.assertNotIn("dashboard-composer-footer", template)
-        self.assertIn("min-height: 0", composer)
-        self.assertIn("grid-template-columns", row)
-        self.assertIn('"attach prompt mic send"', css)
+        self.assertNotIn('class="dashboard-chat-row"', template)
+        self.assertIn("width: min(768px, 100%)", composer)
+        self.assertIn("min-height: 146px", composer)
+        self.assertIn("max-height: 35svh", prompt)
+        self.assertIn("resize: none", prompt)
+        self.assertIn("border-radius: 50%", css)
+        self.assertIn("const resizePromptInput", script)
+        self.assertIn("!input.value.trim()", script)
+        self.assertIn("event.shiftKey", script)
+        self.assertIn("form.requestSubmit()", script)
 
 
 if __name__ == "__main__":

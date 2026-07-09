@@ -1,30 +1,46 @@
 {% extends "base.html" %}
 {% block title %}Search - Atlas Voice{% endblock %}
 {% block content %}
-  <section class="panel search-page">
-    <div class="panel-heading">
+  <section class="search-results-page" data-search-results>
+    <header class="search-results-header">
       <div>
-        <h1>Search</h1>
-        <p>{{ results | length }} results</p>
+        <span class="search-results-eyebrow">Transcript search</span>
+        <h1>{% if query %}Results for "{{ query }}"{% else %}Search recordings{% endif %}</h1>
       </div>
-    </div>
+      <span class="search-results-count">{{ results | length }} result{{ '' if results | length == 1 else 's' }}</span>
+    </header>
+
     {% if query and results %}
-      <div class="recording-list">
+      <div class="search-result-list">
         {% for result in results %}
-          <a class="recording-row" href="/recordings/{{ result.recording_id }}">
-            <span>
+          <a class="search-result-row" href="/recordings/{{ result.recording_id }}">
+            <span class="search-result-copy">
+              <span class="search-result-meta">
+                <span>{{ result.kind }}</span>
+                {% if result.speaker %}<span>{{ result.speaker }}</span>{% endif %}
+              </span>
               <strong>{{ result.title }}</strong>
-              <small>{{ result.kind }} {{ result.speaker }}</small>
               <span class="snippet">{{ result.snippet }}</span>
             </span>
-            <span class="status status-{{ result.status }}">{{ result.status }}</span>
+            <span class="search-result-side">
+              <span class="status status-{{ result.status }}">{{ result.status }}</span>
+              <img class="ui-icon" src="/static/icons/chevron-down.svg" alt="">
+            </span>
           </a>
         {% endfor %}
       </div>
     {% elif query %}
-      <div class="empty">No matches.</div>
+      <div class="search-empty">
+        <img class="ui-icon" src="/static/icons/search.svg" alt="">
+        <h2>No matches</h2>
+        <p>Try a broader transcript phrase.</p>
+      </div>
     {% else %}
-      <div class="empty">Enter a search term.</div>
+      <div class="search-empty">
+        <img class="ui-icon" src="/static/icons/search.svg" alt="">
+        <h2>Search transcripts</h2>
+        <p>Use the search bar above to find recordings, speakers, and notes.</p>
+      </div>
     {% endif %}
   </section>
 {% endblock %}

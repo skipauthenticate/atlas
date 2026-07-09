@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Atlas Voice{% endblock %}</title>
     {% block head_extra %}{% endblock %}
-    <link rel="stylesheet" href="/static/app.css?v=20260709.2">
+    <link rel="stylesheet" href="/static/app.css?v=20260709.3">
     <link rel="icon" href="/static/icons/audio-waveform.svg" type="image/svg+xml">
   </head>
   <body class="{% block body_class %}{% endblock %}">
@@ -17,13 +17,6 @@
             <strong>Atlas Voice</strong>
           </span>
         </a>
-
-        <form class="sidebar-search" action="/search" method="get">
-          <label>
-            <span>Search transcripts</span>
-            <input name="q" type="search" value="{{ query | default('') }}" placeholder="Keyword or phrase">
-          </label>
-        </form>
 
         <nav class="sidebar-nav" aria-label="Main">
           <span class="nav-section">Workspace</span>
@@ -60,6 +53,39 @@
       </aside>
 
       <main class="shell">
+        {% if request.url.path != '/voice' %}
+          <header class="workspace-topbar" aria-label="Workspace navigation">
+            <div class="topbar-context">
+              <span class="topbar-context-dot" aria-hidden="true"></span>
+              <strong>
+                {% if request.url.path == '/' %}Chat{% elif request.url.path == '/search' %}Search{% elif '/recordings/' in request.url.path %}Recording{% else %}Workspace{% endif %}
+              </strong>
+            </div>
+            <form class="topbar-search" action="/search" method="get" role="search">
+              <button class="topbar-search-submit" type="submit" aria-label="Search transcripts" title="Search transcripts">
+                <img class="ui-icon" src="/static/icons/search.svg" alt="">
+              </button>
+              <label class="sr-only" for="global-transcript-search">Search transcripts</label>
+              <input id="global-transcript-search" name="q" type="search" value="{{ query | default('') }}" placeholder="Search transcripts..." autocomplete="off" data-global-search>
+              {% if query | default('') %}
+                <a class="topbar-search-clear" href="/search" aria-label="Clear search" title="Clear search">
+                  <img class="ui-icon" src="/static/icons/x.svg" alt="">
+                </a>
+              {% else %}
+                <span class="topbar-search-spacer" aria-hidden="true"></span>
+              {% endif %}
+            </form>
+            <div class="topbar-actions">
+              <span class="topbar-local" title="All services stay on this device">
+                <img class="ui-icon" src="/static/icons/shield.svg" alt="">
+                <span>Local</span>
+              </span>
+              <button class="topbar-icon-button" type="button" data-settings-open aria-label="Open settings" title="Open settings">
+                <img class="ui-icon" src="/static/icons/settings.svg" alt="">
+              </button>
+            </div>
+          </header>
+        {% endif %}
         {% block content %}{% endblock %}
       </main>
     </div>
@@ -159,6 +185,16 @@
       window.addEventListener('DOMContentLoaded', () => {
         const dialog = document.getElementById('app-settings-dialog');
         const openers = document.querySelectorAll('[data-settings-open]');
+        const globalSearch = document.querySelector('[data-global-search]');
+        window.addEventListener('keydown', (event) => {
+          const target = event.target;
+          const editing = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+          if (event.key === '/' && !editing && globalSearch) {
+            event.preventDefault();
+            globalSearch.focus();
+          }
+          if (event.key === 'Escape' && document.activeElement === globalSearch) globalSearch.blur();
+        });
         if (!dialog) return;
         openers.forEach((button) => {
           button.addEventListener('click', () => {

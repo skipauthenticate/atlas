@@ -294,6 +294,31 @@
     let handleSocketClosed = () => {};
     let refreshPromptAvailability = () => {};
 
+    const resizePromptInput = () => {
+      if (!(input instanceof HTMLTextAreaElement)) return;
+      input.style.height = 'auto';
+      const maximum = Math.min(window.innerHeight * 0.35, 300);
+      input.style.height = `${Math.min(input.scrollHeight, maximum)}px`;
+      input.style.overflowY = input.scrollHeight > maximum ? 'auto' : 'hidden';
+    };
+
+    input.addEventListener('input', () => {
+      resizePromptInput();
+      refreshPromptAvailability();
+    });
+    resizePromptInput();
+
+    input.addEventListener('keydown', (event) => {
+      if (
+        !(input instanceof HTMLTextAreaElement)
+        || event.key !== 'Enter'
+        || event.shiftKey
+        || event.isComposing
+      ) return;
+      event.preventDefault();
+      if (!submit.disabled) form.requestSubmit();
+    });
+
     function setVoiceState(state, caption) {
       currentVoiceState = state;
       bubble.setState(state);
@@ -727,6 +752,8 @@
       if (!text || !enabled || !callActive || input.disabled) return;
       appendMessage(transcript, 'You', text);
       input.value = '';
+      resizePromptInput();
+      refreshPromptAvailability();
       setVoiceState('thinking', text);
       sendRealtimeEvent({ type: 'input_text', text });
     });
@@ -788,7 +815,9 @@
       const setPromptAvailability = () => {
         const blocked = !enabled || !callActive || paused || privateMode;
         input.disabled = blocked;
-        submit.disabled = uploading || (selectedFiles.length === 0 && blocked);
+        submit.disabled = uploading || (
+          selectedFiles.length === 0 && (blocked || !input.value.trim())
+        );
         if (attachButton) attachButton.disabled = uploading;
         if (chatVoiceToggle) chatVoiceToggle.disabled = !enabled || uploading;
         setControlAvailability();
