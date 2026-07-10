@@ -98,7 +98,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("data-chat-file-input", dashboard.text)
             self.assertIn("data-chat-attachments", dashboard.text)
             self.assertIn("data-chat-source", dashboard.text)
-            self.assertIn("All sources", dashboard.text)
+            self.assertIn("All local sources", dashboard.text)
             self.assertIn('data-upload-endpoint="/upload"', dashboard.text)
             self.assertIn("data-chat-voice-toggle", dashboard.text)
             self.assertIn('id="recordings"', dashboard.text)

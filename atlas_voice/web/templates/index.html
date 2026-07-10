@@ -26,7 +26,7 @@
       });
     });
   </script>
-  <script src="/static/voice.js?v=20260709.3" defer></script>
+  <script src="/static/voice.js?v=20260709.4" defer></script>
 {% endblock %}
 
 {% block content %}
@@ -69,8 +69,8 @@
         </dl>
       </header>
 
-      <form class="chat-command-bar dashboard-command-bar chat-composer" action="/upload" method="post" enctype="multipart/form-data" aria-label="Ask Atlas" data-voice-prompt data-chat-composer data-upload-endpoint="/upload">
-        <input id="dashboard-chat-file-input" class="chat-file-input" type="file" name="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac" multiple aria-label="Attach audio or video" data-chat-file-input>
+      <form class="chat-command-bar dashboard-command-bar chat-composer" action="/upload" method="post" enctype="multipart/form-data" aria-label="Ask Atlas" aria-busy="false" data-voice-prompt data-chat-composer data-upload-endpoint="/upload">
+        <input id="dashboard-chat-file-input" class="chat-file-input" type="file" name="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac" multiple hidden aria-label="Attach audio or video" data-chat-file-input>
         <label class="sr-only" for="voice-prompt-input">Message Atlas</label>
         <textarea id="voice-prompt-input" class="chat-text-input dashboard-prompt-input" name="prompt" rows="3" autocomplete="off" placeholder="Ask Atlas about your recordings..." {% if not assistant_enabled %}disabled{% endif %}></textarea>
         <span class="chat-attachment-tray" data-chat-attachments hidden></span>
@@ -80,15 +80,36 @@
             <button class="composer-round chat-attach-button" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
               <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
             </button>
-            <label class="chat-source-field">
-              <span class="sr-only">Source</span>
-              <select class="chat-source-select" name="source_context" aria-label="Select source" data-chat-source>
-                <option value="">All sources</option>
-                <option value="recordings">Recordings</option>
-                <option value="uploads">Uploads</option>
-                <option value="voice">Voice</option>
-              </select>
-            </label>
+            <div class="chat-source-menu" data-chat-source-menu>
+              <input type="hidden" name="source_context" value="" data-chat-source>
+              <button class="chat-source-trigger" type="button" aria-label="Select source: All local sources" aria-haspopup="listbox" aria-expanded="false" aria-controls="dashboard-source-list" data-chat-source-trigger>
+                <img class="ui-icon source-trigger-icon" src="/static/icons/library.svg" alt="">
+                <span data-chat-source-label>All local sources</span>
+                <img class="ui-icon source-trigger-chevron" src="/static/icons/chevron-down.svg" alt="">
+              </button>
+              <div id="dashboard-source-list" class="chat-source-popover" role="listbox" aria-label="Source" data-chat-source-list hidden>
+                <button class="chat-source-option" type="button" role="option" aria-selected="true" tabindex="-1" data-source-value="" data-source-label="All local sources">
+                  <img class="ui-icon" src="/static/icons/library.svg" alt="">
+                  <span>All local sources</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+                <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="recordings" data-source-label="Recording library">
+                  <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">
+                  <span>Recording library</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+                <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="uploads" data-source-label="Uploaded files">
+                  <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
+                  <span>Uploaded files</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+                <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="voice" data-source-label="Past voice chats">
+                  <img class="ui-icon" src="/static/icons/mic.svg" alt="">
+                  <span>Past voice chats</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+              </div>
+            </div>
           </div>
           <div class="dashboard-composer-right">
             <button class="composer-round composer-round-quiet voice-mic-button" type="button" data-chat-voice-toggle aria-label="Start voice input" title="Start voice input" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>

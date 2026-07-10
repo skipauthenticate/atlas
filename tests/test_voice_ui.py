@@ -265,6 +265,46 @@ class VoiceUiStaticTests(unittest.TestCase):
         self.assertIn("event.shiftKey", script)
         self.assertIn("form.requestSubmit()", script)
 
+    def test_dashboard_source_picker_is_accessible_and_stateful(self) -> None:
+        template = Path("atlas_voice/web/templates/index.html").read_text()
+        css = Path("atlas_voice/web/static/app.css").read_text()
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+        popover = self._last_css_block(css, ".chat-source-popover")
+
+        self.assertIn('type="hidden" name="source_context"', template)
+        self.assertIn('aria-haspopup="listbox"', template)
+        self.assertIn('role="listbox"', template)
+        self.assertIn('role="option"', template)
+        for value in ("recordings", "uploads", "voice"):
+            self.assertIn(f'data-source-value="{value}"', template)
+        self.assertNotIn('class="chat-source-select"', template)
+        self.assertIn("position: absolute", popover)
+        self.assertIn("top: calc(100% + 9px)", popover)
+        self.assertIn("opens-up", css)
+        for key in ("ArrowDown", "ArrowUp", "Home", "End", "Escape"):
+            self.assertIn(f"'{key}'", script)
+        self.assertIn("selectSourceOption", script)
+        self.assertIn("sourceInput.dispatchEvent", script)
+        self.assertIn("sendRealtimeEvent({ type: 'session.update'", script)
+        self.assertNotIn("body.append('source_context'", script)
+        self.assertIn("source_context: sourceInput?.value", script)
+
+    def test_dashboard_attachment_controls_use_icon_feedback(self) -> None:
+        template = Path("atlas_voice/web/templates/index.html").read_text()
+        css = Path("atlas_voice/web/static/app.css").read_text()
+        script = Path("atlas_voice/web/static/voice.js").read_text()
+
+        self.assertIn("multiple hidden", template)
+        self.assertIn("attachButton.dataset.count", script)
+        self.assertIn("removeIcon.src = '/static/icons/x.svg'", script)
+        self.assertNotIn("remove.textContent = 'Remove'", script)
+        self.assertIn(".chat-attach-button.has-files::after", css)
+        self.assertIn(".voice-mic-button.is-listening", css)
+        self.assertIn(".dashboard-command-bar.is-uploading", css)
+        self.assertIn("form.setAttribute('aria-busy', 'true')", script)
+        self.assertIn("Upload ${count} file", script)
+        self.assertIn("Stop voice input", script)
+
 
 if __name__ == "__main__":
     unittest.main()

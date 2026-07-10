@@ -270,6 +270,13 @@
     const attachmentTray = form.querySelector('[data-chat-attachments]');
     const uploadStatus = form.querySelector('[data-chat-upload-status]');
     const uploadEndpoint = form.dataset.uploadEndpoint || '/upload';
+    const sourceMenu = form.querySelector('[data-chat-source-menu]');
+    const sourceInput = form.querySelector('[data-chat-source]');
+    const sourceTrigger = form.querySelector('[data-chat-source-trigger]');
+    const sourceList = form.querySelector('[data-chat-source-list]');
+    const sourceLabel = form.querySelector('[data-chat-source-label]');
+    const sourceTriggerIcon = sourceTrigger?.querySelector('.source-trigger-icon');
+    const sourceOptions = Array.from(form.querySelectorAll('[data-source-value]'));
     const pendingEvents = [];
     const playbackQueue = [];
     let socket = null;
@@ -318,6 +325,104 @@
       event.preventDefault();
       if (!submit.disabled) form.requestSubmit();
     });
+
+    const selectedSourceOption = () => (
+      sourceOptions.find((option) => option.getAttribute('aria-selected') === 'true')
+      || sourceOptions[0]
+    );
+
+    const setSourceMenuOpen = (open, { focusSelected = false } = {}) => {
+      if (!sourceMenu || !sourceTrigger || !sourceList) return;
+      sourceMenu.classList.toggle('is-open', open);
+      sourceTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      sourceList.hidden = !open;
+      if (open) {
+        const triggerBounds = sourceTrigger.getBoundingClientRect();
+        const menuHeight = sourceList.scrollHeight;
+        const spaceBelow = window.innerHeight - triggerBounds.bottom;
+        sourceMenu.classList.toggle('opens-up', spaceBelow < menuHeight + 16);
+      } else {
+        sourceMenu.classList.remove('opens-up');
+      }
+      if (open && focusSelected) {
+        requestAnimationFrame(() => selectedSourceOption()?.focus());
+      }
+    };
+
+    const selectSourceOption = (option) => {
+      if (!option || !sourceInput || !sourceTrigger || !sourceLabel) return;
+      const value = option.dataset.sourceValue || '';
+      const label = option.dataset.sourceLabel || option.textContent.trim();
+      sourceInput.value = value;
+      sourceLabel.textContent = label;
+      sourceTrigger.setAttribute('aria-label', `Select source: ${label}`);
+      const optionIcon = option.querySelector('.ui-icon');
+      if (sourceTriggerIcon && optionIcon) sourceTriggerIcon.src = optionIcon.src;
+      sourceOptions.forEach((item) => {
+        item.setAttribute('aria-selected', item === option ? 'true' : 'false');
+      });
+      sourceInput.dispatchEvent(new Event('change', { bubbles: true }));
+      sendRealtimeEvent({ type: 'session.update', source_context: value });
+      setSourceMenuOpen(false);
+      sourceTrigger.focus();
+    };
+
+    const moveSourceFocus = (direction) => {
+      if (!sourceOptions.length) return;
+      const activeIndex = sourceOptions.indexOf(document.activeElement);
+      const selectedIndex = Math.max(sourceOptions.indexOf(selectedSourceOption()), 0);
+      const currentIndex = activeIndex >= 0 ? activeIndex : selectedIndex;
+      const nextIndex = (currentIndex + direction + sourceOptions.length) % sourceOptions.length;
+      sourceOptions[nextIndex].focus();
+    };
+
+    if (sourceMenu && sourceTrigger && sourceList && sourceOptions.length) {
+      sourceTrigger.addEventListener('click', () => {
+        const open = sourceTrigger.getAttribute('aria-expanded') !== 'true';
+        setSourceMenuOpen(open, { focusSelected: open });
+      });
+      sourceTrigger.addEventListener('keydown', (event) => {
+        if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+        event.preventDefault();
+        setSourceMenuOpen(true, { focusSelected: true });
+        if (event.key === 'ArrowUp') {
+          requestAnimationFrame(() => moveSourceFocus(-1));
+        }
+      });
+      sourceList.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          moveSourceFocus(event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          sourceOptions[event.key === 'Home' ? 0 : sourceOptions.length - 1].focus();
+          return;
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectSourceOption(document.activeElement);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setSourceMenuOpen(false);
+          sourceTrigger.focus();
+        }
+      });
+      sourceOptions.forEach((option) => {
+        option.addEventListener('click', () => selectSourceOption(option));
+      });
+      sourceMenu.addEventListener('focusout', () => {
+        requestAnimationFrame(() => {
+          if (!sourceMenu.contains(document.activeElement)) setSourceMenuOpen(false);
+        });
+      });
+      document.addEventListener('pointerdown', (event) => {
+        if (!sourceMenu.contains(event.target)) setSourceMenuOpen(false);
+      });
+    }
 
     function setVoiceState(state, caption) {
       currentVoiceState = state;
@@ -651,29 +756,49 @@
       micSpeechPending = false;
     }
 
-    function setUploadStatus(message) {
-      if (uploadStatus) uploadStatus.textContent = message || '';
+    function setUploadStatus(message, state = '') {
+      if (!uploadStatus) return;
+      uploadStatus.textContent = message || '';
+      uploadStatus.dataset.state = message ? state : '';
     }
 
     function renderAttachments() {
       if (!attachmentTray) return;
       attachmentTray.replaceChildren();
       attachmentTray.hidden = selectedFiles.length === 0;
+      if (attachButton) {
+        const count = selectedFiles.length;
+        attachButton.classList.toggle('has-files', count > 0);
+        attachButton.dataset.count = count > 9 ? '9+' : String(count || '');
+        attachButton.setAttribute('aria-label', count ? `Add files, ${count} attached` : 'Attach audio');
+        const submitLabel = count ? `Upload ${count} file${count === 1 ? '' : 's'}` : 'Send message';
+        submit.setAttribute('aria-label', submitLabel);
+        submit.title = submitLabel;
+      }
       selectedFiles.forEach((file, index) => {
         const item = document.createElement('span');
         item.className = 'chat-attachment-chip';
+        const icon = document.createElement('img');
+        icon.className = 'ui-icon';
+        icon.src = '/static/icons/paperclip.svg';
+        icon.alt = '';
         const name = document.createElement('span');
         name.textContent = `${file.name} (${fileSizeLabel(file.size)})`;
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.setAttribute('aria-label', `Remove ${file.name}`);
-        remove.textContent = 'Remove';
+        const removeIcon = document.createElement('img');
+        removeIcon.className = 'ui-icon';
+        removeIcon.src = '/static/icons/x.svg';
+        removeIcon.alt = '';
+        remove.append(removeIcon);
         remove.addEventListener('click', () => {
           selectedFiles.splice(index, 1);
           renderAttachments();
+          setUploadStatus('');
           refreshPromptAvailability();
         });
-        item.append(name, remove);
+        item.append(icon, name, remove);
         attachmentTray.append(item);
       });
     }
@@ -683,20 +808,22 @@
       if (!nextFiles.length) return;
       selectedFiles = selectedFiles.concat(nextFiles);
       renderAttachments();
-      setUploadStatus(selectedFiles.length === 1 ? '1 file ready' : `${selectedFiles.length} files ready`);
+      setUploadStatus('');
       refreshPromptAvailability();
     }
 
     async function uploadSelectedFiles() {
       if (uploading || !selectedFiles.length) return;
       uploading = true;
+      form.classList.add('is-uploading');
+      form.setAttribute('aria-busy', 'true');
       refreshPromptAvailability();
       const files = selectedFiles.slice();
       appendMessage(transcript, 'You', files.length === 1 ? `Attached ${files[0].name}` : `Attached ${files.length} files`);
       try {
         const uploaded = [];
         for (const file of files) {
-          setUploadStatus(`Uploading ${file.name}`);
+          setUploadStatus(`Uploading ${file.name}`, 'loading');
           const body = new FormData();
           body.append('file', file, file.name);
           const response = await fetch(uploadEndpoint, { method: 'POST', headers: { accept: 'application/json' }, body });
@@ -708,13 +835,18 @@
         }
         selectedFiles = [];
         renderAttachments();
-        setUploadStatus(uploaded.length === 1 ? 'Added to pipeline' : `${uploaded.length} files added`);
+        setUploadStatus(uploaded.length === 1 ? 'Added to pipeline' : `${uploaded.length} files added`, 'success');
+        window.setTimeout(() => {
+          if (uploadStatus?.dataset.state === 'success') setUploadStatus('');
+        }, 3000);
         appendMessage(transcript, 'Atlas', uploaded.length === 1 ? `${files[0].name} is in the pipeline.` : `${uploaded.length} files are in the pipeline.`);
       } catch (error) {
-        setUploadStatus(error.message || 'Upload failed');
+        setUploadStatus(error.message || 'Upload failed', 'error');
         appendMessage(transcript, 'Atlas', error.message || 'Upload failed');
       } finally {
         uploading = false;
+        form.classList.remove('is-uploading');
+        form.setAttribute('aria-busy', 'false');
         refreshPromptAvailability();
       }
     }
@@ -755,7 +887,11 @@
       resizePromptInput();
       refreshPromptAvailability();
       setVoiceState('thinking', text);
-      sendRealtimeEvent({ type: 'input_text', text });
+      sendRealtimeEvent({
+        type: 'input_text',
+        text,
+        source_context: sourceInput?.value || '',
+      });
     });
 
     const transport = root.querySelector('[data-voice-transport]');
@@ -801,6 +937,11 @@
         togglePressed(controls.get('mic'), active);
         togglePressed(chatVoiceToggle, active);
         chatVoiceToggle?.classList.toggle('is-listening', active);
+        if (chatVoiceToggle) {
+          const label = active ? 'Stop voice input' : 'Start voice input';
+          chatVoiceToggle.setAttribute('aria-label', label);
+          chatVoiceToggle.title = label;
+        }
       };
 
       const setControlAvailability = () => {
@@ -820,6 +961,7 @@
         );
         if (attachButton) attachButton.disabled = uploading;
         if (chatVoiceToggle) chatVoiceToggle.disabled = !enabled || uploading;
+        if (sourceTrigger) sourceTrigger.disabled = uploading;
         setControlAvailability();
       };
       refreshPromptAvailability = setPromptAvailability;
