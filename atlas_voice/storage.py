@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -78,14 +80,21 @@ class FileStorage:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, destination)
 
-        self.db.update_recording(
-            recording_id,
-            title=source_path.stem,
-            sha256=sha256,
-            original_path=str(destination),
-            status="ingested",
-            error=None,
+        updates: dict[str, Any] = {
+            "sha256": sha256,
+            "original_path": str(destination),
+            "status": "ingested",
+            "error": None,
+        }
+        title_origin = (
+            str(recording["title_origin"])
+            if "title_origin" in recording.keys()
+            else "filename"
         )
+        if title_origin == "filename":
+            updates["title"] = re.sub(r"^[0-9a-f]{32}-", "", source_path.stem)
+            updates["title_origin"] = "filename"
+        self.db.update_recording(recording_id, **updates)
         return {"duplicate": False, "path": destination, "sha256": sha256}
 
     def normalized_path(self, recording_id: str) -> Path:
@@ -98,8 +107,20 @@ class FileStorage:
 
     def write_json(self, recording_id: str, name: str, payload: Any) -> Path:
         path = self.artifact_dir(recording_id) / name
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, ensure_ascii=False)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=path.parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with open(descriptor, "w", encoding="utf-8", closefd=True) as handle:
+                json.dump(payload, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
         return path
 
     def read_json(self, recording_id: str, name: str) -> Any:

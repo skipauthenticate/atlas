@@ -89,6 +89,74 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(recording["status"], "done")
             self.assertIn("AnythingLLM auto-sync failed", recording["error"])
 
+    def test_first_summary_generates_a_semantic_title_for_filename_titles(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = _settings(root)
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+            recording_id = db.create_recording(root / "2026-07-09-audio.wav")
+            db.replace_segments(
+                recording_id,
+                [{"start": 0, "end": 1, "speaker": "SPEAKER_00", "text": "Hello."}],
+            )
+            db.enqueue_job(recording_id, "summarize")
+
+            PipelineProcessor(settings, db).process_job(dict(db.claim_next_job()))
+
+            recording = db.get_recording(recording_id)
+            self.assertEqual(recording["status"], "done")
+            self.assertEqual(recording["title_origin"], "generated")
+            self.assertEqual(recording["title"], "Atlas Voice processed a local test recording")
+
+    def test_summary_never_overwrites_a_manual_title(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = _settings(root)
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+            recording_id = db.create_recording(root / "audio.wav", title="My chosen title")
+            db.replace_segments(
+                recording_id,
+                [{"start": 0, "end": 1, "speaker": "SPEAKER_00", "text": "Hello."}],
+            )
+            db.enqueue_job(recording_id, "summarize")
+
+            PipelineProcessor(settings, db).process_job(dict(db.claim_next_job()))
+
+            recording = db.get_recording(recording_id)
+            self.assertEqual(recording["title"], "My chosen title")
+            self.assertEqual(recording["title_origin"], "manual")
+
+    def test_title_generation_failure_does_not_fail_the_recording(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = _settings(root)
+            settings.ensure_directories()
+            db = Database(settings.db_path)
+            db.initialize()
+            recording_id = db.create_recording(root / "audio.wav")
+            db.replace_segments(
+                recording_id,
+                [{"start": 0, "end": 1, "speaker": "SPEAKER_00", "text": "Hello."}],
+            )
+            db.enqueue_job(recording_id, "summarize")
+
+            with patch(
+                "atlas_voice.pipeline.generate_recording_title",
+                side_effect=RuntimeError("title model unavailable"),
+            ):
+                PipelineProcessor(settings, db).process_job(dict(db.claim_next_job()))
+
+            recording = db.get_recording(recording_id)
+            self.assertEqual(recording["status"], "done")
+            self.assertEqual(recording["title_origin"], "filename")
+            title_runs = [run for run in db.list_model_runs() if run["task"] == "generate_title"]
+            self.assertEqual(len(title_runs), 1)
+            self.assertIn("title model unavailable", title_runs[0]["error"])
+
 
 def _settings(root: Path, **overrides: object) -> Settings:
     values = {

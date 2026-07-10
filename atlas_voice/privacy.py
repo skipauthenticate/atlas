@@ -83,9 +83,13 @@ def validate_local_only(
             )
         )
 
+    web_search_enabled = settings.web_search_enabled
     for name, profile in assistant_config.profiles.items():
         if not _truthy(profile.get("enabled", False)):
             continue
+        web_search_enabled = web_search_enabled or _truthy(
+            profile.get("web_search_enabled", False)
+        )
         bind_host = profile.get("host") or profile.get("bind") or profile.get("listen_host")
         if bind_host and not _is_local_host(str(bind_host), allowed_hosts):
             issues.append(
@@ -95,6 +99,18 @@ def validate_local_only(
                     message=f"assistant profile {name!r} listens on non-local host {bind_host!r}.",
                 )
             )
+
+    if web_search_enabled:
+        issues.append(
+            PrivacyIssue(
+                severity="warning",
+                check="web_search_egress",
+                message=(
+                    "Web search is enabled. Query text is sent to external search engines, "
+                    "even when Atlas connects through a localhost SearXNG service."
+                ),
+            )
+        )
 
     for key, value in _iter_url_values(assistant_config.raw):
         _validate_url(

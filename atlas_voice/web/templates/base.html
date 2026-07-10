@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Atlas Voice{% endblock %}</title>
     {% block head_extra %}{% endblock %}
-    <link rel="stylesheet" href="/static/app.css?v=20260709.4">
+    <link rel="stylesheet" href="/static/app.css?v=20260710.3">
+    <link rel="stylesheet" href="/static/design-system.css?v=20260710.2">
     <link rel="icon" href="/static/icons/audio-waveform.svg" type="image/svg+xml">
   </head>
   <body class="{% block body_class %}{% endblock %}">
@@ -28,7 +29,7 @@
             <img class="ui-icon" src="/static/icons/audio-waveform.svg" alt="">
             <span>Voice Studio</span>
           </a>
-          <a class="nav-item" href="/#recordings">
+          <a class="nav-item{% if request.url.path == '/recordings' or request.url.path.startswith('/recordings/') %} active{% endif %}" href="/recordings" {% if request.url.path == '/recordings' or request.url.path.startswith('/recordings/') %}aria-current="page"{% endif %}>
             <img class="ui-icon" src="/static/icons/library.svg" alt="">
             <span>Recordings</span>
           </a>
@@ -40,9 +41,19 @@
 
         <div class="sidebar-footer">
           {% if runtime is defined %}
-            <div class="runtime-pill" title="{{ runtime.asr_provider }} / {{ runtime.asr_model }}">
-              <strong>{{ runtime.accelerator }}</strong>
-              <span>{{ runtime.asr_provider }} / {{ runtime.asr_model }}</span>
+            {% set default_quality_view = namespace(name=runtime.default_quality_tier | title, icon='flame.svg') %}
+            {% for profile in runtime.quality_profiles %}
+              {% if profile.id == runtime.default_quality_tier %}
+                {% set default_quality_view.name = profile.name %}
+                {% set default_quality_view.icon = profile.icon %}
+              {% endif %}
+            {% endfor %}
+            <div class="runtime-pill" title="Speech processing stays on this device">
+              <img class="mode-icon" src="/static/icons/{{ default_quality_view.icon }}" alt="">
+              <div class="runtime-pill-copy">
+                <strong>On-device</strong>
+                <span>{{ default_quality_view.name }} processing</span>
+              </div>
             </div>
           {% endif %}
           <button class="settings-button" type="button" data-settings-open>
@@ -58,15 +69,15 @@
             <div class="topbar-context">
               <span class="topbar-context-dot" aria-hidden="true"></span>
               <strong>
-                {% if request.url.path == '/' %}Chat{% elif request.url.path == '/search' %}Search{% elif '/recordings/' in request.url.path %}Recording{% else %}Workspace{% endif %}
+                {% if request.url.path == '/' %}Chat{% elif request.url.path == '/search' %}Search{% elif request.url.path == '/recordings' %}Recordings{% elif request.url.path.startswith('/recordings/') %}Recording{% else %}Workspace{% endif %}
               </strong>
             </div>
             <form class="topbar-search" action="/search" method="get" role="search">
-              <button class="topbar-search-submit" type="submit" aria-label="Search transcripts" title="Search transcripts">
+              <button class="topbar-search-submit" type="submit" aria-label="Search recordings and notes" title="Search recordings and notes">
                 <img class="ui-icon" src="/static/icons/search.svg" alt="">
               </button>
-              <label class="sr-only" for="global-transcript-search">Search transcripts</label>
-              <input id="global-transcript-search" name="q" type="search" value="{{ query | default('') }}" placeholder="Search transcripts..." autocomplete="off" data-global-search>
+              <label class="sr-only" for="global-transcript-search">Search recordings and notes</label>
+              <input id="global-transcript-search" name="q" type="search" value="{{ query | default('') }}" placeholder="Search recordings and notes..." autocomplete="off" data-global-search>
               {% if query | default('') %}
                 <a class="topbar-search-clear" href="/search" aria-label="Clear search" title="Clear search">
                   <img class="ui-icon" src="/static/icons/x.svg" alt="">
@@ -111,31 +122,71 @@
       <div class="settings-scroll">
         {% if runtime is defined %}
           {% if runtime.assistant_mode_options is defined %}
-            <section class="dialog-section">
+            <section class="dialog-section capture-settings">
               <div class="dialog-section-heading">
-                <h3>Capture mode</h3>
-                <span>Local only</span>
+                <h3>Background listening</h3>
+                <span>{{ 'Running' if runtime.ambient_listener.active else 'Not running' }}</span>
               </div>
-              <form class="dialog-mode" action="/settings/assistant-mode" method="post" aria-label="Assistant mode">
+              <form class="dialog-mode" action="/settings/assistant-mode" method="post" aria-label="Background listening mode">
                 <input type="hidden" name="redirect_to" value="{{ request.url.path }}">
-                <div class="assistant-mode-segments" role="group" aria-label="Ambient capture mode">
+                <div class="assistant-mode-segments" role="group" aria-label="Background listening mode">
                   {% for mode in runtime.assistant_mode_options %}
                     {% set mode_icon = 'audio-lines.svg' if mode == 'ambient' else ('pause.svg' if mode == 'paused' else 'lock-keyhole.svg') %}
+                    {% set mode_label = 'Listening' if mode == 'ambient' else ('Paused' if mode == 'paused' else 'Private') %}
                     <button type="submit" name="mode" value="{{ mode }}" data-mode="{{ mode }}" aria-pressed="{{ 'true' if runtime.ambient_mode == mode else 'false' }}">
                       <img class="ui-icon" src="/static/icons/{{ mode_icon }}" alt="">
-                      <span>{{ mode | title }}</span>
+                      <span>{{ mode_label }}</span>
                     </button>
                   {% endfor %}
                 </div>
               </form>
+              <div class="capture-mode-explanation capture-{{ runtime.ambient_mode }}" aria-live="polite">
+                {% if not runtime.ambient_listener.active %}
+                  <strong>No background listener is running.</strong>
+                  <p>Your choice is saved and will apply when the local listener starts.</p>
+                {% elif runtime.ambient_mode == 'ambient' %}
+                  <strong>Listening now.</strong>
+                  <p>Speech is transcribed locally. Raw audio follows your retention setting.</p>
+                {% elif runtime.ambient_mode == 'paused' %}
+                  <strong>Paused.</strong>
+                  <p>Capture is stopped. The listener stays ready so you can resume quickly.</p>
+                {% else %}
+                  <strong>Private. Microphone off.</strong>
+                  <p>Nothing new is captured or transcribed until you leave Private mode.</p>
+                {% endif %}
+              </div>
             </section>
           {% endif %}
 
           <section class="dialog-section">
             <div class="dialog-section-heading">
-              <h3>Models</h3>
-              <span>On device</span>
+              <h3>Default processing</h3>
+              <span>New recordings</span>
             </div>
+            <form action="/settings/quality" method="post">
+              <input type="hidden" name="redirect_to" value="{{ request.url.path }}">
+              <fieldset class="quality-choice settings-quality-choice">
+                <legend class="sr-only">Default processing level</legend>
+                {% for profile in runtime.quality_profiles %}
+                  <label>
+                    <input type="radio" name="quality_tier" value="{{ profile.id }}" {% if runtime.default_quality_tier == profile.id %}checked{% endif %}>
+                    <img class="mode-icon quality-choice-icon" src="/static/icons/{{ profile.icon }}" alt="">
+                    <span>
+                      <strong>{{ profile.name }}</strong>
+                      <small>{{ profile.promise }}. {{ profile.description }}</small>
+                    </span>
+                  </label>
+                {% endfor %}
+              </fieldset>
+              <div class="dialog-actions">
+                <button class="dialog-apply" type="submit">Save default</button>
+              </div>
+            </form>
+          </section>
+
+          <details class="dialog-section dialog-details advanced-model-settings">
+            <summary>Advanced model details</summary>
+            <p class="dialog-helper">Atlas manages these automatically for Light, Torch, and Fire. Change them only when testing a provider.</p>
             <form class="dialog-settings-grid" action="/settings/runtime" method="post">
               <label>
                 <span>Speech provider</span>
@@ -171,10 +222,10 @@
                 <input type="url" name="summary_llm_base_url" value="{{ runtime.summary_llm_base_url_value }}" autocomplete="off">
               </label>
               <div class="dialog-actions">
-                <button class="dialog-apply" type="submit">Save changes</button>
+                <button class="dialog-apply" type="submit">Save advanced settings</button>
               </div>
             </form>
-          </section>
+          </details>
         {% endif %}
 
         {% block settings_dialog_extra %}{% endblock %}

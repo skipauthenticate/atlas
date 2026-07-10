@@ -10,11 +10,66 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from atlas_voice.realtime import RealtimeAudio, RealtimeReply
 
 
 class WebTests(unittest.TestCase):
+    def test_cross_origin_mutations_are_blocked(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {
+                "ATLAS_VOICE_DATA_DIR": str(root / "data"),
+                "ATLAS_VOICE_MODELS_DIR": str(root / "models"),
+                "ATLAS_VOICE_HF_CACHE": str(root / "cache" / "huggingface"),
+                "ATLAS_VOICE_ASSISTANT_CONFIG": str(
+                    root / "config" / "atlas.assistant.yaml"
+                ),
+                "ATLAS_VOICE_TTS_PROVIDER": "none",
+                "ATLAS_VOICE_STUB_MODE": "true",
+                "WHISPERX_DEVICE": "cpu",
+                "WHISPERX_MODEL": "tiny.en",
+                "WHISPERX_COMPUTE_TYPE": "int8",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                import atlas_voice.web.app as web_app
+
+                web_app = importlib.reload(web_app)
+                web_app.settings.ensure_directories()
+                web_app.db.initialize()
+                client = TestClient(web_app.app)
+
+                blocked_origin = client.post(
+                    "/recording-folders",
+                    data={"name": "Attacker origin"},
+                    headers={"Origin": "https://attacker.example"},
+                    follow_redirects=False,
+                )
+                blocked_fetch = client.post(
+                    "/recording-folders",
+                    data={"name": "Cross-site fetch"},
+                    headers={"Sec-Fetch-Site": "cross-site"},
+                    follow_redirects=False,
+                )
+
+                self.assertEqual(blocked_origin.status_code, 403)
+                self.assertEqual(blocked_fetch.status_code, 403)
+                self.assertEqual(web_app.db.list_recording_folders(), [])
+
+                accepted = client.post(
+                    "/recording-folders",
+                    data={"name": "Local folder"},
+                    headers={"Origin": "http://testserver"},
+                    follow_redirects=False,
+                )
+
+                self.assertEqual(accepted.status_code, 303)
+                self.assertEqual(
+                    [folder["name"] for folder in web_app.db.list_recording_folders()],
+                    ["Local folder"],
+                )
+
     def test_html_pages_render_with_current_starlette_signature(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -86,7 +141,10 @@ class WebTests(unittest.TestCase):
             client = TestClient(web_app.app)
 
             dashboard = client.get("/")
+            library = client.get("/recordings")
+            focused_chat = client.get("/", params={"recording": recording_id})
             detail = client.get(f"/recordings/{recording_id}")
+            transcript = client.get(f"/api/recordings/{recording_id}/transcript")
             search = client.get("/search", params={"q": "Atlas"})
             status = client.get("/api/status")
             ambient_sessions = client.get("/api/ambient/sessions")
@@ -98,32 +156,207 @@ class WebTests(unittest.TestCase):
             self.assertIn("data-chat-file-input", dashboard.text)
             self.assertIn("data-chat-attachments", dashboard.text)
             self.assertIn("data-chat-source", dashboard.text)
-            self.assertIn("All local sources", dashboard.text)
+            self.assertIn("Local + web", dashboard.text)
+            self.assertIn("Search web", dashboard.text)
             self.assertIn('data-upload-endpoint="/upload"', dashboard.text)
             self.assertIn("data-chat-voice-toggle", dashboard.text)
-            self.assertIn('id="recordings"', dashboard.text)
-            self.assertIn("data-dashboard-recording-list", dashboard.text)
-            self.assertIn("Recordings", dashboard.text)
-            self.assertIn("Test Audio", dashboard.text)
-            self.assertIn(f"/recordings/{recording_id}", dashboard.text)
-            self.assertIn("CPU", dashboard.text)
+            self.assertNotIn('id="recordings"', dashboard.text)
+            self.assertNotIn("data-dashboard-recording-list", dashboard.text)
+            self.assertIn("On-device", dashboard.text)
             self.assertIn("tiny.en", dashboard.text)
+            self.assertEqual(library.status_code, 200)
+            self.assertIn("data-recording-library", library.text)
+            self.assertIn("Test Audio", library.text)
+            self.assertIn(f"/recordings/{recording_id}", library.text)
+            self.assertEqual(focused_chat.status_code, 200)
+            self.assertIn("data-recording-context-panel", focused_chat.text)
+            self.assertIn(f'data-recording-id="{recording_id}"', focused_chat.text)
+            self.assertIn("Answering from", focused_chat.text)
+            self.assertIn(f"/api/recordings/{recording_id}/transcript", focused_chat.text)
+            self.assertNotIn("Atlas Voice transcript", focused_chat.text)
+            self.assertEqual(transcript.status_code, 200)
+            self.assertEqual(
+                transcript.json()["segments"][0]["text"],
+                "Atlas Voice transcript",
+            )
+            self.assertNotIn("words", transcript.json()["segments"][0])
             self.assertEqual(status.status_code, 200)
             self.assertEqual(status.json()["privacy"]["status"], "ok")
             self.assertEqual(ambient_sessions.status_code, 200)
             self.assertEqual(ambient_sessions.json()["sessions"][0]["id"], ambient_id)
             self.assertEqual(ambient_sessions.json()["sessions"][0]["utterance_count"], 1)
             self.assertEqual(detail.status_code, 200)
-            self.assertIn("SPEAKER_00", detail.text)
+            self.assertIn("data-lazy-transcript", detail.text)
+            self.assertNotIn("SPEAKER_00", detail.text)
             self.assertIn("summary-section-overview", detail.text)
             self.assertIn("summary-section-key-points", detail.text)
             self.assertIn("<strong>Result</strong>", detail.text)
-            self.assertIn("Duration", detail.text)
+            self.assertIn("Processing details", detail.text)
             self.assertIn("00:05", detail.text)
-            self.assertIn("int8", detail.text)
+            self.assertIn("Chat about this", detail.text)
             self.assertEqual(search.status_code, 200)
-            self.assertIn("[Atlas]", search.text)
+            self.assertIn("<mark>Atlas</mark>", search.text)
             self.assertNotIn("&lt;mark&gt;", search.text)
+
+            speaker_names = client.post(
+                f"/recordings/{recording_id}/speakers",
+                json={"names": {"0": "Steve Jobs"}},
+            )
+            renamed_transcript = client.get(
+                f"/api/recordings/{recording_id}/transcript"
+            )
+            renamed_detail = client.get(f"/recordings/{recording_id}")
+            speaker_search = client.get("/search", params={"q": "Steve"})
+
+            self.assertEqual(speaker_names.status_code, 200)
+            self.assertTrue(speaker_names.json()["queued"])
+            self.assertEqual(
+                renamed_transcript.json()["segments"][0]["speaker"], "Steve Jobs"
+            )
+            self.assertIn("Steve Jobs", renamed_detail.text)
+            self.assertIn("Steve Jobs", speaker_search.text)
+
+    def test_recording_library_routes_manage_folders_titles_and_focused_chat(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+            os.environ["WHISPERX_DEVICE"] = "cpu"
+            os.environ["WHISPERX_MODEL"] = "tiny.en"
+            os.environ["WHISPERX_COMPUTE_TYPE"] = "int8"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            recording_id = web_app.db.create_recording(
+                root / "private" / "secret-audio.wav",
+                title="Initial title",
+            )
+            web_app.db.replace_segments(
+                recording_id,
+                [
+                    {
+                        "start": 0,
+                        "end": 2,
+                        "speaker": "SPEAKER_00",
+                        "text": "Private transcript text",
+                    }
+                ],
+            )
+            web_app.db.save_summary(
+                recording_id,
+                "## Snapshot\nPrivate summary text.",
+                model="test",
+            )
+            web_app.db.update_recording(recording_id, status="done")
+            client = TestClient(web_app.app)
+
+            create = client.post(
+                "/recording-folders",
+                data={"name": "Clients"},
+                follow_redirects=False,
+            )
+            folder_id = web_app.db.list_recording_folders()[0]["id"]
+            move = client.post(
+                f"/recordings/{recording_id}/folder",
+                data={"folder_id": folder_id, "redirect_to": "/recordings"},
+                follow_redirects=False,
+            )
+            rename = client.post(
+                f"/recordings/{recording_id}/title",
+                data={"title": "Client Discovery Plan", "redirect_to": "/recordings"},
+                follow_redirects=False,
+            )
+            library = client.get(
+                "/recordings",
+                params={"folder": folder_id, "status": "done"},
+            )
+            focused = client.get("/", params={"recording": recording_id})
+            transcript = client.get(f"/api/recordings/{recording_id}/transcript")
+            delete = client.post(
+                f"/recording-folders/{folder_id}/delete",
+                follow_redirects=False,
+            )
+
+            self.assertEqual(create.status_code, 303)
+            self.assertEqual(move.status_code, 303)
+            self.assertEqual(rename.status_code, 303)
+            self.assertIn("Client Discovery Plan", library.text)
+            self.assertIn("Clients", library.text)
+            self.assertIn(
+                f"/recordings?folder={folder_id}&amp;status=done",
+                library.text,
+            )
+            self.assertIn("Client Discovery Plan", focused.text)
+            self.assertIn("Private summary text", focused.text)
+            self.assertNotIn("Private transcript text", focused.text)
+            self.assertEqual(
+                transcript.json()["segments"][0]["text"],
+                "Private transcript text",
+            )
+            self.assertNotIn(str(root), focused.text)
+            self.assertEqual(delete.status_code, 303)
+            self.assertIsNone(web_app.db.get_recording(recording_id)["folder_id"])
+            self.assertEqual(
+                web_app.db.get_recording(recording_id)["title_origin"],
+                "manual",
+            )
+
+            duplicate_id = web_app.db.create_recording(
+                root / "duplicate.wav",
+                title="Duplicate upload",
+            )
+            web_app.db.update_recording(
+                duplicate_id,
+                status="duplicate",
+                duplicate_of=recording_id,
+            )
+            processing_id = web_app.db.create_recording(
+                root / "processing.wav",
+                title="Processing upload",
+            )
+            failed_id = web_app.db.create_recording(
+                root / "failed.wav",
+                title="Failed upload",
+            )
+            web_app.db.update_recording(failed_id, status="failed", error="test failure")
+
+            duplicate_detail = client.get(f"/recordings/{duplicate_id}")
+            processing_detail = client.get(f"/recordings/{processing_id}")
+            failed_detail = client.get(f"/recordings/{failed_id}")
+            duplicate_status = client.get(f"/api/recordings/{duplicate_id}/status")
+            processing_status = client.get(f"/api/recordings/{processing_id}/status")
+
+            self.assertIn("already in your library", duplicate_detail.text)
+            self.assertIn("Client Discovery Plan", duplicate_detail.text)
+            self.assertIn("Open original", duplicate_detail.text)
+            self.assertNotIn("http-equiv=\"refresh\"", duplicate_detail.text)
+            self.assertNotIn("data-recording-status-poll", duplicate_detail.text)
+            self.assertIn("data-recording-status-poll", processing_detail.text)
+            self.assertNotIn("http-equiv=\"refresh\"", processing_detail.text)
+            self.assertIn("Notes could not be created", failed_detail.text)
+            self.assertIn("Retry processing", failed_detail.text)
+            self.assertTrue(duplicate_status.json()["terminal"])
+            self.assertEqual(duplicate_status.json()["duplicate_of"], recording_id)
+            self.assertFalse(processing_status.json()["terminal"])
+
+            for index in range(51):
+                web_app.db.create_recording(
+                    root / f"pagination-{index}.wav",
+                    title=f"Pagination recording {index}",
+                )
+            second_page = client.get("/recordings", params={"page": 2})
+            self.assertEqual(second_page.status_code, 200)
+            self.assertIn("Page 2 of 2", second_page.text)
+            self.assertIn("55 items", second_page.text)
 
     def test_chat_upload_endpoint_can_enqueue_file_without_navigation(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -151,6 +384,7 @@ class WebTests(unittest.TestCase):
             response = client.post(
                 "/upload",
                 files={"file": ("chat-input.wav", b"RIFFtest", "audio/wav")},
+                data={"expected_main_speakers": "2", "quality_tier": "fire"},
                 headers={"accept": "application/json"},
             )
 
@@ -160,11 +394,17 @@ class WebTests(unittest.TestCase):
             self.assertIn("recording_id", payload)
             self.assertEqual(payload["url"], f"/recordings/{payload['recording_id']}")
             self.assertIn("chat-input.wav", payload["title"])
+            self.assertEqual(payload["expected_main_speakers"], 2)
+            self.assertEqual(payload["quality_tier"], "fire")
             recording = dict(web_app.db.get_recording(payload["recording_id"]))
             self.assertEqual(recording["status"], "queued")
             self.assertTrue(Path(recording["source_path"]).exists())
             jobs = web_app.db.jobs_for_recording(payload["recording_id"])
             self.assertEqual(jobs[0]["step"], "ingest")
+            self.assertEqual(
+                web_app.db.get_recording_processing_options(payload["recording_id"]),
+                {"expected_main_speakers": 2, "quality_tier": "fire"},
+            )
 
     def test_voice_console_uses_direct_voice_profile_settings(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -363,7 +603,8 @@ class WebTests(unittest.TestCase):
                 self.assertIn('name="mode" value="paused"', dashboard.text)
                 self.assertIn('name="mode" value="private"', dashboard.text)
                 self.assertEqual(response.status_code, 200)
-                self.assertIn("Assistant mode saved", response.text)
+                self.assertIn("Background listening choice saved", response.text)
+                self.assertIn("No listener is currently running", response.text)
                 self.assertEqual(web_app.settings.ambient_mode, "private")
                 self.assertIn("ATLAS_VOICE_AMBIENT_MODE=private", env_file.read_text())
                 event = web_app.db.list_privacy_events()[0]
@@ -501,7 +742,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Start call", response.text)
             self.assertIn("End call", response.text)
             self.assertIn("Privacy", response.text)
-            self.assertIn("Models", response.text)
+            self.assertIn("Advanced model details", response.text)
 
     def test_voice_console_shows_ambient_session_timeline(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -977,7 +1218,8 @@ class WebTests(unittest.TestCase):
             self.assertIn("127.0.0.1:8787", response.text)
             self.assertIn("/v1/realtime", response.text)
             self.assertIn("piper", response.text)
-            self.assertIn("/models/voice.onnx", response.text)
+            self.assertIn("voice.onnx", response.text)
+            self.assertNotIn("/models/voice.onnx", response.text)
             self.assertIn("24000 Hz", response.text)
 
     def test_voice_console_center_workbench_is_realtime_ready(self) -> None:
@@ -1391,7 +1633,7 @@ class WebTests(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["provider"], "stub")
-            self.assertEqual(payload["model"], "qwen2.5-7b-instruct")
+            self.assertEqual(payload["model"], "qwen3.5-9b")
             self.assertEqual(payload["text"], "Atlas heard: Summarize this update")
             self.assertIsNotNone(payload["latency_ms"])
             model_runs = [
@@ -1401,7 +1643,7 @@ class WebTests(unittest.TestCase):
             ]
             self.assertEqual(len(model_runs), 1)
             self.assertEqual(model_runs[0]["provider"], "stub")
-            self.assertEqual(model_runs[0]["model"], "qwen2.5-7b-instruct")
+            self.assertEqual(model_runs[0]["model"], "qwen3.5-9b")
 
     def test_voice_playground_outputs_have_latency_display_hooks(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -1608,11 +1850,44 @@ class WebTests(unittest.TestCase):
             web_app.db.initialize()
             client = TestClient(web_app.app)
 
-            with client.websocket_connect("/v1/realtime") as websocket:
+            with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                 event = websocket.receive_json()
 
             self.assertEqual(event["type"], "error")
             self.assertIn("ATLAS_ASSISTANT_ENABLED", event["error"]["message"])
+            self.assertEqual(web_app.db.list_ambient_sessions(10, mode="direct_voice"), [])
+
+    def test_realtime_websocket_requires_nonce_and_same_origin(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ["ATLAS_VOICE_DATA_DIR"] = str(root / "data")
+            os.environ["ATLAS_VOICE_MODELS_DIR"] = str(root / "models")
+            os.environ["ATLAS_VOICE_HF_CACHE"] = str(root / "cache" / "huggingface")
+            os.environ["ATLAS_VOICE_ASSISTANT_CONFIG"] = str(
+                root / "config" / "atlas.assistant.yaml"
+            )
+            os.environ["ATLAS_ASSISTANT_ENABLED"] = "true"
+            os.environ["ATLAS_VOICE_TTS_PROVIDER"] = "none"
+            os.environ["ATLAS_VOICE_STUB_MODE"] = "true"
+
+            import atlas_voice.web.app as web_app
+
+            web_app = importlib.reload(web_app)
+            web_app.settings.ensure_directories()
+            web_app.db.initialize()
+            client = TestClient(web_app.app)
+            valid_path = f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}"
+
+            with self.assertRaises(WebSocketDisconnect):
+                with client.websocket_connect("/v1/realtime"):
+                    pass
+            with self.assertRaises(WebSocketDisconnect):
+                with client.websocket_connect(
+                    valid_path,
+                    headers={"origin": "https://attacker.invalid"},
+                ):
+                    pass
+
             self.assertEqual(web_app.db.list_ambient_sessions(10, mode="direct_voice"), [])
 
     def test_realtime_websocket_handles_text_and_persists_turn(self) -> None:
@@ -1638,7 +1913,7 @@ class WebTests(unittest.TestCase):
             web_app.db.initialize()
             client = TestClient(web_app.app)
 
-            with client.websocket_connect("/v1/realtime") as websocket:
+            with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                 created = websocket.receive_json()
                 session_id = created["session"]["id"]
                 websocket.send_json({"type": "input_text", "text": "Hello Atlas"})
@@ -1681,7 +1956,7 @@ class WebTests(unittest.TestCase):
             client = TestClient(web_app.app)
             audio = base64.b64encode(b"\0\0" * 12).decode("ascii")
 
-            with client.websocket_connect("/v1/realtime") as websocket:
+            with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                 created = websocket.receive_json()
                 websocket.send_json(
                     {
@@ -1743,7 +2018,7 @@ class WebTests(unittest.TestCase):
                 return RealtimeReply(text="Too late", latency_ms=200, tokens_in=1, tokens_out=2)
 
             with patch.object(web_app, "generate_realtime_reply", side_effect=slow_reply):
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     session_id = created["session"]["id"]
                     websocket.send_json({"type": "input_text", "text": "Cancel this"})
@@ -1801,7 +2076,7 @@ class WebTests(unittest.TestCase):
                 )
 
             with patch.object(web_app, "generate_realtime_reply", side_effect=reply_for_barge_in):
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     session_id = created["session"]["id"]
                     websocket.send_json({"type": "input_text", "text": "First request"})
@@ -1894,7 +2169,7 @@ class WebTests(unittest.TestCase):
                 speech = base64.b64encode(_pcm_tone(16000, 0.2, amplitude=7000)).decode("ascii")
 
                 with patch.object(web_app, "generate_realtime_reply", side_effect=slow_reply):
-                    with client.websocket_connect("/v1/realtime") as websocket:
+                    with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                         created = websocket.receive_json()
                         session_id = created["session"]["id"]
                         websocket.send_json({"type": "input_text", "text": "Keep talking"})
@@ -1960,7 +2235,7 @@ class WebTests(unittest.TestCase):
             )
 
             with patch.object(web_app, "generate_realtime_reply", return_value=reply):
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     session_id = created["session"]["id"]
                     websocket.send_json({"type": "input_text", "text": "Find Atlas"})
@@ -2050,7 +2325,7 @@ class WebTests(unittest.TestCase):
                 )
 
                 with patch.object(web_app, "generate_realtime_reply", return_value=reply):
-                    with client.websocket_connect("/v1/realtime") as websocket:
+                    with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                         created = websocket.receive_json()
                         session_id = created["session"]["id"]
                         websocket.send_json({"type": "input_text", "text": "Use tools"})
@@ -2113,7 +2388,7 @@ class WebTests(unittest.TestCase):
                     latency_ms=7,
                 ),
             ) as synth_mock:
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     websocket.send_json({"type": "input_text", "text": "Hello Atlas"})
                     events = _receive_until(websocket, "response.done")
@@ -2170,7 +2445,7 @@ class WebTests(unittest.TestCase):
                     latency_ms=7,
                 ),
             ) as synth_mock:
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     websocket.send_json({"type": "input_text", "text": "Hello Atlas"})
                     events = _receive_until(websocket, "response.done")
@@ -2213,7 +2488,7 @@ class WebTests(unittest.TestCase):
             client = TestClient(web_app.app)
             audio = base64.b64encode(b"\0\0" * 12).decode("ascii")
 
-            with client.websocket_connect("/v1/realtime") as websocket:
+            with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                 created = websocket.receive_json()
                 session_id = created["session"]["id"]
                 websocket.send_json({"type": "input_audio_buffer.append", "audio": audio})
@@ -2262,7 +2537,7 @@ class WebTests(unittest.TestCase):
                 "transcribe_realtime_audio",
                 side_effect=AssertionError("commit should reuse streaming transcript"),
             ):
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     session_id = created["session"]["id"]
                     websocket.send_json(
@@ -2357,7 +2632,7 @@ class WebTests(unittest.TestCase):
                 speech = base64.b64encode(_pcm_tone(16000, 0.2, amplitude=7000)).decode("ascii")
                 silence = base64.b64encode(_pcm_silence(16000, 0.15)).decode("ascii")
 
-                with client.websocket_connect("/v1/realtime") as websocket:
+                with client.websocket_connect(f"/v1/realtime?token={web_app._REALTIME_ACCESS_TOKEN}") as websocket:
                     created = websocket.receive_json()
                     session_id = created["session"]["id"]
                     websocket.send_json({"type": "input_audio_buffer.append", "audio": speech})
@@ -2568,9 +2843,21 @@ class WebTests(unittest.TestCase):
             )
 
             client = TestClient(web_app.app)
-            response = client.post(
+            preview = client.post(
                 f"/recordings/{recording_id}/template",
                 json={"template_id": "personal"},
+            )
+            self.assertEqual(preview.status_code, 409)
+            self.assertEqual(preview.json()["status"], "confirmation_required")
+            self.assertEqual(web_app.db.get_recording(recording_id)["status"], "done")
+            self.assertEqual(
+                web_app.db.get_summary(recording_id)["text"],
+                "**Overview**\nCached summary",
+            )
+
+            response = client.post(
+                f"/recordings/{recording_id}/template",
+                json={"template_id": "personal", "confirmed": True},
             )
             detail = client.get(f"/recordings/{recording_id}")
 
@@ -2580,7 +2867,7 @@ class WebTests(unittest.TestCase):
                 web_app.db.get_summary(recording_id)["text"], "**Overview**\nCached summary"
             )
             self.assertEqual(web_app.db.get_recording(recording_id)["status"], "queued")
-            self.assertIn("Switching to", detail.text)
+            self.assertIn("Updating your notes", detail.text)
             self.assertIn("Cached summary", detail.text)
 
     def test_recording_detail_can_sync_to_anythingllm(self) -> None:

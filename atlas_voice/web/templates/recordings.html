@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Recordings - Atlas Voice{% endblock %}
+{% block body_class %}recordings-page{% endblock %}
+{% block head_extra %}
+  <script src="/static/recordings.js?v=20260710.2" defer></script>
+{% endblock %}
+
+{% block content %}
+  <section class="recordings-workspace" data-recording-library>
+    <header class="recordings-header">
+      <div>
+        <span class="recordings-kicker">Local library</span>
+        <h1>Recordings</h1>
+        <p>Processed conversations, organized for review and recall.</p>
+      </div>
+      <button class="recordings-upload-button" type="button" data-upload-dialog-open>
+        <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
+        <span>Add recording</span>
+      </button>
+    </header>
+
+    <div class="recordings-layout">
+      <aside class="folder-rail" aria-label="Recording folders">
+        <nav class="folder-list" aria-label="Folders">
+          <a class="folder-link{% if selected_folder == 'all' %} active{% endif %}" href="/recordings{% if selected_status != 'all' %}?status={{ selected_status }}{% endif %}">
+            <span>All recordings</span>
+            <small>{{ folder_counts.get('all', 0) }}</small>
+          </a>
+          <a class="folder-link{% if selected_folder == 'unfiled' %} active{% endif %}" href="/recordings?folder=unfiled{% if selected_status != 'all' %}&amp;status={{ selected_status }}{% endif %}">
+            <span>Unfiled</span>
+            <small>{{ folder_counts.get('unfiled', 0) }}</small>
+          </a>
+          {% for folder in folders %}
+            <div class="folder-row">
+              <a class="folder-link{% if selected_folder == folder.id %} active{% endif %}" href="/recordings?folder={{ folder.id }}{% if selected_status != 'all' %}&amp;status={{ selected_status }}{% endif %}">
+                <span>{{ folder.name }}</span>
+                <small>{{ folder_counts.get(folder.id, 0) }}</small>
+              </a>
+              <details class="folder-menu">
+                <summary aria-label="Manage {{ folder.name }}" title="Manage folder">
+                  <img class="ui-icon" src="/static/icons/ellipsis.svg" alt="">
+                </summary>
+                <div class="folder-menu-popover">
+                  <form action="/recording-folders/{{ folder.id }}/rename" method="post">
+                    <label>
+                      <span>Folder name</span>
+                      <input type="text" name="name" value="{{ folder.name }}" maxlength="80" required>
+                    </label>
+                    <button type="submit">Rename</button>
+                  </form>
+                  <form action="/recording-folders/{{ folder.id }}/delete" method="post">
+                    <button class="text-danger" type="submit">Delete folder</button>
+                  </form>
+                </div>
+              </details>
+            </div>
+          {% endfor %}
+        </nav>
+
+        <details class="new-folder">
+          <summary>New folder</summary>
+          <form action="/recording-folders" method="post">
+            <label>
+              <span>Name</span>
+              <input type="text" name="name" maxlength="80" placeholder="Clients" required>
+            </label>
+            <button type="submit">Create folder</button>
+          </form>
+        </details>
+      </aside>
+
+      <section class="recording-library" aria-label="Recording library">
+        <header class="library-toolbar">
+          <div>
+            <h2>
+              {% if selected_folder == 'unfiled' %}Unfiled
+              {% elif selected_folder not in ['all', ''] %}
+                {% for folder in folders %}{% if folder.id == selected_folder %}{{ folder.name }}{% endif %}{% endfor %}
+              {% else %}All recordings{% endif %}
+            </h2>
+            <span>{{ total_recordings }} item{{ '' if total_recordings == 1 else 's' }}</span>
+          </div>
+          <form action="/recordings" method="get">
+            {% if selected_folder != 'all' %}<input type="hidden" name="folder" value="{{ selected_folder }}">{% endif %}
+            <label class="status-filter">
+              <span class="sr-only">Filter by status</span>
+              <select name="status" onchange="this.form.submit()">
+                <option value="all"{% if selected_status == 'all' %} selected{% endif %}>All statuses</option>
+                <option value="done"{% if selected_status == 'done' %} selected{% endif %}>Ready</option>
+                <option value="failed"{% if selected_status == 'failed' %} selected{% endif %}>Needs attention</option>
+                <option value="processing"{% if selected_status == 'processing' %} selected{% endif %}>Processing</option>
+              </select>
+            </label>
+          </form>
+        </header>
+
+        {% if recordings %}
+          <div class="library-list">
+            {% for recording in recordings %}
+              <article class="library-recording">
+                <a class="library-recording-main" href="/recordings/{{ recording.id }}">
+                  <span class="recording-type-icon" aria-hidden="true">
+                    <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">
+                  </span>
+                  <span class="library-recording-copy">
+                    <strong>{{ recording.title }}</strong>
+                    {% if recording.summary_excerpt %}<span>{{ recording.summary_excerpt }}</span>{% else %}<span>Your structured notes will appear when processing finishes.</span>{% endif %}
+                    <small>
+                      {{ recording.created_at_display }}
+                      <span aria-hidden="true">·</span>
+                      {{ recording.duration_label }}
+                      {% if recording.folder_name %}<span aria-hidden="true">·</span>{{ recording.folder_name }}{% endif %}
+                    </small>
+                  </span>
+                </a>
+                <div class="library-recording-actions">
+                  <span class="status status-{{ recording.status }}">{{ recording.status_label }}</span>
+                  <a class="quiet-action" href="/?recording={{ recording.id }}">Chat</a>
+                  <form action="/recordings/{{ recording.id }}/folder" method="post">
+                    <input type="hidden" name="redirect_to" value="/recordings{% if selected_folder != 'all' or selected_status != 'all' or current_page > 1 %}?{% if selected_folder != 'all' %}folder={{ selected_folder }}{% endif %}{% if selected_status != 'all' %}{% if selected_folder != 'all' %}&amp;{% endif %}status={{ selected_status }}{% endif %}{% if current_page > 1 %}{% if selected_folder != 'all' or selected_status != 'all' %}&amp;{% endif %}page={{ current_page }}{% endif %}{% endif %}">
+                    <label>
+                      <span class="sr-only">Move {{ recording.title }} to folder</span>
+                      <select name="folder_id" onchange="this.form.submit()">
+                        <option value=""{% if not recording.folder_id %} selected{% endif %}>Unfiled</option>
+                        {% for folder in folders %}
+                          <option value="{{ folder.id }}"{% if recording.folder_id == folder.id %} selected{% endif %}>{{ folder.name }}</option>
+                        {% endfor %}
+                      </select>
+                    </label>
+                  </form>
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+          {% if total_pages > 1 %}
+            <nav class="library-pagination" aria-label="Recording pages">
+              {% if current_page > 1 %}
+                <a href="/recordings?page={{ current_page - 1 }}{% if selected_folder != 'all' %}&amp;folder={{ selected_folder }}{% endif %}{% if selected_status != 'all' %}&amp;status={{ selected_status }}{% endif %}">Previous</a>
+              {% else %}
+                <span aria-disabled="true">Previous</span>
+              {% endif %}
+              <strong>Page {{ current_page }} of {{ total_pages }}</strong>
+              {% if current_page < total_pages %}
+                <a href="/recordings?page={{ current_page + 1 }}{% if selected_folder != 'all' %}&amp;folder={{ selected_folder }}{% endif %}{% if selected_status != 'all' %}&amp;status={{ selected_status }}{% endif %}">Next</a>
+              {% else %}
+                <span aria-disabled="true">Next</span>
+              {% endif %}
+            </nav>
+          {% endif %}
+        {% else %}
+          <div class="library-empty">
+            <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">
+            <h2>No recordings here</h2>
+            <p>Add a recording or choose another folder.</p>
+          </div>
+        {% endif %}
+      </section>
+    </div>
+  </section>
+  <dialog class="recording-upload-dialog" data-upload-dialog aria-labelledby="upload-recording-title">
+    <form action="/upload" method="post" enctype="multipart/form-data">
+      <header>
+        <div>
+          <h2 id="upload-recording-title">Add a recording</h2>
+          <p>A little context helps Atlas separate voices more accurately.</p>
+        </div>
+        <button class="dialog-close" type="button" data-upload-dialog-close aria-label="Close">
+          <img class="ui-icon" src="/static/icons/x.svg" alt="">
+        </button>
+      </header>
+
+      <label class="upload-file-field">
+        <span>Recording</span>
+        <input type="file" name="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.mp4,.webm,.ogg,.flac" required data-upload-file>
+        <small data-upload-file-name>Choose an audio or video file.</small>
+      </label>
+
+      <label>
+        <span>How many people will talk most?</span>
+        <select name="expected_main_speakers">
+          <option value="">Not sure</option>
+          {% for count in range(1, 9) %}
+            <option value="{{ count }}">{{ count }} main speaker{{ '' if count == 1 else 's' }}</option>
+          {% endfor %}
+        </select>
+        <small>This is a hint. Atlas still keeps unexpected voices separate.</small>
+      </label>
+
+      <fieldset class="quality-choice">
+        <legend>Processing level</legend>
+        {% for profile in runtime.quality_profiles %}
+          <label>
+            <input type="radio" name="quality_tier" value="{{ profile.id }}" {% if runtime.default_quality_tier == profile.id %}checked{% endif %}>
+            <img class="mode-icon quality-choice-icon" src="/static/icons/{{ profile.icon }}" alt="">
+            <span>
+              <strong>{{ profile.name }}</strong>
+              <small>{{ profile.promise }}. {{ profile.description }}</small>
+            </span>
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <footer>
+        <button class="quiet-button" type="button" data-upload-dialog-close>Cancel</button>
+        <button type="submit">Add recording</button>
+      </footer>
+    </form>
+  </dialog>
+{% endblock %}

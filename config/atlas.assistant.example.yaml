@@ -17,11 +17,18 @@ profiles:
     realtime_backend: atlas-native
     stt_provider: whisperx
     llm_profile: qwen-voice
+    voice_profile: torch
     tts_provider: faster-qwen3-tts
     tts_base_url: http://127.0.0.1:8008/v1/audio/speech
     tts_model: Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
     tts_voice: Aiden
     require_tool_confirmation: true
+    # Web queries are external egress even when the SearXNG process is local.
+    web_search_enabled: false
+    web_search_provider: searxng
+    web_search_base_url: http://127.0.0.1:8888/search
+    web_search_timeout: 1.5
+    web_search_max_results: 4
 
   reflection:
     enabled: false
@@ -29,6 +36,17 @@ profiles:
     diarization_provider: pyannote
     llm_profile: qwen-deep
     schedule: manual
+
+voice_profiles:
+  light:
+    llm_profile: qwen-voice-light
+    context_budget_chars: 3000
+  torch:
+    llm_profile: qwen-voice
+    context_budget_chars: 6000
+  fire:
+    llm_profile: qwen-voice-fire
+    context_budget_chars: 12000
 
 llm_profiles:
   small-classifier:
@@ -39,13 +57,29 @@ llm_profiles:
     load_policy: hot_optional
     roles: [intent_classification, sensitivity_routing, low_stakes_routing]
 
+  qwen-voice-light:
+    provider: openai-compatible
+    model: qwen3.5-2b
+    temperature: 0.2
+    max_tokens: 600
+    load_policy: warm_optional
+    roles: [fast_voice_replies, low_stakes_routing]
+
   qwen-voice:
     provider: openai-compatible
-    model: qwen2.5-7b-instruct
+    model: qwen3.5-9b
     temperature: 0.3
     max_tokens: 800
     load_policy: warm_optional
     roles: [fast_voice_replies, low_stakes_routing, brief_tool_planning]
+
+  qwen-voice-fire:
+    provider: openai-compatible
+    model: qwen3.6-35b-a3b
+    temperature: 0.2
+    max_tokens: 800
+    load_policy: on_demand
+    roles: [fast_voice_replies, complex_reasoning, brief_tool_planning]
 
   qwen-deep:
     provider: openai-compatible

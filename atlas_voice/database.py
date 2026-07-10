@@ -6,9 +6,12 @@ import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+
+RECORDING_LIBRARY_SUMMARY_EXCERPT_CHARS = 600
 
 
 def utc_now() -> str:
@@ -36,19 +39,29 @@ class Database:
         with self.connect() as conn:
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS recording_folders (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS recordings (
                     id TEXT PRIMARY KEY,
                     source_path TEXT NOT NULL,
                     title TEXT NOT NULL,
+                    title_origin TEXT NOT NULL DEFAULT 'legacy',
                     status TEXT NOT NULL,
                     sha256 TEXT,
                     duplicate_of TEXT,
+                    folder_id TEXT,
                     original_path TEXT,
                     normalized_path TEXT,
                     error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    FOREIGN KEY (duplicate_of) REFERENCES recordings(id)
+                    FOREIGN KEY (duplicate_of) REFERENCES recordings(id),
+                    FOREIGN KEY (folder_id) REFERENCES recording_folders(id) ON DELETE SET NULL
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_recordings_sha
@@ -70,6 +83,7 @@ class Database:
                     updated_at TEXT NOT NULL,
                     started_at TEXT,
                     finished_at TEXT,
+                    available_at TEXT,
                     UNIQUE(recording_id, step),
                     FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
                 );
@@ -116,9 +130,27 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     recording_id TEXT NOT NULL UNIQUE,
                     summary_template TEXT NOT NULL DEFAULT 'meeting',
+                    expected_main_speakers INTEGER,
+                    quality_tier TEXT NOT NULL DEFAULT 'torch',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS recording_speakers (
+                    recording_id TEXT NOT NULL,
+                    speaker_label TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (recording_id, speaker_label),
+                    FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS runtime_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS ambient_sessions (
@@ -174,6 +206,14 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_assistant_turns_session
                     ON assistant_turns(session_id, id);
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS conversation_fts USING fts5(
+                    session_id UNINDEXED,
+                    item_id UNINDEXED,
+                    kind UNINDEXED,
+                    speaker UNINDEXED,
+                    text
+                );
 
                 CREATE TABLE IF NOT EXISTS model_runs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -308,6 +348,11 @@ class Database:
                     title,
                     text
                 );
+
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    name TEXT PRIMARY KEY,
+                    applied_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -326,12 +371,35 @@ class Database:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         recording_id TEXT NOT NULL UNIQUE,
                         summary_template TEXT NOT NULL DEFAULT 'meeting',
+                        expected_main_speakers INTEGER,
+                        quality_tier TEXT NOT NULL DEFAULT 'torch',
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         FOREIGN KEY (recording_id) REFERENCES recordings(id) ON DELETE CASCADE
                     )
                     """
                 )
+
+            recording_setting_cols = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(recording_settings)").fetchall()
+            }
+            if "expected_main_speakers" not in recording_setting_cols:
+                conn.execute(
+                    "ALTER TABLE recording_settings ADD COLUMN expected_main_speakers INTEGER"
+                )
+            if "quality_tier" not in recording_setting_cols:
+                conn.execute(
+                    "ALTER TABLE recording_settings ADD COLUMN quality_tier TEXT NOT NULL DEFAULT 'torch'"
+                )
+
+            if "jobs" in existing_tables:
+                job_cols = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(jobs)").fetchall()
+                }
+                if "available_at" not in job_cols:
+                    conn.execute("ALTER TABLE jobs ADD COLUMN available_at TEXT")
 
             if "summaries" in existing_tables:
                 # Add template_id column if it doesn't exist
@@ -344,6 +412,35 @@ class Database:
                         "ALTER TABLE summaries ADD COLUMN template_id TEXT"
                     )
 
+            if "recordings" in existing_tables:
+                recording_cols = {
+                    row["name"]
+                    for row in conn.execute("PRAGMA table_info(recordings)").fetchall()
+                }
+                if "folder_id" not in recording_cols:
+                    conn.execute(
+                        """
+                        ALTER TABLE recordings
+                        ADD COLUMN folder_id TEXT
+                            REFERENCES recording_folders(id) ON DELETE SET NULL
+                        """
+                    )
+                if "title_origin" not in recording_cols:
+                    # Existing titles may already be user-authored. Mark them as
+                    # legacy so automatic title generation cannot replace them.
+                    conn.execute(
+                        """
+                        ALTER TABLE recordings
+                        ADD COLUMN title_origin TEXT NOT NULL DEFAULT 'legacy'
+                        """
+                    )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_recordings_folder
+                    ON recordings(folder_id, created_at DESC)
+                    """
+                )
+
             conn.execute(
                 """
                 INSERT INTO memory_fts (memory_id, kind, title, text)
@@ -355,18 +452,57 @@ class Database:
                 """
             )
 
+            conversation_fts_migration = "conversation_fts_v1"
+            conversation_fts_backfilled = conn.execute(
+                "SELECT 1 FROM schema_migrations WHERE name = ?",
+                (conversation_fts_migration,),
+            ).fetchone()
+            if conversation_fts_backfilled is None:
+                # Rebuild once so databases created before conversation search gain
+                # a complete, duplicate-free index without paying this cost at each
+                # startup.
+                conn.execute("DELETE FROM conversation_fts")
+                conn.execute(
+                    """
+                    INSERT INTO conversation_fts (
+                        session_id, item_id, kind, speaker, text
+                    )
+                    SELECT session_id, id, 'utterance', speaker, text
+                    FROM utterances
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO conversation_fts (
+                        session_id, item_id, kind, speaker, text
+                    )
+                    SELECT session_id, id, 'assistant', 'assistant', text
+                    FROM assistant_turns
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO schema_migrations (name, applied_at)
+                    VALUES (?, ?)
+                    """,
+                    (conversation_fts_migration, utc_now()),
+                )
+
     def create_recording(self, source_path: Path | str, title: str | None = None) -> str:
         recording_id = uuid.uuid4().hex
         now = utc_now()
         path = str(Path(source_path).expanduser().resolve())
+        clean_title = " ".join(str(title or "").split())
+        stored_title = clean_title or Path(path).name
+        title_origin = "manual" if clean_title else "filename"
         with self.connect() as conn:
             conn.execute(
                 """
                 INSERT INTO recordings (
-                    id, source_path, title, status, created_at, updated_at
-                ) VALUES (?, ?, ?, 'queued', ?, ?)
+                    id, source_path, title, title_origin, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, 'queued', ?, ?)
                 """,
-                (recording_id, path, title or Path(path).name, now, now),
+                (recording_id, path, stored_title, title_origin, now, now),
             )
         return recording_id
 
@@ -401,6 +537,335 @@ class Database:
                     "SELECT * FROM recordings ORDER BY created_at DESC LIMIT ?", (limit,)
                 ).fetchall()
             )
+
+    def list_recording_library(
+        self,
+        folder_id: str | None = None,
+        status: str | None = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return a bounded, paginated projection for the recording library.
+
+        ``folder_id=None`` includes every folder. An empty folder id selects
+        recordings that have not been filed yet. ``status="processing"``
+        includes every non-terminal pipeline status.
+        """
+        bounded_limit = max(min(limit, 1000), 0)
+        if bounded_limit == 0:
+            return []
+        bounded_offset = max(offset, 0)
+        where, params = self._recording_library_where(folder_id, status)
+        query = f"""
+            WITH selected_recordings AS (
+                SELECT r.id, r.created_at
+                FROM recordings r
+                {where}
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT ? OFFSET ?
+            )
+            SELECT
+                r.id,
+                r.title,
+                r.title_origin,
+                r.status,
+                r.folder_id,
+                r.created_at,
+                r.updated_at,
+                f.name AS folder_name,
+                substr(s.text, 1, {RECORDING_LIBRARY_SUMMARY_EXCERPT_CHARS}) AS summary,
+                (
+                    SELECT MAX(segment.end)
+                    FROM segments segment
+                    WHERE segment.recording_id = r.id
+                ) AS duration_seconds
+            FROM selected_recordings selected
+            JOIN recordings r ON r.id = selected.id
+            LEFT JOIN recording_folders f ON f.id = r.folder_id
+            LEFT JOIN summaries s ON s.recording_id = r.id
+            ORDER BY selected.created_at DESC, selected.id DESC
+        """
+        params.extend([bounded_limit, bounded_offset])
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_recording_library(
+        self,
+        folder_id: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        where, params = self._recording_library_where(folder_id, status)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM recordings r {where}",
+                params,
+            ).fetchone()
+        return int(row["count"] if row is not None else 0)
+
+    def recording_library_folder_counts(self) -> dict[str, Any]:
+        """Return exact all, unfiled, and per-folder recording counts."""
+        with self.connect() as conn:
+            totals = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS all_count,
+                    COALESCE(SUM(CASE WHEN folder_id IS NULL THEN 1 ELSE 0 END), 0)
+                        AS unfiled_count
+                FROM recordings
+                """
+            ).fetchone()
+            folder_rows = conn.execute(
+                """
+                SELECT f.id, COUNT(r.id) AS recording_count
+                FROM recording_folders f
+                LEFT JOIN recordings r ON r.folder_id = f.id
+                GROUP BY f.id
+                ORDER BY f.name COLLATE NOCASE ASC, f.id ASC
+                """
+            ).fetchall()
+        return {
+            "all": int(totals["all_count"]),
+            "unfiled": int(totals["unfiled_count"]),
+            "folders": {row["id"]: int(row["recording_count"]) for row in folder_rows},
+        }
+
+    @staticmethod
+    def _recording_library_where(
+        folder_id: str | None,
+        status: str | None,
+    ) -> tuple[str, list[Any]]:
+        filters: list[str] = []
+        params: list[Any] = []
+        if folder_id == "":
+            filters.append("r.folder_id IS NULL")
+        elif folder_id is not None:
+            filters.append("r.folder_id = ?")
+            params.append(folder_id)
+        if status == "processing":
+            filters.append("r.status NOT IN ('done', 'failed', 'duplicate')")
+        elif status is not None:
+            filters.append("r.status = ?")
+            params.append(status)
+        return ("WHERE " + " AND ".join(filters) if filters else ""), params
+
+    def create_recording_folder(self, name: str) -> str:
+        folder_id = uuid.uuid4().hex
+        clean_name = self._recording_folder_name(name)
+        now = utc_now()
+        try:
+            with self.connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO recording_folders (id, name, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (folder_id, clean_name, now, now),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"A recording folder named '{clean_name}' already exists") from exc
+        return folder_id
+
+    def get_recording_folder(self, folder_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM recording_folders WHERE id = ?",
+                (folder_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_recording_folders(self) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    f.id,
+                    f.name,
+                    f.created_at,
+                    f.updated_at,
+                    COUNT(r.id) AS recording_count
+                FROM recording_folders f
+                LEFT JOIN recordings r ON r.folder_id = f.id
+                GROUP BY f.id, f.name, f.created_at, f.updated_at
+                ORDER BY f.name COLLATE NOCASE ASC, f.id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def rename_recording_folder(self, folder_id: str, name: str) -> bool:
+        clean_name = self._recording_folder_name(name)
+        try:
+            with self.connect() as conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE recording_folders
+                    SET name = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (clean_name, utc_now(), folder_id),
+                )
+                return cursor.rowcount > 0
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"A recording folder named '{clean_name}' already exists") from exc
+
+    def delete_recording_folder(self, folder_id: str) -> bool:
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM recording_folders WHERE id = ?",
+                (folder_id,),
+            )
+            return cursor.rowcount > 0
+
+    def set_recording_folder(
+        self,
+        recording_id: str,
+        folder_id: str | None,
+    ) -> bool:
+        normalized_folder_id = str(folder_id or "").strip() or None
+        with self.connect() as conn:
+            if normalized_folder_id is not None:
+                folder = conn.execute(
+                    "SELECT 1 FROM recording_folders WHERE id = ?",
+                    (normalized_folder_id,),
+                ).fetchone()
+                if folder is None:
+                    raise ValueError(f"Unknown recording folder: {normalized_folder_id}")
+            cursor = conn.execute(
+                """
+                UPDATE recordings
+                SET folder_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (normalized_folder_id, utc_now(), recording_id),
+            )
+            return cursor.rowcount > 0
+
+    def update_recording_title(
+        self,
+        recording_id: str,
+        title: str,
+        *,
+        origin: str = "manual",
+        expected_origin: str | None = None,
+    ) -> bool:
+        clean_title = " ".join(str(title or "").split())
+        if not clean_title:
+            raise ValueError("Recording title must not be empty")
+        if len(clean_title) > 160:
+            raise ValueError("Recording title must be 160 characters or fewer")
+        allowed_origins = {"filename", "generated", "manual", "legacy"}
+        if origin not in allowed_origins:
+            raise ValueError(
+                "Recording title origin must be one of: filename, generated, manual, legacy"
+            )
+        if expected_origin is not None and expected_origin not in allowed_origins:
+            raise ValueError(f"Unknown expected recording title origin: {expected_origin}")
+        query = """
+            UPDATE recordings
+            SET title = ?, title_origin = ?, updated_at = ?
+            WHERE id = ?
+        """
+        params: list[Any] = [clean_title, origin, utc_now(), recording_id]
+        if expected_origin is not None:
+            query += " AND title_origin = ?"
+            params.append(expected_origin)
+        with self.connect() as conn:
+            cursor = conn.execute(query, params)
+            return cursor.rowcount > 0
+
+    @staticmethod
+    def _recording_folder_name(name: str) -> str:
+        clean_name = " ".join(str(name or "").split())
+        if not clean_name:
+            raise ValueError("Recording folder name must not be empty")
+        if len(clean_name) > 80:
+            raise ValueError("Recording folder name must be 80 characters or fewer")
+        return clean_name
+
+    def list_recent_recording_summaries(self, limit: int = 10) -> list[dict[str, Any]]:
+        bounded_limit = max(min(limit, 100), 0)
+        if bounded_limit == 0:
+            return []
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    r.id AS recording_id,
+                    r.title,
+                    r.source_path,
+                    r.created_at,
+                    s.text AS summary
+                FROM summaries s
+                JOIN recordings r ON r.id = s.recording_id
+                WHERE trim(s.text) != ''
+                  AND r.status = 'done'
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT ?
+                """,
+                (bounded_limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def search_recording_titles(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        tokens = re.findall(r"\w+", query, flags=re.UNICODE)
+        bounded_limit = max(min(limit, 100), 0)
+        if not tokens or bounded_limit == 0:
+            return []
+        title_filters = " AND ".join("lower(r.title) LIKE ?" for _ in tokens)
+        params: list[Any] = [f"%{token.casefold()}%" for token in tokens]
+        params.append(bounded_limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                    r.id AS recording_id,
+                    r.title,
+                    r.source_path,
+                    r.created_at,
+                    r.status,
+                    s.text AS summary
+                FROM recordings r
+                LEFT JOIN summaries s ON s.recording_id = r.id
+                WHERE {title_filters}
+                  AND r.status != 'duplicate'
+                ORDER BY r.created_at DESC, r.id DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def search_recording(
+        self,
+        recording_id: str,
+        query: str,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search transcript and summary text within exactly one recording."""
+        match = self._fts_query(query)
+        bounded_limit = max(min(limit, 100), 0)
+        if not recording_id or not match or bounded_limit == 0:
+            return []
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    f.recording_id,
+                    f.kind,
+                    f.speaker,
+                    snippet(search_fts, 3, '[', ']', '...', 20) AS snippet,
+                    r.title,
+                    r.status
+                FROM search_fts f
+                JOIN recordings r ON r.id = f.recording_id
+                WHERE search_fts MATCH ?
+                  AND f.recording_id = ?
+                ORDER BY f.rank ASC, f.rowid ASC
+                LIMIT ?
+                """,
+                (match, recording_id, bounded_limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def update_recording(self, recording_id: str, **fields: Any) -> None:
         if not fields:
@@ -452,20 +917,55 @@ class Database:
                     (now, recording_id, step),
                 )
 
+    def recover_running_jobs(self) -> int:
+        """Return jobs abandoned by a previous single-worker process to the queue."""
+        now = utc_now()
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, recording_id FROM jobs WHERE status = 'running'"
+            ).fetchall()
+            if not rows:
+                return 0
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued',
+                    attempts = MAX(attempts - 1, 0),
+                    error = 'Recovered after worker restart.',
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = ?,
+                    available_at = NULL
+                WHERE status = 'running'
+                """,
+                (now,),
+            )
+            conn.executemany(
+                """
+                UPDATE recordings
+                SET status = 'queued', error = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                [(now, str(row["recording_id"])) for row in rows],
+            )
+            return len(rows)
+
     def claim_next_job(self) -> sqlite3.Row | None:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            now = utc_now()
             job = conn.execute(
                 """
                 SELECT * FROM jobs
                 WHERE status = 'queued'
+                  AND (available_at IS NULL OR available_at <= ?)
                 ORDER BY created_at ASC, id ASC
                 LIMIT 1
-                """
+                """,
+                (now,),
             ).fetchone()
             if job is None:
                 return None
-            now = utc_now()
             conn.execute(
                 """
                 UPDATE jobs
@@ -473,7 +973,8 @@ class Database:
                     attempts = attempts + 1,
                     started_at = ?,
                     updated_at = ?,
-                    error = NULL
+                    error = NULL,
+                    available_at = NULL
                 WHERE id = ?
                 """,
                 (now, now, job["id"]),
@@ -512,6 +1013,37 @@ class Database:
                 WHERE id = ?
                 """,
                 (next_status, error[:4000], now, now, job_id),
+            )
+            return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+    def defer_job(
+        self,
+        job_id: int,
+        message: str,
+        *,
+        delay_seconds: float = 30.0,
+    ) -> sqlite3.Row:
+        now_value = datetime.now(timezone.utc)
+        now = now_value.isoformat(timespec="seconds")
+        available_at = (now_value + timedelta(seconds=max(delay_seconds, 1.0))).isoformat(
+            timespec="seconds"
+        )
+        with self.connect() as conn:
+            if conn.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone() is None:
+                raise ValueError(f"Unknown job id: {job_id}")
+            conn.execute(
+                """
+                UPDATE jobs
+                SET status = 'queued',
+                    attempts = MAX(attempts - 1, 0),
+                    error = ?,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    updated_at = ?,
+                    available_at = ?
+                WHERE id = ?
+                """,
+                (str(message)[:4000], now, available_at, job_id),
             )
             return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
 
@@ -641,9 +1173,13 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT * FROM segments
-                WHERE recording_id = ?
-                ORDER BY idx ASC
+                SELECT s.*, rs.display_name
+                FROM segments s
+                LEFT JOIN recording_speakers rs
+                    ON rs.recording_id = s.recording_id
+                   AND rs.speaker_label = s.speaker
+                WHERE s.recording_id = ?
+                ORDER BY s.idx ASC
                 """,
                 (recording_id,),
             ).fetchall()
@@ -652,12 +1188,32 @@ class Database:
                 "idx": row["idx"],
                 "start": row["start"],
                 "end": row["end"],
-                "speaker": row["speaker"],
+                "speaker_label": row["speaker"],
+                "speaker": row["display_name"] or row["speaker"],
                 "text": row["text"],
                 "words": json.loads(row["words_json"] or "[]"),
             }
             for row in rows
         ]
+
+    def get_recording_segment_stats(self, recording_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS segment_count, MAX(end) AS duration_seconds
+                FROM segments
+                WHERE recording_id = ?
+                """,
+                (recording_id,),
+            ).fetchone()
+        return {
+            "segment_count": int(row["segment_count"] or 0),
+            "duration_seconds": (
+                float(row["duration_seconds"])
+                if row["duration_seconds"] is not None
+                else None
+            ),
+        }
 
     def save_summary(
         self,
@@ -748,9 +1304,214 @@ class Database:
                     "SELECT summary_template FROM recording_settings WHERE recording_id = ?",
                     (recording_id,),
                 ).fetchone()
-            return row["summary_template"] if row else None
+            return str(row["summary_template"] or "").strip() or None
         except Exception:
             return None
+
+    def set_recording_processing_options(
+        self,
+        recording_id: str,
+        *,
+        expected_main_speakers: int | None,
+        quality_tier: str,
+    ) -> None:
+        if expected_main_speakers is not None:
+            expected_main_speakers = int(expected_main_speakers)
+            if expected_main_speakers < 1 or expected_main_speakers > 20:
+                raise ValueError("Expected main speakers must be between 1 and 20")
+        tier = str(quality_tier or "").strip().lower()
+        if tier not in {"light", "torch", "fire"}:
+            raise ValueError("Quality tier must be light, torch, or fire")
+        if self.get_recording(recording_id) is None:
+            raise ValueError(f"Unknown recording: {recording_id}")
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO recording_settings (
+                    recording_id,
+                    summary_template,
+                    expected_main_speakers,
+                    quality_tier,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, '', ?, ?, ?, ?)
+                ON CONFLICT(recording_id) DO UPDATE SET
+                    expected_main_speakers = excluded.expected_main_speakers,
+                    quality_tier = excluded.quality_tier,
+                    updated_at = excluded.updated_at
+                """,
+                (recording_id, expected_main_speakers, tier, now, now),
+            )
+
+    def get_recording_processing_options(self, recording_id: str) -> dict[str, Any]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT expected_main_speakers, quality_tier
+                FROM recording_settings
+                WHERE recording_id = ?
+                """,
+                (recording_id,),
+            ).fetchone()
+        return {
+            "expected_main_speakers": (
+                int(row["expected_main_speakers"])
+                if row is not None and row["expected_main_speakers"] is not None
+                else None
+            ),
+            "quality_tier": (
+                str(row["quality_tier"] or "torch")
+                if row is not None
+                else "torch"
+            ),
+        }
+
+    def list_recording_speakers(self, recording_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    s.speaker AS speaker_label,
+                    rs.display_name,
+                    COUNT(*) AS segment_count,
+                    SUM(MAX(s.end - s.start, 0.0)) AS talk_seconds,
+                    MIN(s.start) AS first_seen
+                FROM segments s
+                LEFT JOIN recording_speakers rs
+                    ON rs.recording_id = s.recording_id
+                   AND rs.speaker_label = s.speaker
+                WHERE s.recording_id = ?
+                GROUP BY s.speaker, rs.display_name
+                ORDER BY talk_seconds DESC, first_seen ASC, s.speaker ASC
+                """,
+                (recording_id,),
+            ).fetchall()
+        expected = self.get_recording_processing_options(recording_id)[
+            "expected_main_speakers"
+        ]
+        speakers: list[dict[str, Any]] = []
+        for index, row in enumerate(rows):
+            label = str(row["speaker_label"])
+            speakers.append(
+                {
+                    "speaker_label": label,
+                    "display_name": str(row["display_name"] or ""),
+                    "default_name": _friendly_speaker_name(label, index),
+                    "segment_count": int(row["segment_count"] or 0),
+                    "talk_seconds": round(float(row["talk_seconds"] or 0.0), 3),
+                    "first_seen": float(row["first_seen"] or 0.0),
+                    "is_main": expected is None or index < expected,
+                }
+            )
+        return speakers
+
+    def save_recording_speaker_names(
+        self,
+        recording_id: str,
+        names: dict[str, str],
+    ) -> list[dict[str, Any]]:
+        speakers = self.list_recording_speakers(recording_id)
+        allowed = {str(speaker["speaker_label"]) for speaker in speakers}
+        cleaned: dict[str, str] = {}
+        used_names: set[str] = set()
+        for label, raw_name in names.items():
+            if label not in allowed:
+                raise ValueError(f"Unknown speaker label: {label}")
+            name = " ".join(str(raw_name or "").split())
+            if len(name) > 80:
+                raise ValueError("Speaker names must be 80 characters or fewer")
+            if not name:
+                continue
+            folded = name.casefold()
+            if folded in used_names:
+                raise ValueError("Each detected speaker needs a distinct name")
+            used_names.add(folded)
+            cleaned[label] = name
+
+        now = utc_now()
+        with self.connect() as conn:
+            for label in allowed:
+                name = cleaned.get(label)
+                if name is None:
+                    conn.execute(
+                        """
+                        DELETE FROM recording_speakers
+                        WHERE recording_id = ? AND speaker_label = ?
+                        """,
+                        (recording_id, label),
+                    )
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO recording_speakers (
+                        recording_id, speaker_label, display_name, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(recording_id, speaker_label) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        updated_at = excluded.updated_at
+                    """,
+                    (recording_id, label, name, now, now),
+                )
+
+            conn.execute(
+                "DELETE FROM search_fts WHERE recording_id = ? AND kind = 'transcript'",
+                (recording_id,),
+            )
+            rows = conn.execute(
+                """
+                SELECT s.speaker, s.text, rs.display_name
+                FROM segments s
+                LEFT JOIN recording_speakers rs
+                    ON rs.recording_id = s.recording_id
+                   AND rs.speaker_label = s.speaker
+                WHERE s.recording_id = ?
+                ORDER BY s.idx ASC
+                """,
+                (recording_id,),
+            ).fetchall()
+            conn.executemany(
+                """
+                INSERT INTO search_fts (recording_id, kind, speaker, text)
+                VALUES (?, 'transcript', ?, ?)
+                """,
+                [
+                    (
+                        recording_id,
+                        str(row["display_name"] or row["speaker"]),
+                        str(row["text"] or ""),
+                    )
+                    for row in rows
+                ],
+            )
+        return self.list_recording_speakers(recording_id)
+
+    def set_runtime_setting(self, key: str, value: str) -> None:
+        clean_key = str(key or "").strip()
+        if not clean_key:
+            raise ValueError("Runtime setting key is required")
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO runtime_settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (clean_key, str(value), now),
+            )
+
+    def get_runtime_setting(self, key: str) -> str | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM runtime_settings WHERE key = ?",
+                (str(key or "").strip(),),
+            ).fetchone()
+        return str(row["value"]) if row is not None else None
 
     def list_ambient_sessions(
         self,
@@ -801,6 +1562,138 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return [dict(row) for row in rows]
+
+    def search_conversations(
+        self,
+        query: str,
+        limit: int = 20,
+        *,
+        mode: str | None = None,
+        exclude_session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        match = self._fts_query(query)
+        if not match or limit <= 0:
+            return []
+
+        sql = """
+            SELECT
+                f.session_id,
+                CAST(f.item_id AS INTEGER) AS item_id,
+                f.kind,
+                f.speaker,
+                snippet(conversation_fts, 4, '[', ']', '...', 20) AS snippet,
+                s.title,
+                s.mode,
+                s.started_at,
+                f.rank AS rank
+            FROM conversation_fts f
+            JOIN ambient_sessions s ON s.id = f.session_id
+            WHERE conversation_fts MATCH ?
+        """
+        params: list[Any] = [match]
+        if mode:
+            sql += " AND s.mode = ?"
+            params.append(mode)
+        if exclude_session_id:
+            sql += " AND f.session_id != ?"
+            params.append(exclude_session_id)
+        sql += " ORDER BY f.rank ASC, s.started_at DESC, f.rowid ASC LIMIT ?"
+        params.append(limit)
+
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_recent_conversation_excerpts(
+        self,
+        *,
+        session_limit: int = 4,
+        utterances_per_session: int = 2,
+        mode: str | None = None,
+        exclude_session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        bounded_sessions = max(min(session_limit, 20), 0)
+        bounded_utterances = max(min(utterances_per_session, 10), 0)
+        if bounded_sessions == 0 or bounded_utterances == 0:
+            return []
+
+        filters = [
+            "EXISTS (SELECT 1 FROM utterances existing WHERE existing.session_id = s.id)"
+        ]
+        params: list[Any] = []
+        if mode:
+            filters.append("s.mode = ?")
+            params.append(mode)
+        if exclude_session_id:
+            filters.append("s.id != ?")
+            params.append(exclude_session_id)
+        where = " AND ".join(filters)
+        params.extend([bounded_sessions, bounded_utterances])
+        sql = f"""
+            WITH recent_sessions AS (
+                SELECT s.id, s.title, s.mode, s.started_at
+                FROM ambient_sessions s
+                WHERE {where}
+                ORDER BY s.started_at DESC, s.id DESC
+                LIMIT ?
+            ),
+            ranked_utterances AS (
+                SELECT
+                    u.id,
+                    u.session_id,
+                    u.idx,
+                    u.speaker,
+                    u.source_provider,
+                    u.text,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY u.session_id
+                        ORDER BY u.idx DESC, u.id DESC
+                    ) AS recent_rank
+                FROM utterances u
+                JOIN recent_sessions recent ON recent.id = u.session_id
+                WHERE trim(u.text) != ''
+            )
+            SELECT
+                recent.id AS session_id,
+                recent.title,
+                recent.mode,
+                recent.started_at,
+                utterance.id AS utterance_id,
+                utterance.idx,
+                utterance.speaker,
+                utterance.source_provider,
+                utterance.text
+            FROM recent_sessions recent
+            JOIN ranked_utterances utterance ON utterance.session_id = recent.id
+            WHERE utterance.recent_rank <= ?
+            ORDER BY recent.started_at DESC, recent.id DESC, utterance.idx ASC
+        """
+        with self.connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+
+        sessions: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            session_id = str(row["session_id"])
+            session = sessions.setdefault(
+                session_id,
+                {
+                    "session_id": session_id,
+                    "title": row["title"],
+                    "mode": row["mode"],
+                    "started_at": row["started_at"],
+                    "utterances": [],
+                },
+            )
+            session["utterances"].append(
+                {
+                    "id": int(row["utterance_id"]),
+                    "idx": int(row["idx"]),
+                    "speaker": row["speaker"],
+                    "source_provider": row["source_provider"],
+                    "text": row["text"],
+                }
+            )
+        return list(sessions.values())
 
     def count_ambient_sessions(self, *, status: str | None = None) -> int:
         query = "SELECT COUNT(*) AS count FROM ambient_sessions"
@@ -886,6 +1779,7 @@ class Database:
                 "session_count": 0,
                 "utterance_count": 0,
                 "assistant_turn_count": 0,
+                "model_run_count": 0,
                 "session_ids": [],
             }
         placeholders = ", ".join("?" for _ in unique_ids)
@@ -908,11 +1802,45 @@ class Database:
                     unique_ids,
                 ).fetchone()["count"]
             )
+            linked_run_filter = f"""
+                EXISTS (
+                    SELECT 1 FROM utterances u
+                    WHERE u.session_id IN ({placeholders})
+                      AND (
+                          model_runs.input_ref = 'utterance:' || u.id
+                          OR model_runs.output_ref = 'utterance:' || u.id
+                      )
+                )
+                OR EXISTS (
+                    SELECT 1 FROM assistant_turns t
+                    WHERE t.session_id IN ({placeholders})
+                      AND (
+                          model_runs.input_ref = 'assistant_turn:' || t.id
+                          OR model_runs.output_ref = 'assistant_turn:' || t.id
+                      )
+                )
+            """
+            linked_run_params = [*unique_ids, *unique_ids]
+            model_run_count = int(
+                conn.execute(
+                    f"SELECT COUNT(*) AS count FROM model_runs WHERE {linked_run_filter}",
+                    linked_run_params,
+                ).fetchone()["count"]
+            )
+            conn.execute(
+                f"DELETE FROM model_runs WHERE {linked_run_filter}",
+                linked_run_params,
+            )
+            conn.execute(
+                f"DELETE FROM conversation_fts WHERE session_id IN ({placeholders})",
+                unique_ids,
+            )
             conn.execute(f"DELETE FROM ambient_sessions WHERE id IN ({placeholders})", unique_ids)
         return {
             "session_count": session_count,
             "utterance_count": utterance_count,
             "assistant_turn_count": assistant_turn_count,
+            "model_run_count": model_run_count,
             "session_ids": unique_ids,
         }
 
@@ -1003,7 +1931,16 @@ class Database:
                     now,
                 ),
             )
-            return int(cursor.lastrowid)
+            utterance_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO conversation_fts (
+                    session_id, item_id, kind, speaker, text
+                ) VALUES (?, ?, 'utterance', ?, ?)
+                """,
+                (session_id, utterance_id, speaker, text),
+            )
+            return utterance_id
 
     def list_utterances(self, session_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -1048,7 +1985,16 @@ class Database:
                     now,
                 ),
             )
-            return int(cursor.lastrowid)
+            turn_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO conversation_fts (
+                    session_id, item_id, kind, speaker, text
+                ) VALUES (?, ?, 'assistant', 'assistant', ?)
+                """,
+                (session_id, turn_id, text),
+            )
+            return turn_id
 
     def list_assistant_turns(self, session_id: str) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -1643,34 +2589,121 @@ class Database:
             events.append(item)
         return events
 
-    def search(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
-        match = self._fts_query(query)
-        if not match:
+    def search(
+        self,
+        query: str,
+        limit: int = 50,
+        *,
+        kind: str | None = None,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = max(min(int(limit), 200), 0)
+        tokens = re.findall(r"\w+", query, flags=re.UNICODE)
+        if not tokens or bounded_limit == 0:
             return []
-        with self.connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    f.recording_id,
-                    f.kind,
-                    f.speaker,
-                    snippet(search_fts, 3, '[', ']', '...', 20) AS snippet,
-                    r.title,
-                    r.status
-                FROM search_fts f
-                JOIN recordings r ON r.id = f.recording_id
-                WHERE search_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (match, limit),
-            ).fetchall()
-        return [dict(row) for row in rows]
+        selected_kind = str(kind or "").strip().lower()
+        if selected_kind not in {"", "summary", "transcript", "speaker"}:
+            raise ValueError("Search kind must be summary, transcript, or speaker")
+
+        if selected_kind == "speaker":
+            pattern = "%" + " ".join(tokens).casefold() + "%"
+            with self.connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT
+                        f.recording_id,
+                        'speaker' AS kind,
+                        f.speaker,
+                        f.speaker AS snippet,
+                        r.title,
+                        r.status,
+                        r.created_at,
+                        0.0 AS rank
+                    FROM search_fts f
+                    JOIN recordings r ON r.id = f.recording_id
+                    WHERE f.kind = 'transcript'
+                      AND lower(f.speaker) LIKE ?
+                    ORDER BY r.created_at DESC
+                    LIMIT ?
+                    """,
+                    (pattern, bounded_limit),
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        def fetch(match: str) -> list[dict[str, Any]]:
+            filters = ["search_fts MATCH ?"]
+            params: list[Any] = [match]
+            if selected_kind:
+                filters.append("f.kind = ?")
+                params.append(selected_kind)
+            params.append(bounded_limit)
+            with self.connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        f.recording_id,
+                        f.kind,
+                        f.speaker,
+                        snippet(search_fts, 3, '[', ']', '...', 28) AS snippet,
+                        r.title,
+                        r.status,
+                        r.created_at,
+                        f.rank AS rank
+                    FROM search_fts f
+                    JOIN recordings r ON r.id = f.recording_id
+                    WHERE {" AND ".join(filters)}
+                    ORDER BY f.rank ASC, r.created_at DESC, f.rowid ASC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        results = fetch(self._fts_query(query, operator="AND"))
+        if not results and len(tokens) > 1:
+            results = fetch(self._fts_query(query, operator="OR"))
+
+        if not selected_kind:
+            speaker_results = self.search(
+                query,
+                limit=bounded_limit,
+                kind="speaker",
+            )
+            results = speaker_results + results
+            known_recordings = {str(result["recording_id"]) for result in results}
+            title_results = []
+            for match in self.search_recording_titles(query, limit=bounded_limit):
+                recording_id = str(match["recording_id"])
+                if recording_id in known_recordings:
+                    continue
+                title_results.append(
+                    {
+                        "recording_id": recording_id,
+                        "kind": "title",
+                        "speaker": "",
+                        "snippet": str(match["title"]),
+                        "title": str(match["title"]),
+                        "status": str(match.get("status") or "queued"),
+                        "created_at": match.get("created_at"),
+                        "rank": -1.0,
+                    }
+                )
+            results = title_results + results
+        return results[:bounded_limit]
 
     @staticmethod
-    def _fts_query(query: str) -> str:
-        tokens = re.findall(r"[A-Za-z0-9_]+", query)
-        return " OR ".join(f"{token}*" for token in tokens)
+    def _fts_query(query: str, *, operator: str = "OR") -> str:
+        tokens = re.findall(r"\w+", query, flags=re.UNICODE)
+        joiner = " AND " if operator.upper() == "AND" else " OR "
+        return joiner.join(f'"{token}"*' for token in tokens)
+
+
+def _friendly_speaker_name(label: str, fallback_index: int) -> str:
+    match = re.fullmatch(r"SPEAKER[_ -]?(\d+)", str(label or ""), flags=re.IGNORECASE)
+    if match:
+        return f"Speaker {int(match.group(1)) + 1}"
+    if str(label or "").strip().lower() in {"unknown", "speaker_unknown"}:
+        return "Unknown voice"
+    return f"Speaker {fallback_index + 1}"
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:

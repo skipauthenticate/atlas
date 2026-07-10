@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-import wave
 from pathlib import Path
+import threading
 from typing import Any
+import wave
 
 from atlas_voice.config import Settings
 
@@ -12,18 +13,49 @@ DIARIZATION_CHUNK_SECONDS = 20 * 60.0
 DIARIZATION_CHUNK_OVERLAP_SECONDS = 30.0
 MIN_DIARIZATION_TURN_SECONDS = 0.05
 MERGE_ADJACENT_TURN_GAP_SECONDS = 0.25
+_pipeline_cache_lock = threading.Lock()
+_pipeline_cache: dict[tuple[object, ...], Any] = {}
+_pipeline_inference_locks: dict[tuple[object, ...], threading.Lock] = {}
 
 
-def diarize_audio(audio_path: Path, settings: Settings) -> list[dict[str, Any]]:
-    if settings.stub_mode or settings.allow_single_speaker_fallback:
-        return [
-            {
-                "start": 0.0,
-                "end": _audio_duration_seconds(audio_path, default=3600.0),
-                "speaker": "SPEAKER_00",
-            }
-        ]
+def diarize_audio(
+    audio_path: Path,
+    settings: Settings,
+    *,
+    expected_speakers: int | None = None,
+) -> list[dict[str, Any]]:
+    speaker_kwargs = _speaker_hint_kwargs(expected_speakers)
+    if settings.stub_mode:
+        return _single_speaker_turns(audio_path)
 
+    try:
+        return _diarize_with_pyannote(
+            audio_path,
+            settings,
+            speaker_kwargs=speaker_kwargs,
+        )
+    except Exception:
+        if settings.allow_single_speaker_fallback:
+            return _single_speaker_turns(audio_path)
+        raise
+
+
+def _single_speaker_turns(audio_path: Path) -> list[dict[str, Any]]:
+    return [
+        {
+            "start": 0.0,
+            "end": _audio_duration_seconds(audio_path, default=3600.0),
+            "speaker": "SPEAKER_00",
+        }
+    ]
+
+
+def _diarize_with_pyannote(
+    audio_path: Path,
+    settings: Settings,
+    *,
+    speaker_kwargs: dict[str, int],
+) -> list[dict[str, Any]]:
     if not settings.hf_token:
         raise RuntimeError(
             "HF_TOKEN is required for pyannote diarization. Run ./setup.sh or set HF_TOKEN. "
@@ -37,32 +69,104 @@ def diarize_audio(audio_path: Path, settings: Settings) -> list[dict[str, Any]]:
             "pyannote.audio is not installed. Install the worker extras or run through Docker."
         ) from exc
 
-    try:
-        pipeline = Pipeline.from_pretrained(settings.pyannote_model, token=settings.hf_token)
-    except TypeError:
-        pipeline = Pipeline.from_pretrained(
-            settings.pyannote_model, use_auth_token=settings.hf_token
-        )
-    if settings.whisperx_device != "cpu":
-        import torch
-
-        if not torch.cuda.is_available():
-            raise RuntimeError(
-                f"PyTorch CUDA is not available, but WHISPERX_DEVICE={settings.whisperx_device!r}."
-            )
-        pipeline.to(torch.device(settings.whisperx_device))
-
+    pipeline, inference_lock = _warm_pipeline(settings, Pipeline)
     duration = _audio_duration_seconds(audio_path, default=0.0)
-    if duration > DIARIZATION_CHUNK_SECONDS:
-        return _diarize_audio_chunks(pipeline, audio_path, duration)
+    with inference_lock:
+        if duration > DIARIZATION_CHUNK_SECONDS:
+            return _diarize_audio_chunks(
+                pipeline,
+                audio_path,
+                duration,
+                speaker_kwargs=speaker_kwargs,
+            )
 
-    diarization = _diarization_annotation(pipeline(_pipeline_audio_input(audio_path)))
-    return _annotation_turns(diarization)
+        diarization = _diarization_annotation(
+            _apply_pipeline(
+                pipeline,
+                _pipeline_audio_input(audio_path),
+                speaker_kwargs,
+            )
+        )
+        return _annotation_turns(diarization)
+
+
+def _warm_pipeline(settings: Settings, pipeline_class: Any) -> tuple[Any, threading.Lock]:
+    key: tuple[object, ...] = (
+        pipeline_class,
+        settings.pyannote_model,
+        settings.whisperx_device,
+    )
+    with _pipeline_cache_lock:
+        pipeline = _pipeline_cache.get(key)
+        if pipeline is None:
+            try:
+                pipeline = pipeline_class.from_pretrained(
+                    settings.pyannote_model,
+                    token=settings.hf_token,
+                )
+            except TypeError:
+                pipeline = pipeline_class.from_pretrained(
+                    settings.pyannote_model,
+                    use_auth_token=settings.hf_token,
+                )
+            if settings.whisperx_device != "cpu":
+                import torch
+
+                if not torch.cuda.is_available():
+                    raise RuntimeError(
+                        "PyTorch CUDA is not available, but "
+                        f"WHISPERX_DEVICE={settings.whisperx_device!r}."
+                    )
+                pipeline.to(torch.device(settings.whisperx_device))
+            _pipeline_cache[key] = pipeline
+            _pipeline_inference_locks[key] = threading.Lock()
+        return pipeline, _pipeline_inference_locks[key]
+
+
+def _speaker_hint_kwargs(expected_speakers: int | None) -> dict[str, int]:
+    if expected_speakers is None:
+        return {}
+    if isinstance(expected_speakers, bool) or not isinstance(expected_speakers, int):
+        raise ValueError("expected_speakers must be a positive integer")
+    if expected_speakers < 1:
+        raise ValueError("expected_speakers must be a positive integer")
+
+    # This is a hint about the planned main voices, not a hard promise. Leave
+    # room for a missed attendee or incidental voice so diarization can still
+    # surface additional speakers instead of forcing them into a known person.
+    extra_headroom = max(4, expected_speakers)
+    return {
+        "min_speakers": max(1, expected_speakers - 1),
+        "max_speakers": expected_speakers + extra_headroom,
+    }
+
+
+def _apply_pipeline(
+    pipeline: Any,
+    audio_input: str | dict[str, Any],
+    speaker_kwargs: dict[str, int],
+) -> Any:
+    if speaker_kwargs:
+        return pipeline(audio_input, **speaker_kwargs)
+    return pipeline(audio_input)
+
+
+def _clear_pipeline_cache() -> None:
+    """Clear process-local pipeline caches. Intended for tests and controlled reloads."""
+
+    with _pipeline_cache_lock:
+        _pipeline_cache.clear()
+        _pipeline_inference_locks.clear()
 
 
 def _diarize_audio_chunks(
-    pipeline: Any, audio_path: Path, duration: float
+    pipeline: Any,
+    audio_path: Path,
+    duration: float,
+    *,
+    speaker_kwargs: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
+    speaker_kwargs = speaker_kwargs or {}
     turns: list[dict[str, Any]] = []
     next_speaker_index = 0
     keep_start = 0.0
@@ -73,7 +177,9 @@ def _diarize_audio_chunks(
         source_end = min(duration, keep_end + DIARIZATION_CHUNK_OVERLAP_SECONDS)
 
         audio_input = _pipeline_audio_input(audio_path, start=source_start, end=source_end)
-        diarization = _diarization_annotation(pipeline(audio_input))
+        diarization = _diarization_annotation(
+            _apply_pipeline(pipeline, audio_input, speaker_kwargs)
+        )
         chunk_turns = _annotation_turns(diarization, offset=source_start)
         speaker_map, next_speaker_index = _map_chunk_speakers(
             chunk_turns,

@@ -35,6 +35,9 @@ def settings(
 
 
 class PyannoteProviderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        pyannote_provider._clear_pipeline_cache()
+
     def test_single_speaker_fallback_does_not_require_hf_token(self) -> None:
         turns = diarize_audio(Path("missing.wav"), settings(Path("/tmp/atlas-test"), fallback=True))
 
@@ -61,6 +64,68 @@ class PyannoteProviderTests(unittest.TestCase):
     def test_missing_token_is_strict_by_default(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "HF_TOKEN is required"):
             diarize_audio(Path("missing.wav"), settings(Path("/tmp/atlas-test"), fallback=False))
+
+    def test_fallback_setting_does_not_skip_an_available_pipeline(self) -> None:
+        class Turn:
+            start = 0.0
+            end = 1.0
+
+        class Diarization:
+            def itertracks(self, yield_label: bool = False):
+                yield Turn(), None, "SPEAKER_07"
+
+        class Pipeline:
+            loads = 0
+            calls = 0
+
+            @classmethod
+            def from_pretrained(cls, model: str, **kwargs):
+                cls.loads += 1
+                cls.model = model
+                cls.kwargs = kwargs
+                return cls()
+
+            def __call__(self, audio):
+                type(self).calls += 1
+                type(self).audio = audio
+                return Diarization()
+
+        fake_pyannote = types.ModuleType("pyannote")
+        fake_audio = types.ModuleType("pyannote.audio")
+        fake_audio.Pipeline = Pipeline
+        fake_torchaudio = types.ModuleType("torchaudio")
+        fake_torchaudio.load = lambda path: ("waveform", 16000)
+        modules = {
+            "pyannote": fake_pyannote,
+            "pyannote.audio": fake_audio,
+            "torchaudio": fake_torchaudio,
+        }
+        provider_settings = settings(
+            Path("/tmp/atlas-test"),
+            fallback=True,
+            token="hf_test",
+        )
+
+        with mock.patch.dict(sys.modules, modules):
+            first = diarize_audio(Path("one.wav"), provider_settings)
+            second = diarize_audio(Path("two.wav"), provider_settings)
+
+        self.assertEqual(Pipeline.loads, 1)
+        self.assertEqual(Pipeline.calls, 2)
+        self.assertEqual(first[0]["speaker"], "SPEAKER_07")
+        self.assertEqual(second[0]["speaker"], "SPEAKER_07")
+
+    def test_expected_speakers_must_be_a_positive_integer(self) -> None:
+        provider_settings = settings(Path("/tmp/atlas-test"), fallback=True)
+
+        for invalid in (0, -1, 1.5, True):
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(ValueError, "positive integer"):
+                    diarize_audio(
+                        Path("missing.wav"),
+                        provider_settings,
+                        expected_speakers=invalid,
+                    )
 
     def test_uses_pyannote_v4_token_keyword_and_preloaded_audio(self) -> None:
         class Turn:
@@ -137,14 +202,16 @@ class PyannoteProviderTests(unittest.TestCase):
 
         class Pipeline:
             calls = []
+            speaker_kwargs = []
 
             @classmethod
             def from_pretrained(cls, model: str, **kwargs):
                 return cls()
 
-            def __call__(self, audio):
+            def __call__(self, audio, **kwargs):
                 call_index = len(type(self).calls)
                 type(self).calls.append(audio)
+                type(self).speaker_kwargs.append(kwargs)
                 return Diarization(chunks[call_index])
 
         fake_pyannote = types.ModuleType("pyannote")
@@ -161,16 +228,20 @@ class PyannoteProviderTests(unittest.TestCase):
         }
         with mock.patch.dict(sys.modules, modules):
             with mock.patch.object(pyannote_provider, "DIARIZATION_CHUNK_SECONDS", 10.0):
-                with mock.patch.object(
-                    pyannote_provider, "DIARIZATION_CHUNK_OVERLAP_SECONDS", 2.0
-                ):
+                with mock.patch.object(pyannote_provider, "DIARIZATION_CHUNK_OVERLAP_SECONDS", 2.0):
                     turns = diarize_audio(
                         Path("audio.wav"),
                         settings(Path("/tmp/atlas-test"), fallback=False, token="hf_test"),
+                        expected_speakers=2,
                     )
 
         self.assertEqual(load_calls, [(0, 1200), (800, 1400), (1800, 700)])
         self.assertEqual(len(Pipeline.calls), 3)
+        self.assertEqual(
+            Pipeline.speaker_kwargs,
+            [{"min_speakers": 1, "max_speakers": 6}] * 3,
+        )
+        self.assertTrue(all("num_speakers" not in kwargs for kwargs in Pipeline.speaker_kwargs))
         self.assertEqual(
             turns,
             [

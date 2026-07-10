@@ -33,6 +33,9 @@ class Worker:
     def run_forever(self) -> None:
         self.settings.ensure_directories()
         self.db.initialize()
+        recovered = self.db.recover_running_jobs()
+        if recovered:
+            LOGGER.warning("Recovered %s interrupted pipeline job(s)", recovered)
         self.install_signal_handlers()
         LOGGER.info("Worker started; watching %s", self.settings.inbox_dir)
         while not self._stop:

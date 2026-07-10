@@ -26,7 +26,7 @@ from .coaching import (
     track_writing_signals,
 )
 from .config import Settings
-from .database import Database
+from .database import Database, utc_now
 from .exporter import export_recording
 from .pipeline import PipelineProcessor
 from .privacy import privacy_summary
@@ -37,14 +37,20 @@ from .memory import (
     extract_memories_from_direct_voice_session,
 )
 from .retention import apply_ambient_retention
+from .resources import admit_pipeline_step
 from .benchmark import (
     DEFAULT_VOICE_STACK_BENCHMARK_TEXT,
     DEFAULT_VOICE_STACK_BENCHMARK_TTS_TEXT,
     make_smoke_audio,
     print_benchmark_results,
+    print_quality_benchmark_results,
     print_voice_stack_benchmark_results,
+    print_voice_profiles_benchmark_results,
     run_asr_benchmark,
+    _selected_quality_tiers,
+    run_quality_benchmark,
     run_voice_stack_benchmark,
+    run_voice_profiles_benchmark,
 )
 from .storage import is_audio_file
 from .tts_validation import DEFAULT_TTS_VALIDATION_TEXT, validate_tts_sidecar
@@ -56,6 +62,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     return int(args.func(args) or 0)
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,27 +109,37 @@ def build_parser() -> argparse.ArgumentParser:
     privacy_subparsers = privacy.add_subparsers(dest="privacy_command", required=True)
     privacy_status = privacy_subparsers.add_parser("status", help="Show local-only status")
     privacy_status.set_defaults(func=cmd_privacy_status)
-    privacy_audit = privacy_subparsers.add_parser("audit-egress", help="Audit configured egress URLs")
+    privacy_audit = privacy_subparsers.add_parser(
+        "audit-egress", help="Audit configured egress URLs"
+    )
     privacy_audit.set_defaults(func=cmd_privacy_audit_egress)
     privacy_purge = privacy_subparsers.add_parser(
         "purge",
         help="Dry-run or delete assistant/ambient sessions matching privacy filters",
     )
     privacy_purge.add_argument("--session", dest="session_id", help="Exact session id to purge")
-    privacy_purge.add_argument("--keyword", help="Match session title, utterance text, or reply text")
+    privacy_purge.add_argument(
+        "--keyword", help="Match session title, utterance text, or reply text"
+    )
     privacy_purge.add_argument("--person", help="Match speaker, title, or utterance text")
-    privacy_purge.add_argument("--date", dest="started_on", help="Match session start date YYYY-MM-DD")
+    privacy_purge.add_argument(
+        "--date", dest="started_on", help="Match session start date YYYY-MM-DD"
+    )
     privacy_purge.add_argument("--before", help="Match sessions before YYYY-MM-DD")
     privacy_purge.add_argument("--after", help="Match sessions on or after YYYY-MM-DD")
     privacy_purge.add_argument("--mode", help="Optional session mode filter, such as ambient")
     privacy_purge.add_argument("--limit", type=int, default=100, help="Maximum matching sessions")
-    privacy_purge.add_argument("--yes", action="store_true", help="Actually delete matching sessions")
+    privacy_purge.add_argument(
+        "--yes", action="store_true", help="Actually delete matching sessions"
+    )
     privacy_purge.set_defaults(func=cmd_privacy_purge)
     privacy_retention = privacy_subparsers.add_parser(
         "retention",
         help="Dry-run or apply configured ambient retention windows",
     )
-    privacy_retention.add_argument("--limit", type=int, default=10000, help="Maximum sessions to scan")
+    privacy_retention.add_argument(
+        "--limit", type=int, default=10000, help="Maximum sessions to scan"
+    )
     privacy_retention.add_argument("--yes", action="store_true", help="Actually apply retention")
     privacy_retention.set_defaults(func=cmd_privacy_retention)
 
@@ -140,7 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
         "signals",
         help="Dry-run or store local conversation signal metrics for a session",
     )
-    coaching_signals.add_argument("--session", required=True, help="Ambient or direct voice session id")
+    coaching_signals.add_argument(
+        "--session", required=True, help="Ambient or direct voice session id"
+    )
     coaching_signals.add_argument("--yes", action="store_true", help="Actually store the signals")
     coaching_signals.set_defaults(func=cmd_coaching_signals)
     coaching_writing = coaching_subparsers.add_parser(
@@ -162,7 +190,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_extract_ambient.add_argument("--session", required=True, help="Ambient session id")
     memory_extract_ambient.add_argument("--limit", type=int, default=20, help="Maximum candidates")
-    memory_extract_ambient.add_argument("--yes", action="store_true", help="Actually store candidates")
+    memory_extract_ambient.add_argument(
+        "--yes", action="store_true", help="Actually store candidates"
+    )
     memory_extract_ambient.set_defaults(func=cmd_memory_extract_ambient)
     memory_extract_direct = memory_subparsers.add_parser(
         "extract-direct",
@@ -170,7 +200,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_extract_direct.add_argument("--session", required=True, help="Direct voice session id")
     memory_extract_direct.add_argument("--limit", type=int, default=20, help="Maximum candidates")
-    memory_extract_direct.add_argument("--yes", action="store_true", help="Actually store candidates")
+    memory_extract_direct.add_argument(
+        "--yes", action="store_true", help="Actually store candidates"
+    )
     memory_extract_direct.set_defaults(func=cmd_memory_extract_direct)
 
     ambient = subparsers.add_parser("ambient", help="Run the ambient listener MVP")
@@ -255,6 +287,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     voice_benchmark.add_argument("--json", action="store_true", help="Print JSON results")
     voice_benchmark.set_defaults(func=cmd_benchmark_voice_stack)
+    voice_profiles_benchmark = subparsers.add_parser(
+        "benchmark-voice-profiles",
+        help="Benchmark sequential realtime LLM and TTS turns for Light, Torch, and Fire",
+    )
+    voice_profiles_benchmark.add_argument(
+        "--profiles",
+        default="light,torch,fire",
+        help="Comma-separated subset of light, torch, fire; runs in rank order",
+    )
+    voice_profiles_benchmark.add_argument(
+        "--rounds", type=_positive_int, default=3, help="Benchmark rounds per profile"
+    )
+    voice_profiles_benchmark.add_argument(
+        "--text",
+        default=DEFAULT_VOICE_STACK_BENCHMARK_TEXT,
+        help="Prompt sent through the realtime streaming LLM path",
+    )
+    voice_profiles_benchmark.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Directory for synthesized benchmark replies",
+    )
+    voice_profiles_benchmark.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON"
+    )
+    voice_profiles_benchmark.set_defaults(func=cmd_benchmark_voice_profiles)
+
 
     benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
@@ -270,6 +329,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Also run the configured diarization provider after ASR",
     )
+    quality_benchmark = subparsers.add_parser(
+        "benchmark-quality",
+        help="Benchmark the Light, Torch, and Fire quality tiers",
+    )
+    quality_benchmark.add_argument("audio", type=Path, help="Audio file to benchmark")
+    quality_benchmark.add_argument(
+        "--reference",
+        type=Path,
+        help="Optional UTF-8 reference transcript for WER and CER",
+    )
+    quality_benchmark.add_argument(
+        "--expected-speakers",
+        type=_positive_int,
+        help="Optional expected main-speaker count",
+    )
+    quality_benchmark.add_argument(
+        "--tiers",
+        default="light,torch,fire",
+        help="Comma-separated subset of light, torch, fire; runs in rank order",
+    )
+    quality_benchmark.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON",
+    )
+    quality_benchmark.set_defaults(func=cmd_benchmark_quality)
+
     benchmark.set_defaults(func=cmd_benchmark_asr)
 
     worker = subparsers.add_parser("worker", help=argparse.SUPPRESS)
@@ -612,12 +698,16 @@ def cmd_coaching_writing(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     if result.status == "existing":
-        print(f"coaching writing existing: event {result.event_id} for {result.label or result.text_hash[:12]}")
+        print(
+            f"coaching writing existing: event {result.event_id} for {result.label or result.text_hash[:12]}"
+        )
     elif result.dry_run:
         print(f"coaching writing dry run: {result.metrics['word_count']} word(s)")
         print("dry run only; rerun with --yes to store the signals")
     else:
-        print(f"coaching writing stored: event {result.event_id} for {result.label or result.text_hash[:12]}")
+        print(
+            f"coaching writing stored: event {result.event_id} for {result.label or result.text_hash[:12]}"
+        )
     print(result.message)
     return 0
 
@@ -682,16 +772,11 @@ def cmd_ambient(args: argparse.Namespace) -> int:
     assistant_config = load_assistant_config(settings.assistant_config_path)
     settings = settings_for_profile(settings, assistant_config, "ambient")
     source = args.source or settings.ambient_source
-    mode = args.mode or settings.ambient_mode
+    stored_mode = db.get_runtime_setting("assistant_mode")
+    mode = args.mode or stored_mode or settings.ambient_mode
+    if args.mode or stored_mode is None:
+        db.set_runtime_setting("assistant_mode", mode)
     retain_audio = args.retain_audio
-    if mode in {"private", "paused"}:
-        db.log_privacy_event(
-            "ambient.skipped",
-            f"Ambient mode {mode} skipped audio processing.",
-            metadata={"source": source, "mode": mode},
-        )
-        print(f"ambient listener {mode}; no audio processed")
-        return 0
 
     try:
         if source == "mic":
@@ -727,15 +812,35 @@ def _run_ambient_mic(
     mode: str,
     retain_audio: bool | None,
 ) -> int:
+    last_mode: str | None = None
     while True:
+        current_mode = _requested_ambient_mode(db, mode)
+        _update_listener_heartbeat(db, current_mode, "mic")
+        if current_mode in {"private", "paused"}:
+            if current_mode != last_mode:
+                db.log_privacy_event(
+                    "ambient.skipped",
+                    f"Ambient listener entered {current_mode} mode.",
+                    metadata={"source": "mic", "mode": current_mode},
+                )
+                print(f"ambient listener {current_mode}; microphone is off")
+            last_mode = current_mode
+            if args.once:
+                return 0
+            time.sleep(args.poll_seconds or settings.ambient_poll_seconds)
+            continue
+
+        if last_mode in {"private", "paused"}:
+            print("ambient listener resumed")
         result = process_microphone_once(
             settings,
             db,
-            mode=mode,
+            mode=current_mode,
             seconds=args.chunk_seconds,
             device=args.mic_device,
             retain_audio=retain_audio,
         )
+        last_mode = current_mode
         _print_ambient_result(result)
         if args.once:
             return 0
@@ -751,7 +856,25 @@ def _run_ambient_directory_loop(
     retain_audio: bool | None,
 ) -> int:
     seen: set[Path] = set()
+    last_mode: str | None = None
     while True:
+        current_mode = _requested_ambient_mode(db, mode)
+        _update_listener_heartbeat(db, current_mode, str(source_path))
+        if current_mode in {"private", "paused"}:
+            if current_mode != last_mode:
+                db.log_privacy_event(
+                    "ambient.skipped",
+                    f"Ambient listener entered {current_mode} mode.",
+                    metadata={"source": str(source_path), "mode": current_mode},
+                )
+                print(f"ambient listener {current_mode}; directory capture is off")
+            last_mode = current_mode
+            time.sleep(args.poll_seconds or settings.ambient_poll_seconds)
+            continue
+
+        if last_mode in {"private", "paused"}:
+            print("ambient listener resumed")
+        last_mode = current_mode
         for path in sorted(source_path.iterdir()):
             resolved = path.resolve()
             if resolved in seen or not is_audio_file(path):
@@ -760,7 +883,7 @@ def _run_ambient_directory_loop(
                 path,
                 settings,
                 db,
-                mode=mode,
+                mode=current_mode,
                 retain_audio=retain_audio,
                 vad_threshold=args.vad_threshold,
                 min_speech_seconds=args.min_speech_seconds,
@@ -768,6 +891,17 @@ def _run_ambient_directory_loop(
             seen.add(resolved)
             _print_ambient_result(result)
         time.sleep(args.poll_seconds or settings.ambient_poll_seconds)
+
+
+def _requested_ambient_mode(db: Database, fallback: str) -> str:
+    requested = str(db.get_runtime_setting("assistant_mode") or fallback).strip().lower()
+    return requested if requested in AMBIENT_MODES else fallback
+
+
+def _update_listener_heartbeat(db: Database, mode: str, source: str) -> None:
+    db.set_runtime_setting("ambient_listener_heartbeat", utc_now())
+    db.set_runtime_setting("ambient_listener_mode", mode)
+    db.set_runtime_setting("ambient_listener_source", source)
 
 
 def _print_ambient_result(result: AmbientResult) -> None:
@@ -838,6 +972,25 @@ def cmd_benchmark_voice_stack(args: argparse.Namespace) -> int:
     print_voice_stack_benchmark_results(results, json_output=args.json)
     return 1 if any(result.get("error") for result in results) else 0
 
+def cmd_benchmark_voice_profiles(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    try:
+        assistant_config = load_assistant_config(settings.assistant_config_path)
+        results = run_voice_profiles_benchmark(
+            settings,
+            assistant_config,
+            profiles=args.profiles,
+            rounds=args.rounds,
+            text=args.text,
+            output_dir=args.output_dir,
+        )
+    except (AssistantConfigError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    print_voice_profiles_benchmark_results(results, json_output=args.json)
+    return 1 if any(result.get("error") for result in results) else 0
+
+
 
 def cmd_benchmark_asr(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
@@ -856,6 +1009,37 @@ def cmd_benchmark_asr(args: argparse.Namespace) -> int:
         include_diarization=args.include_diarization,
     )
     print_benchmark_results(results, json_output=args.json)
+    return 1 if any(result.get("error") for result in results) else 0
+
+
+def cmd_benchmark_quality(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    reference_text = args.reference.read_text().strip() if args.reference else None
+    try:
+        selected_tiers = _selected_quality_tiers(args.tiers)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    if not settings.stub_mode:
+        for tier in selected_tiers:
+            admission = admit_pipeline_step(tier, "transcribe")
+            if not admission.allowed:
+                print(admission.message, file=sys.stderr)
+                print(
+                    "Free device memory or benchmark a smaller tier with --tiers.",
+                    file=sys.stderr,
+                )
+                return 2
+
+    results = run_quality_benchmark(
+        args.audio,
+        settings,
+        reference_text=reference_text,
+        expected_speakers=args.expected_speakers,
+        tiers=selected_tiers,
+    )
+    print_quality_benchmark_results(results, json_output=args.json)
     return 1 if any(result.get("error") for result in results) else 0
 
 

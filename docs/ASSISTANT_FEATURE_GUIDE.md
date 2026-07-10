@@ -164,6 +164,36 @@ VAD state, and active responses. While VAD is idle Atlas retains only a bounded
 500 ms PCM preroll; active speech is kept intact through trailing-silence commit.
 Every assistant text turn and TTS run is logged in SQLite `model_runs`.
 
+### Realtime retrieval
+
+Auto retrieval is deterministic and does not spend an extra LLM call on tool
+planning. Questions referring to earlier meetings, recordings, transcripts, or
+voice chats search the local FTS5 indexes. Explicit web requests and clearly
+time-sensitive questions search the configured web provider. Select a fixed
+scope in the dashboard or Voice Studio to force Recordings, Uploads, Past voice
+chats, Web, or Local + web for a turn.
+
+Enable the existing local SearXNG endpoint with:
+
+```bash
+export ATLAS_VOICE_WEB_SEARCH_ENABLED=true
+export ATLAS_VOICE_WEB_SEARCH_PROVIDER=searxng
+export ATLAS_VOICE_WEB_SEARCH_BASE_URL=http://127.0.0.1:8888/search
+export ATLAS_VOICE_WEB_SEARCH_TIMEOUT=1.5
+export ATLAS_VOICE_WEB_SEARCH_MAX_RESULTS=4
+```
+
+SearXNG is local software but not a local web index: it forwards the query to
+external engines. Voice Studio labels this as web opt-in, the privacy report
+adds `web_search_egress`, and retrieved page snippets are treated as untrusted
+data. Atlas does not fetch arbitrary result pages on the realtime path.
+
+The realtime socket emits `response.retrieval.started` and
+`response.retrieval.done`. The done event includes local/web result counts,
+latency, cache state, a bounded error, and sanitized web source metadata. Search
+latency is also logged as a `web_search` model run without copying the query into
+the audit row.
+
 Realtime end-of-turn detection emits `input_audio_buffer.speech_started` after
 enough voiced audio and automatically commits after trailing silence with
 `input_audio_buffer.speech_stopped` and `input_audio_buffer.committed`. Streaming

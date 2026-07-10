@@ -106,6 +106,13 @@ class ConfigTests(unittest.TestCase):
                 "ATLAS_VOICE_REALTIME_VAD_THRESHOLD=1200\n"
                 "ATLAS_VOICE_REALTIME_VAD_MIN_SPEECH_MS=150\n"
                 "ATLAS_VOICE_REALTIME_VAD_SILENCE_MS=350\n"
+                "ATLAS_VOICE_WEB_SEARCH_ENABLED=true\n"
+                "ATLAS_VOICE_WEB_SEARCH_PROVIDER=brave\n"
+                "ATLAS_VOICE_WEB_SEARCH_BASE_URL=https://api.search.brave.com/res/v1/web/search\n"
+                "ATLAS_VOICE_WEB_SEARCH_API_KEY=test-search-key\n"
+                "ATLAS_VOICE_WEB_SEARCH_TIMEOUT=0.8\n"
+                "ATLAS_VOICE_WEB_SEARCH_MAX_RESULTS=3\n"
+                "ATLAS_VOICE_WEB_SEARCH_CACHE_TTL_SECONDS=45\n"
                 "ATLAS_VOICE_AMBIENT_SOURCE=./ambient-inbox\n"
                 "ATLAS_VOICE_AMBIENT_MODE=meeting\n"
                 "ATLAS_VOICE_AMBIENT_CHUNK_SECONDS=3.5\n"
@@ -159,6 +166,16 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.realtime_vad_threshold, 1200)
         self.assertEqual(settings.realtime_vad_min_speech_ms, 150)
         self.assertEqual(settings.realtime_vad_silence_ms, 350)
+        self.assertTrue(settings.web_search_enabled)
+        self.assertEqual(settings.web_search_provider, "brave")
+        self.assertEqual(
+            settings.web_search_base_url,
+            "https://api.search.brave.com/res/v1/web/search",
+        )
+        self.assertEqual(settings.web_search_api_key, "test-search-key")
+        self.assertEqual(settings.web_search_timeout, 0.8)
+        self.assertEqual(settings.web_search_max_results, 3)
+        self.assertEqual(settings.web_search_cache_ttl_seconds, 45)
         self.assertEqual(settings.ambient_source, "./ambient-inbox")
         self.assertEqual(settings.ambient_mode, "meeting")
         self.assertEqual(settings.ambient_chunk_seconds, 3.5)
@@ -540,7 +557,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(reflection.llm_base_url, "http://127.0.0.1:8088/v1/chat/completions")
         self.assertEqual(reflection.llm_temperature, 0.35)
         self.assertEqual(reflection.llm_max_tokens, 4096)
-        self.assertEqual(direct.llm_model, "qwen2.5-7b-instruct")
+        self.assertEqual(direct.llm_model, "qwen3.5-9b")
         self.assertNotEqual(direct.llm_model, reflection.llm_model)
 
     def test_smaller_llm_profiles_drive_voice_and_classifier_paths(self) -> None:
@@ -562,7 +579,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(voice_profile["load_policy"], "warm_optional")
         self.assertIn("fast_voice_replies", voice_profile["roles"])
-        self.assertEqual(direct.llm_model, "qwen2.5-7b-instruct")
+        self.assertEqual(direct.llm_model, "qwen3.5-9b")
         self.assertLessEqual(direct.llm_max_tokens, 800)
         self.assertEqual(classifier_profile["load_policy"], "hot_optional")
         self.assertIn("intent_classification", classifier_profile["roles"])

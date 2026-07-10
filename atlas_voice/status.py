@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from typing import Any
 
 from .assistant_config import AssistantConfig
@@ -187,6 +188,11 @@ def tts_service_health(
         detail = voice_settings.piper_voice or "voice not configured"
         status = "configured" if voice_settings.piper_voice else "warning"
         return {"name": "tts", "status": status, "detail": f"Piper: {detail}"}
+    if provider == "espeak-ng":
+        executable = shutil.which("espeak-ng")
+        status = "configured" if executable else "error"
+        detail = executable or "espeak-ng executable not found"
+        return {"name": "tts", "status": status, "detail": f"espeak-ng: {detail}"}
     if is_tts_sidecar_provider(provider):
         health = check_tts_sidecar_health(voice_settings)
         detail = f"{voice_settings.tts_model} at {voice_settings.tts_base_url}: {health['detail']}"
@@ -230,6 +236,8 @@ def _effective_asr_model(settings: Settings) -> str:
         return settings.whisperx_model
     if settings.asr_model:
         return settings.asr_model
+    if settings.asr_provider == "faster-whisper":
+        return settings.faster_whisper_model
     if settings.asr_provider == "vibevoice":
         return settings.vibevoice_model
     return PROVIDER_DEFAULT_MODELS.get(settings.asr_provider, settings.whisperx_model)
@@ -239,6 +247,8 @@ def _effective_asr_model(settings: Settings) -> str:
 def _effective_tts_model(settings: Settings, provider: str) -> str:
     if provider == "piper":
         return settings.piper_voice or "piper"
+    if provider == "espeak-ng":
+        return settings.tts_voice if settings.tts_voice != "default" else "espeak-ng"
     if is_tts_sidecar_provider(provider):
         return settings.tts_model
     return provider

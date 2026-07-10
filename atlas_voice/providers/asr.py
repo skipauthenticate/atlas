@@ -44,13 +44,27 @@ def transcribe_audio(
     configured_provider = _normalize_provider(settings.asr_provider)
     providers = realtime_asr_provider_chain(settings) if realtime else [configured_provider]
     errors: list[str] = []
+    empty_result = False
     for provider in providers:
         try:
-            return _transcribe_with_provider(audio_path, _settings_for_provider(settings, provider), provider)
+            payload = _transcribe_with_provider(
+                audio_path,
+                _settings_for_provider(settings, provider),
+                provider,
+            )
+            if realtime and not _payload_has_text(payload):
+                empty_result = True
+                errors.append(f"{provider}: returned no transcript text")
+                continue
+            return payload
         except Exception as exc:  # noqa: BLE001 - realtime ASR should advance through fallbacks.
             if not realtime:
                 raise
             errors.append(f"{provider}: {type(exc).__name__}: {exc}")
+    if empty_result:
+        raise RuntimeError(
+            "No speech could be recognized. Please repeat that and speak for a little longer."
+        )
     raise RuntimeError("Realtime ASR providers failed: " + "; ".join(errors))
 
 
@@ -102,3 +116,15 @@ def _dedupe(providers: list[str]) -> list[str]:
             result.append(provider)
             seen.add(provider)
     return result
+
+
+def _payload_has_text(payload: dict[str, Any]) -> bool:
+    if str(payload.get("text") or payload.get("transcript") or "").strip():
+        return True
+    segments = payload.get("segments")
+    if not isinstance(segments, list):
+        return False
+    return any(
+        isinstance(segment, dict) and str(segment.get("text") or "").strip()
+        for segment in segments
+    )

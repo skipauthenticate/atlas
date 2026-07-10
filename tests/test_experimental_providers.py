@@ -21,7 +21,7 @@ from atlas_voice.providers.hyprwhspr_provider import (
     hyprwhspr_reliable,
     transcribe_hyprwhspr,
 )
-from atlas_voice.providers.nemo_provider import transcribe_parakeet
+from atlas_voice.providers.nemo_provider import _clear_model_cache, transcribe_parakeet
 from atlas_voice.providers.vad import (
     ambient_vad_provider_chain,
     detect_hyprwhspr_vad,
@@ -222,6 +222,32 @@ class ExperimentalProviderTests(unittest.TestCase):
         faster_mock.assert_called_once()
         whisperx_mock.assert_called_once()
 
+    def test_realtime_transcription_treats_empty_payload_as_fallback_condition(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider_settings = replace(
+                settings(root),
+                hyprwhspr_cli=str(root / "missing-hyprwhspr"),
+                hyprwhspr_endpoint=None,
+                realtime_asr_prefer_hyprwhspr=False,
+                realtime_asr_fallback_provider="faster-whisper",
+            )
+            with (
+                mock.patch(
+                    "atlas_voice.providers.asr.transcribe_faster_whisper",
+                    return_value={"text": "", "segments": []},
+                ) as faster_mock,
+                mock.patch(
+                    "atlas_voice.providers.asr.transcribe_whisperx",
+                    return_value={"text": "fallback heard speech", "segments": []},
+                ) as whisperx_mock,
+            ):
+                transcript = transcribe_audio(Path("audio.wav"), provider_settings, realtime=True)
+
+        self.assertEqual(transcript["text"], "fallback heard speech")
+        faster_mock.assert_called_once()
+        whisperx_mock.assert_called_once()
+
     def test_ambient_vad_prefers_healthy_hyprwhspr_endpoint(self) -> None:
         provider_settings = replace(
             settings(Path("/tmp/atlas-test")),
@@ -344,6 +370,52 @@ class ExperimentalProviderTests(unittest.TestCase):
         self.assertEqual(transcript["text"], "hello local")
         self.assertEqual(transcript["segments"][0]["words"][0]["word"], "hello")
 
+    def test_faster_whisper_reuses_warm_model_and_retries_empty_decode(self) -> None:
+        class Segment:
+            start = 0.0
+            end = 1.0
+            text = "retry recovered speech"
+            words = []
+
+        class Info:
+            language = "en"
+            language_probability = 1.0
+
+        class WhisperModel:
+            initialization_count = 0
+            calls: list[dict[str, object]] = []
+
+            def __init__(self, _model_name, **_kwargs):
+                self.__class__.initialization_count += 1
+
+            def transcribe(self, _path, **kwargs):
+                self.__class__.calls.append(dict(kwargs))
+                if len(self.__class__.calls) == 1:
+                    return [], Info()
+                return [Segment()], Info()
+
+        fake_module = types.ModuleType("faster_whisper")
+        fake_module.WhisperModel = WhisperModel
+        provider_settings = replace(
+            settings(Path("/tmp/atlas-test")),
+            faster_whisper_model="tiny.en",
+            whisperx_device="cpu",
+            whisperx_compute_type="int8",
+        )
+
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake_module}):
+            first = transcribe_faster_whisper(Path("audio.wav"), provider_settings)
+            second = transcribe_faster_whisper(Path("audio.wav"), provider_settings)
+
+        self.assertEqual(first["text"], "retry recovered speech")
+        self.assertEqual(second["text"], "retry recovered speech")
+        self.assertEqual(WhisperModel.initialization_count, 1)
+        self.assertEqual(len(WhisperModel.calls), 3)
+        self.assertTrue(WhisperModel.calls[0]["vad_filter"])
+        self.assertFalse(WhisperModel.calls[1]["vad_filter"])
+        self.assertEqual(WhisperModel.calls[1]["beam_size"], 5)
+        self.assertEqual(WhisperModel.calls[1]["language"], "en")
+
     def test_word_error_rate_counts_word_edits(self) -> None:
         self.assertEqual(word_error_rate("alpha beta", "alpha beta"), 0.0)
         self.assertAlmostEqual(word_error_rate("one two three", "one four three"), 1 / 3)
@@ -444,6 +516,8 @@ class ExperimentalProviderTests(unittest.TestCase):
         class ASRModel:
             instance = None
             requested_model = None
+            loads = 0
+            calls = 0
 
             def __init__(self):
                 self.cfg = types.SimpleNamespace(decoding={"greedy": {}})
@@ -451,6 +525,7 @@ class ExperimentalProviderTests(unittest.TestCase):
 
             @classmethod
             def from_pretrained(cls, model_name):
+                cls.loads += 1
                 cls.requested_model = model_name
                 cls.instance = cls()
                 return cls.instance
@@ -459,6 +534,7 @@ class ExperimentalProviderTests(unittest.TestCase):
                 self.changed_decoding_cfg = decoding_cfg
 
             def transcribe(self, paths, **kwargs):
+                type(self).calls += 1
                 self.paths = paths
                 self.kwargs = kwargs
                 return [Output()]
@@ -474,12 +550,19 @@ class ExperimentalProviderTests(unittest.TestCase):
             "nemo.collections.asr": fake_asr,
             "nemo.collections.asr.models": fake_models,
         }
+        _clear_model_cache()
         with mock.patch.dict(sys.modules, modules):
             transcript = transcribe_parakeet(
                 Path("audio.wav"), settings(Path("/tmp/atlas-test"), asr_provider="parakeet")
             )
+            second = transcribe_parakeet(
+                Path("second.wav"), settings(Path("/tmp/atlas-test"), asr_provider="parakeet")
+            )
 
         self.assertEqual(ASRModel.requested_model, "nvidia/parakeet-tdt-0.6b-v3")
+        self.assertEqual(ASRModel.loads, 1)
+        self.assertEqual(ASRModel.calls, 2)
+        self.assertEqual(second["segments"][0]["text"], "hello world")
         self.assertIsNotNone(ASRModel.instance)
         self.assertFalse(
             ASRModel.instance.cfg.decoding["greedy"]["use_cuda_graph_decoder"]

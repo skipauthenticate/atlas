@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .voice_profiles import VOICE_PROFILE_ORDER, default_voice_profile_config
+
 
 class AssistantConfigError(ValueError):
     pass
@@ -27,6 +29,7 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
             "realtime_backend": "atlas-native",
             "stt_provider": "whisperx",
             "llm_profile": "qwen-voice",
+            "voice_profile": "torch",
             "tts_provider": "faster-qwen3-tts",
             "tts_model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
             "tts_voice": "Aiden",
@@ -45,6 +48,7 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
             "llm_profile": "qwen-summary",
         },
     },
+    "voice_profiles": default_voice_profile_config(),
     "llm_profiles": {
         "small-classifier": {
             "provider": "openai-compatible",
@@ -58,15 +62,38 @@ DEFAULT_ASSISTANT_CONFIG: dict[str, Any] = {
                 "low_stakes_routing",
             ],
         },
+        "qwen-voice-light": {
+            "provider": "openai-compatible",
+            "model": "qwen3.5-2b",
+            "temperature": 0.2,
+            "max_tokens": 600,
+            "load_policy": "warm_optional",
+            "roles": [
+                "fast_voice_replies",
+                "low_stakes_routing",
+            ],
+        },
         "qwen-voice": {
             "provider": "openai-compatible",
-            "model": "qwen2.5-7b-instruct",
+            "model": "qwen3.5-9b",
             "temperature": 0.3,
             "max_tokens": 800,
             "load_policy": "warm_optional",
             "roles": [
                 "fast_voice_replies",
                 "low_stakes_routing",
+                "brief_tool_planning",
+            ],
+        },
+        "qwen-voice-fire": {
+            "provider": "openai-compatible",
+            "model": "qwen3.6-35b-a3b",
+            "temperature": 0.2,
+            "max_tokens": 800,
+            "load_policy": "on_demand",
+            "roles": [
+                "fast_voice_replies",
+                "complex_reasoning",
                 "brief_tool_planning",
             ],
         },
@@ -134,6 +161,19 @@ class AssistantConfig:
                 if isinstance(value, dict)
             }
         return {}
+
+    @property
+    def voice_profiles(self) -> dict[str, dict[str, Any]]:
+        """Return only the three product-approved realtime voice profiles."""
+
+        profiles = self.raw.get("voice_profiles")
+        if not isinstance(profiles, dict):
+            return {}
+        return {
+            profile_id: dict(profiles[profile_id])
+            for profile_id in VOICE_PROFILE_ORDER
+            if isinstance(profiles.get(profile_id), dict)
+        }
 
     def enabled_profiles(self) -> list[str]:
         return [

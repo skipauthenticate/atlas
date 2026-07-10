@@ -12,6 +12,8 @@ from .database import Database
 from .merge import merge_transcript_with_diarization
 from .providers.asr import transcribe_audio
 from .providers.diarization import diarize_audio
+from .quality import normalize_quality_tier, settings_for_quality
+from .resources import admit_pipeline_step
 from .storage import FileStorage
 from .summarizer import (
     chunk_transcript,
@@ -19,6 +21,7 @@ from .summarizer import (
     get_template,
     summarize_with_llm,
 )
+from .titles import generate_recording_title
 
 
 PIPELINE_STEPS = ["ingest", "normalize", "transcribe", "diarize", "merge", "summarize"]
@@ -30,13 +33,28 @@ class PipelineProcessor:
         self.db = db
         self.storage = FileStorage(settings, db)
 
-    def enqueue_source(self, source_path: Path | str) -> str:
+    def enqueue_source(
+        self,
+        source_path: Path | str,
+        *,
+        expected_main_speakers: int | None = None,
+        quality_tier: str | None = None,
+    ) -> str:
         self.settings.ensure_directories()
         self.db.initialize()
         existing = self.db.get_recording_by_source_path(source_path)
         if existing and existing["status"] in {"queued", "ingested", "processing", "done"}:
             return existing["id"]
         recording_id = self.db.create_recording(source_path)
+        tier = normalize_quality_tier(
+            quality_tier,
+            default=self.settings.default_quality_tier,
+        )
+        self.db.set_recording_processing_options(
+            recording_id,
+            expected_main_speakers=expected_main_speakers,
+            quality_tier=tier,
+        )
         self.db.enqueue_job(recording_id, "ingest")
         return recording_id
 
@@ -50,6 +68,19 @@ class PipelineProcessor:
     def process_job(self, job: dict[str, Any]) -> None:
         recording_id = job["recording_id"]
         step = job["step"]
+        if not self.settings.stub_mode and step in {"transcribe", "diarize"}:
+            options = self.db.get_recording_processing_options(recording_id)
+            admission = admit_pipeline_step(options["quality_tier"], step)
+            if not admission.allowed:
+                self.db.defer_job(
+                    int(job["id"]),
+                    admission.message,
+                    delay_seconds=45,
+                )
+                self.db.update_recording(
+                    recording_id, status="waiting_resources", error=None
+                )
+                return
         try:
             self.db.update_recording(recording_id, status=f"{step}_running", error=None)
             should_continue = self._run_step(recording_id, step)
@@ -105,13 +136,22 @@ class PipelineProcessor:
             raise ValueError(f"Unknown recording: {recording_id}")
         return dict(recording)
 
+    def _processing_settings(self, recording_id: str) -> tuple[Settings, dict[str, Any]]:
+        options = self.db.get_recording_processing_options(recording_id)
+        return settings_for_quality(self.settings, options["quality_tier"]), options
+
     def _normalize(self, recording_id: str) -> None:
         recording = self._recording(recording_id)
         original_path = recording.get("original_path")
         if not original_path:
             raise RuntimeError("Recording has no original audio path")
         normalized_path = self.storage.normalized_path(recording_id)
-        normalize_audio(Path(original_path), normalized_path)
+        processing_settings, _options = self._processing_settings(recording_id)
+        normalize_audio(
+            Path(original_path),
+            normalized_path,
+            cleanup_mode=processing_settings.audio_cleanup,
+        )
         self.db.update_recording(
             recording_id,
             normalized_path=str(normalized_path),
@@ -124,7 +164,19 @@ class PipelineProcessor:
         normalized_path = recording.get("normalized_path")
         if not normalized_path:
             raise RuntimeError("Recording has no normalized audio path")
-        transcript = transcribe_audio(Path(normalized_path), self.settings)
+        processing_settings, options = self._processing_settings(recording_id)
+        transcript = transcribe_audio(Path(normalized_path), processing_settings)
+        transcript.setdefault(
+            "atlas",
+            {
+                "schema_version": 1,
+                "quality_tier": options["quality_tier"],
+                "provider": processing_settings.asr_provider,
+                "model": processing_settings.asr_model
+                or processing_settings.whisperx_model,
+                "beam_size": processing_settings.asr_beam_size,
+            },
+        )
         self.storage.write_json(recording_id, "transcript.json", transcript)
         self.db.update_recording(recording_id, status="transcribed", error=None)
 
@@ -133,10 +185,16 @@ class PipelineProcessor:
         normalized_path = recording.get("normalized_path")
         if not normalized_path:
             raise RuntimeError("Recording has no normalized audio path")
+        processing_settings, options = self._processing_settings(recording_id)
         transcript = None
-        if self.settings.diarization_provider == "transcript":
+        if processing_settings.diarization_provider == "transcript":
             transcript = self.storage.read_json(recording_id, "transcript.json")
-        diarization = diarize_audio(Path(normalized_path), self.settings, transcript=transcript)
+        diarization = diarize_audio(
+            Path(normalized_path),
+            processing_settings,
+            transcript=transcript,
+            expected_speakers=options["expected_main_speakers"],
+        )
         self.storage.write_json(recording_id, "diarization.json", diarization)
         self.db.update_recording(recording_id, status="diarized", error=None)
 
@@ -152,6 +210,7 @@ class PipelineProcessor:
         started = time.perf_counter()
         provider = "stub" if self.settings.stub_mode else "openai-compatible"
         try:
+            recording = self._recording(recording_id)
             segments = self.db.get_segments(recording_id)
             # Determine template: explicit user preference > auto-detect
             preferred_id = self.db.get_recording_template(recording_id)
@@ -190,6 +249,8 @@ class PipelineProcessor:
                 template_id=tpl_id,
                 chunks=chunks_payload,
             )
+            if recording.get("title_origin") == "filename":
+                self._generate_title(recording_id, text, provider=provider)
             self.db.update_recording(recording_id, status="done", error=None)
         except Exception as exc:
             self.db.log_model_run(
@@ -207,6 +268,37 @@ class PipelineProcessor:
             task="summarize",
             input_ref=f"recording:{recording_id}",
             output_ref=f"summary:{recording_id}",
+            latency_ms=_elapsed_ms(started),
+        )
+
+    def _generate_title(self, recording_id: str, summary: str, *, provider: str) -> None:
+        del provider
+        started = time.perf_counter()
+        try:
+            title = generate_recording_title(summary, self.settings)
+            if title:
+                self.db.update_recording_title(
+                    recording_id,
+                    title,
+                    origin="generated",
+                    expected_origin="filename",
+                )
+        except Exception as exc:  # noqa: BLE001 - title generation is best effort.
+            self.db.log_model_run(
+                provider="local-deterministic",
+                model="summary-headline-v1",
+                task="generate_title",
+                input_ref=f"summary:{recording_id}",
+                latency_ms=_elapsed_ms(started),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return
+        self.db.log_model_run(
+            provider="local-deterministic",
+            model="summary-headline-v1",
+            task="generate_title",
+            input_ref=f"summary:{recording_id}",
+            output_ref=f"recording:{recording_id}",
             latency_ms=_elapsed_ms(started),
         )
 

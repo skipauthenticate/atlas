@@ -2,11 +2,30 @@
 {% block title %}Voice - Atlas Voice{% endblock %}
 {% block body_class %}voice-page{% endblock %}
 {% block head_extra %}
-  <script src="/static/voice.js?v=20260709.4" defer></script>
+  <script src="/static/voice.js?v=20260710.5" defer></script>
 {% endblock %}
 
 {% block content %}
-  <div class="voice-workbench" data-layout="atlas-voice-workbench" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}" data-audio-sample-rate="{{ voice_settings.sample_rate }}">
+  {% set fallback_voice_profiles = [
+    {'id': 'light', 'name': 'Light', 'promise': 'Fastest replies', 'description': 'Uses the smallest realtime language model and the least context.', 'icon': 'feather.svg'},
+    {'id': 'torch', 'name': 'Torch', 'promise': 'Balanced', 'description': 'The recommended balance of conversational quality and response time.', 'icon': 'flame.svg'},
+    {'id': 'fire', 'name': 'Fire', 'promise': 'Strongest reasoning', 'description': 'Uses the strongest configured local model and a larger evidence budget.', 'icon': 'flame-kindling.svg'}
+  ] %}
+  {% set available_voice_profiles = voice_settings.voice_profiles if voice_settings.voice_profiles is defined and voice_settings.voice_profiles else fallback_voice_profiles %}
+  {% set default_voice_profile = voice_settings.default_voice_profile if voice_settings.default_voice_profile is defined else 'torch' %}
+  {% set default_voice_profile_view = namespace(name=default_voice_profile | title, icon='flame.svg') %}
+  {% for profile in available_voice_profiles %}
+    {% if profile.id == default_voice_profile %}
+      {% set default_voice_profile_view.name = profile.name %}
+      {% set default_voice_profile_view.icon = profile.icon %}
+    {% endif %}
+  {% endfor %}
+  {% set initial_voice_model = voice_settings.llm_model if voice_settings.llm_model is defined and '://' not in voice_settings.llm_model else 'Local model' %}
+  {% set default_quality_icon = namespace(value='flame.svg') %}
+  {% for profile in runtime.quality_profiles %}
+    {% if profile.id == runtime.default_quality_tier %}{% set default_quality_icon.value = profile.icon %}{% endif %}
+  {% endfor %}
+  <div class="voice-workbench" data-layout="atlas-voice-workbench" data-voice-console="true" data-active-view="live" data-capture-mode="idle" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}" data-realtime-token="{{ realtime_token }}" data-audio-sample-rate="{{ voice_settings.sample_rate }}">
     <header class="voice-appbar" aria-label="Voice workspace header">
       <div class="voice-page-identity">
         <span class="voice-page-icon" aria-hidden="true"><img src="/static/icons/audio-waveform.svg" alt=""></span>
@@ -18,12 +37,12 @@
 
       <form class="voice-search" action="/search" method="get" role="search">
         <img class="ui-icon" src="/static/icons/search.svg" alt="">
-        <label class="sr-only" for="voice-search-input">Search everything</label>
-        <input id="voice-search-input" name="q" type="search" placeholder="Search everything..." autocomplete="off">
+        <label class="sr-only" for="voice-search-input">Search recordings and notes</label>
+        <input id="voice-search-input" name="q" type="search" placeholder="Search recordings and notes..." autocomplete="off">
       </form>
 
       <div class="voice-app-actions">
-        <span class="local-badge"><img class="ui-icon" src="/static/icons/shield.svg" alt="">Local only</span>
+        <span class="local-badge"><img class="ui-icon" src="/static/icons/shield.svg" alt="">{% if voice_settings.web_search_enabled %}Local AI · web opt-in{% else %}Local only{% endif %}</span>
         <button class="icon-button" type="button" data-settings-open aria-label="Open voice settings" title="Voice settings">
           <img class="ui-icon" src="/static/icons/settings.svg" alt="">
         </button>
@@ -31,18 +50,38 @@
       </div>
     </header>
 
-    <div class="voice-tool-tabs" role="tablist" aria-label="Voice views">
-      <button type="button" role="tab" aria-selected="true" data-voice-view="live">
-        <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">Live call
-      </button>
-      <button type="button" role="tab" aria-selected="false" data-voice-view="transcript">
-        <img class="ui-icon" src="/static/icons/message-square-text.svg" alt="">Transcript
-      </button>
-      <span class="voice-model-chip">{{ voice_settings.tts_model }} / {{ voice_settings.tts_provider }}</span>
+    <div class="voice-tool-tabs">
+      <div class="voice-view-tabs" role="tablist" aria-label="Voice views" aria-orientation="horizontal">
+        <button id="voice-live-tab" type="button" role="tab" aria-selected="true" aria-controls="voice-live-panel" tabindex="0" data-voice-view="live">
+          <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">Live call
+        </button>
+        <button id="voice-transcript-tab" type="button" role="tab" aria-selected="false" aria-controls="voice-conversation" tabindex="-1" data-voice-view="transcript">
+          <img class="ui-icon" src="/static/icons/message-square-text.svg" alt="">Transcript
+        </button>
+      </div>
     </div>
 
+    <section class="voice-profile-bar" aria-labelledby="voice-profile-label" data-voice-profile-control data-default-voice-profile="{{ default_voice_profile }}">
+      <div class="voice-profile-bar-heading">
+        <strong id="voice-profile-label">Voice mode</strong>
+        <output class="voice-profile-status" aria-live="polite" aria-atomic="true" data-voice-profile-status>{{ default_voice_profile_view.name }} selected for next call</output>
+      </div>
+      <div class="voice-profile-segments" role="radiogroup" aria-labelledby="voice-profile-label">
+        {% for profile in available_voice_profiles %}
+          <button class="voice-profile-option" type="button" role="radio" aria-checked="{{ 'true' if profile.id == default_voice_profile else 'false' }}" aria-describedby="voice-profile-{{ profile.id }}-description" tabindex="{{ '0' if profile.id == default_voice_profile else '-1' }}" data-voice-profile="{{ profile.id }}" data-profile-name="{{ profile.name }}" data-profile-icon="{{ profile.icon }}">
+            <img class="mode-icon voice-profile-icon" src="/static/icons/{{ profile.icon }}" alt="">
+            <span class="voice-profile-option-copy">
+              <strong>{{ profile.name }}</strong>
+              <small>{{ profile.promise }}</small>
+            </span>
+          </button>
+          <span id="voice-profile-{{ profile.id }}-description" class="sr-only">{{ profile.description }}</span>
+        {% endfor %}
+      </div>
+    </section>
+
     <div class="voice-session-layout">
-      <main class="voice-main" aria-label="Voice console">
+      <main id="voice-live-panel" class="voice-main" role="tabpanel" aria-labelledby="voice-live-tab" tabindex="0">
         <section class="voice-live-stage" aria-label="Realtime call" data-voice-stage data-voice-state="idle">
           <header class="voice-stage-meta">
             <span class="voice-connection-dot" aria-hidden="true"></span>
@@ -61,7 +100,10 @@
 
           <div class="voice-live-caption" aria-live="polite" aria-atomic="true">
             <span class="caption-pulse" aria-hidden="true"></span>
-            <p data-live-caption>{{ 'Ready when you are' if assistant_enabled else 'Enable the assistant in settings' }}</p>
+            <div class="voice-live-caption-copy">
+              <p data-live-caption>{{ 'Ready when you are' if assistant_enabled else 'Enable the assistant in settings' }}</p>
+              <small id="voice-capture-help" data-capture-help>{% if assistant_enabled %}Pause stops the microphone but keeps typing available. Private discards capture and blocks all input.{% else %}Turn on the assistant in Settings to start a local call.{% endif %}</small>
+            </div>
           </div>
         </section>
 
@@ -70,6 +112,22 @@
           <button class="composer-icon" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
             <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
           </button>
+          <div class="chat-source-menu voice-source-menu" data-chat-source-menu>
+            <input type="hidden" name="source_context" value="" data-chat-source>
+            <button class="chat-source-trigger" type="button" aria-label="Select source: Auto" aria-haspopup="listbox" aria-expanded="false" aria-controls="voice-source-list" data-chat-source-trigger>
+              <img class="ui-icon source-trigger-icon" src="/static/icons/library.svg" alt="">
+              <span data-chat-source-label>Auto</span>
+              <img class="ui-icon source-trigger-chevron" src="/static/icons/chevron-down.svg" alt="">
+            </button>
+            <div id="voice-source-list" class="chat-source-popover" role="listbox" aria-label="Retrieval source" data-chat-source-list hidden>
+              <button class="chat-source-option" type="button" role="option" aria-selected="true" tabindex="-1" data-source-value="" data-source-label="Auto"><img class="ui-icon" src="/static/icons/library.svg" alt=""><span>Auto</span><span class="chat-source-selected" aria-hidden="true"></span></button>
+              <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="all" data-source-label="Local + web"><img class="ui-icon" src="/static/icons/search.svg" alt=""><span>Local + web</span><span class="chat-source-selected" aria-hidden="true"></span></button>
+              <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="recordings" data-source-label="Recording library"><img class="ui-icon" src="/static/icons/audio-lines.svg" alt=""><span>Recording library</span><span class="chat-source-selected" aria-hidden="true"></span></button>
+              <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="uploads" data-source-label="Uploaded files"><img class="ui-icon" src="/static/icons/paperclip.svg" alt=""><span>Uploaded files</span><span class="chat-source-selected" aria-hidden="true"></span></button>
+              <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="voice" data-source-label="Past voice chats"><img class="ui-icon" src="/static/icons/mic.svg" alt=""><span>Past voice chats</span><span class="chat-source-selected" aria-hidden="true"></span></button>
+              <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="web" data-source-label="Search web"><img class="ui-icon" src="/static/icons/search.svg" alt=""><span>Search web</span><span class="chat-source-selected" aria-hidden="true"></span></button>
+            </div>
+          </div>
           <label class="sr-only" for="voice-prompt-input">Message Atlas</label>
           <input id="voice-prompt-input" class="chat-text-input" type="text" name="prompt" value="{{ initial_prompt }}" placeholder="Message Atlas..." autocomplete="off" {% if not assistant_enabled %}disabled{% endif %}>
           <button class="composer-icon composer-mic" type="button" data-chat-voice-toggle aria-label="Toggle microphone" title="Toggle microphone" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>
@@ -80,11 +138,32 @@
           </button>
           <span class="chat-attachment-tray" data-chat-attachments hidden></span>
           <span class="chat-upload-status" data-chat-upload-status aria-live="polite"></span>
+          <div class="chat-upload-options" data-upload-options hidden>
+            <label>
+              <span>Main speakers</span>
+              <select name="expected_main_speakers">
+                <option value="">Not sure</option>
+                {% for count in range(1, 9) %}<option value="{{ count }}">{{ count }}</option>{% endfor %}
+              </select>
+            </label>
+            <label class="mode-select-field">
+              <span>Processing</span>
+              <span class="mode-select-control">
+                <img class="mode-icon" src="/static/icons/{{ default_quality_icon.value }}" alt="" data-mode-select-icon>
+                <select name="quality_tier" data-mode-select>
+                  {% for profile in runtime.quality_profiles %}
+                    <option value="{{ profile.id }}" data-icon="{{ profile.icon }}" {% if runtime.default_quality_tier == profile.id %}selected{% endif %}>{{ profile.name }} - {{ profile.promise }}</option>
+                  {% endfor %}
+                </select>
+              </span>
+            </label>
+            <small>Applies to every attached recording. Extra voices are still kept separate.</small>
+          </div>
         </form>
       </main>
 
       {% set latest = sessions[0] if sessions else none %}
-      <aside id="voice-conversation" class="voice-transcript-panel" aria-label="Conversation transcript" data-transcript-stream>
+      <aside id="voice-conversation" class="voice-transcript-panel" role="tabpanel" aria-labelledby="voice-transcript-tab" tabindex="0" data-transcript-stream hidden>
         <header>
           <div>
             <span class="transcript-eyebrow">{{ latest.title if latest and latest.title else 'Current call' }}</span>
@@ -117,7 +196,7 @@
     </div>
 
     <footer class="voice-transport" aria-label="Call controls" data-voice-transport>
-      <div class="voice-transport-status">
+      <div class="voice-transport-status" aria-live="polite" aria-atomic="true">
         <span class="transport-state-dot" aria-hidden="true"></span>
         <span data-playback-status>Call idle</span>
         <time data-voice-timer>00:00</time>
@@ -133,10 +212,10 @@
         <button class="transport-icon" type="button" data-transport-action="mic" aria-label="Mute microphone" title="Mute microphone" aria-pressed="false" disabled>
           <img class="ui-icon icon-on" src="/static/icons/mic.svg" alt=""><img class="ui-icon icon-off" src="/static/icons/mic-off.svg" alt="">
         </button>
-        <button class="transport-icon" type="button" data-transport-action="pause" aria-label="Pause call" title="Pause call" aria-pressed="false" disabled>
+        <button class="transport-icon" type="button" data-transport-action="pause" aria-label="Pause microphone" aria-describedby="voice-capture-help" title="Pause microphone" aria-pressed="false" disabled>
           <img class="ui-icon" src="/static/icons/pause.svg" alt="">
         </button>
-        <button class="transport-icon" type="button" data-transport-action="private" aria-label="Private mode" title="Private mode" aria-pressed="false" disabled>
+        <button class="transport-icon" type="button" data-transport-action="private" aria-label="Go private" aria-describedby="voice-capture-help" title="Go private" aria-pressed="false" disabled>
           <img class="ui-icon" src="/static/icons/lock-keyhole.svg" alt="">
         </button>
         <button class="transport-icon" type="button" data-transport-action="interrupt" aria-label="Interrupt response" title="Interrupt response" aria-pressed="false" disabled>
@@ -159,6 +238,17 @@
 {% endblock %}
 
 {% block settings_dialog_extra %}
+  {% set settings_default_voice_profile = voice_settings.default_voice_profile if voice_settings.default_voice_profile is defined else 'torch' %}
+  {% set settings_voice_profile_view = namespace(name=settings_default_voice_profile | title, icon='flame.svg') %}
+  {% if voice_settings.voice_profiles is defined %}
+    {% for profile in voice_settings.voice_profiles %}
+      {% if profile.id == settings_default_voice_profile %}
+        {% set settings_voice_profile_view.name = profile.name %}
+        {% set settings_voice_profile_view.icon = profile.icon %}
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+  {% set settings_voice_model = voice_settings.llm_model if voice_settings.llm_model is defined and '://' not in voice_settings.llm_model else 'Local model' %}
   <section class="dialog-section" id="voice-settings">
     <h3>Voice Settings</h3>
     <div class="voice-setting-list compact-list">
@@ -166,6 +256,14 @@
         <span>Realtime</span>
         <strong>{{ 'Ready' if assistant_enabled else 'Disabled' }}</strong>
         <small>{{ voice_settings.realtime_host }}{{ voice_settings.websocket_path }}</small>
+      </div>
+      <div data-voice-profile-diagnostics>
+        <span>Voice mode</span>
+        <strong class="voice-setting-mode">
+          <img class="mode-icon" src="/static/icons/{{ settings_voice_profile_view.icon }}" alt="" data-effective-voice-profile-icon>
+          <span data-effective-voice-profile>{{ settings_voice_profile_view.name }}</span>
+        </strong>
+        <small data-effective-voice-model>{{ settings_voice_model }}</small>
       </div>
       <div>
         <span>Ambient</span>
@@ -181,6 +279,11 @@
         <span>TTS</span>
         <strong>{{ voice_settings.tts_model }}</strong>
         <small>{{ voice_settings.tts_provider }}{% if voice_settings.tts_base_url %}, {{ voice_settings.tts_base_url }}{% endif %}</small>
+      </div>
+      <div>
+        <span>Web Search</span>
+        <strong>{{ 'Opt-in enabled' if voice_settings.web_search_enabled else 'Disabled' }}</strong>
+        <small>{% if voice_settings.web_search_enabled %}{{ voice_settings.web_search_provider }}; queries leave this device{% else %}No query egress{% endif %}</small>
       </div>
     </div>
   </section>

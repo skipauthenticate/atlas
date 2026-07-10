@@ -49,6 +49,7 @@ atlas-voice retry <recording_id>
 atlas-voice export <recording_id> --format json
 atlas-voice export <recording_id> --format md
 atlas-voice export <recording_id> --format txt
+atlas-voice benchmark-quality /path/to/audio.wav --reference /path/to/reference.txt --expected-speakers 2 --json
 atlas-voice sync-anythingllm <recording_id>
 atlas-voice ambient --source /path/to/audio.wav --mode meeting --once
 atlas-voice ambient --source mic --mode ambient
@@ -63,15 +64,24 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
 
 ## HTTP
 
-- `GET /`: local chat workspace and recent recordings.
-- `POST /upload`: upload audio.
-- `GET /recordings/{id}`: detail view with audio, transcript, speakers, jobs,
-  summary, and exports.
+- `GET /`: local chat workspace. Add `?recording=<id>` to restrict chat to one
+  recording and open its summary panel.
+- `POST /upload`: upload audio with optional `expected_main_speakers` and `quality_tier` (`light`, `torch`, or `fire`).
+- `GET /recordings`: dedicated recording library with folders and status filters.
+- `GET /recordings/{id}`: document-style notes, audio, on-demand speaker
+  transcript, processing details, and exports.
+- `POST /recording-folders`: create a recording folder.
+- `POST /recordings/{id}/folder`: move a recording or return it to Unfiled.
+- `POST /recordings/{id}/title`: save a manual recording title.
+- `POST /recordings/{id}/speakers`: assign friendly names and queue a notes-only refresh.
+- `POST /recordings/{id}/template`: preview or explicitly confirm a note-style change.
 - `POST /recordings/{id}/retry`: retry failed processing.
 - `POST /recordings/{id}/sync-anythingllm`: sync the transcript and summary
   into an AnythingLLM workspace.
 - `GET /search?q=...`: full-text transcript and summary search.
 - `GET /api/recordings/{id}`: structured JSON export.
+- `GET /api/recordings/{id}/transcript`: sanitized transcript rows for the
+  on-demand reader and chat side panel.
 - `GET /voice`: realtime Voice Studio.
 - `GET /api/status`: local system, model, service, listener, and privacy status.
 - `GET /api/assistant/health`: focused assistant readiness and component health.
@@ -81,6 +91,21 @@ python -m atlas_voice.cli ingest /path/to/audio.wav
 - `POST /api/voice/playground/stt`: local STT playground upload and latency logging.
 - `POST /api/voice/playground/model`: local model response playground and latency logging.
 - `WebSocket /v1/realtime`: OpenAI-style local realtime session events.
+
+Completed recordings receive a short locally generated title unless a manual
+title already exists. Summary generation includes ten concise built-in formats:
+Smart Notes, Team Meeting, 1:1, Project Review / Retro, Sales / Client Call,
+Interview, Lecture / Study, Brainstorm / Voice Memo, Personal Reflection, and
+Medical SOAP for documentation only. Multi-chunk notes are consolidated into one
+bounded document instead of repeating a full template for every chunk.
+
+New recordings can include the planned number of main speakers as a soft hint. Atlas keeps room for unexpected voices, shows every detected voice, and lets people be named afterward; saved names flow into transcript views, search, exports, and refreshed notes. Processing is always presented as Light, Torch, or Fire. That order is an accuracy contract: Light is the lowest accuracy level, Torch is the stronger everyday level, and Fire is the most accurate level even when it takes longer. Provider and model names remain under Advanced model details.
+
+Focused recording chat sends a separate validated `recording_id` through the
+realtime protocol. It disables web retrieval, searches only that recording, and
+clears prior conversational context whenever the recording changes. The full
+transcript remains available in the side panel, but loads only when opened so a
+long recording does not slow down initial chat rendering.
 
 ## Assistant Foundation
 
@@ -127,6 +152,18 @@ Atlas stores synthesized audio under `data/artifacts/realtime/` and logs LLM
 and TTS latency in `model_runs`. Piper remains available with
 `ATLAS_VOICE_TTS_PROVIDER=piper` and
 `ATLAS_VOICE_PIPER_VOICE=/path/to/voice.onnx`.
+
+Voice turns support deterministic retrieval from recordings, uploads, indexed
+past voice chats, and the web. Auto mode searches private history only for
+history-related questions and searches the web only for explicit or clearly
+time-sensitive requests. Web results come from a configured SearXNG or Brave
+endpoint; query text leaves the device even when Atlas talks to SearXNG on
+localhost. Configure `ATLAS_VOICE_WEB_SEARCH_*` settings from `.env.example`, or
+use the `direct_voice` profile. Retrieval progress and web source links are
+emitted over the realtime socket and shown in Voice Studio.
+
+See `docs/VOICE_RETRIEVAL_RESEARCH.md` for measured Jetson latency, the txtai and
+PageIndex evaluation, the semantic-search roadmap, and memory/validation gates.
 
 Phase 2 adds `atlas-voice ambient`. It can process a file once, watch a directory,
 or capture local mic chunks through `ffmpeg`/ALSA. The listener normalizes audio

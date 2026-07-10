@@ -4,42 +4,73 @@
   <section class="search-results-page" data-search-results>
     <header class="search-results-header">
       <div>
-        <span class="search-results-eyebrow">Transcript search</span>
-        <h1>{% if query %}Results for "{{ query }}"{% else %}Search recordings{% endif %}</h1>
+        <h1>Find anything you heard</h1>
+        <p>Search recording titles, people, transcripts, and notes in one place.</p>
       </div>
-      <span class="search-results-count">{{ results | length }} result{{ '' if results | length == 1 else 's' }}</span>
+      {% if query %}
+        <span class="search-results-count">{{ result_count }} match{{ '' if result_count == 1 else 'es' }} in {{ result_groups | length }} recording{{ '' if result_groups | length == 1 else 's' }}</span>
+      {% endif %}
     </header>
 
-    {% if query and results %}
-      <div class="search-result-list">
-        {% for result in results %}
-          <a class="search-result-row" href="/recordings/{{ result.recording_id }}">
-            <span class="search-result-copy">
-              <span class="search-result-meta">
-                <span>{{ result.kind }}</span>
-                {% if result.speaker %}<span>{{ result.speaker }}</span>{% endif %}
-              </span>
-              <strong>{{ result.title }}</strong>
-              <span class="snippet">{{ result.snippet }}</span>
-            </span>
-            <span class="search-result-side">
-              <span class="status status-{{ result.status }}">{{ result.status }}</span>
-              <img class="ui-icon" src="/static/icons/chevron-down.svg" alt="">
-            </span>
-          </a>
+    <form class="search-main-form" action="/search" method="get" role="search">
+      <img class="ui-icon" src="/static/icons/search.svg" alt="">
+      <label class="sr-only" for="search-page-query">Search recordings and notes</label>
+      <input id="search-page-query" name="q" type="search" value="{{ query }}" placeholder="Try a person, decision, project, or phrase" autocomplete="off" autofocus>
+      {% if scope != 'all' %}<input type="hidden" name="scope" value="{{ scope }}">{% endif %}
+      <button type="submit">Search</button>
+    </form>
+
+    <nav class="search-scope" aria-label="Search in">
+      {% set scopes = [('all', 'Everything'), ('summary', 'Notes'), ('transcript', 'Transcript'), ('speaker', 'People')] %}
+      {% for scope_id, scope_label in scopes %}
+        <a class="{% if scope == scope_id %}active{% endif %}" href="/search?{% if query %}q={{ query | urlencode }}&amp;{% endif %}scope={{ scope_id }}" {% if scope == scope_id %}aria-current="page"{% endif %}>{{ scope_label }}</a>
+      {% endfor %}
+    </nav>
+
+    {% if query and result_groups %}
+      <div class="search-group-list">
+        {% for group in result_groups %}
+          <article class="search-group">
+            <header>
+              <a href="/recordings/{{ group.recording_id }}">
+                <span>
+                  <strong>{{ group.title }}</strong>
+                  <small>{{ group.created_at_display }}</small>
+                </span>
+                <span class="status status-{{ group.status }}">{{ group.status }}</span>
+                <img class="ui-icon" src="/static/icons/chevron-down.svg" alt="">
+              </a>
+            </header>
+            <div class="search-group-matches">
+              {% for match in group.matches %}
+                <a href="/recordings/{{ group.recording_id }}" class="search-match">
+                  <span class="search-match-source">
+                    <strong>{{ match.kind_label }}</strong>
+                    {% if match.speaker %}<small>{{ match.speaker }}</small>{% endif %}
+                  </span>
+                  <span class="search-match-snippet">
+                    {% for part in match.snippet_parts %}{% if part.highlight %}<mark>{{ part.text }}</mark>{% else %}{{ part.text }}{% endif %}{% endfor %}
+                  </span>
+                </a>
+              {% endfor %}
+            </div>
+            {% if group.match_count > group.matches | length %}
+              <footer>{{ group.match_count - group.matches | length }} more match{{ '' if group.match_count - group.matches | length == 1 else 'es' }} in this recording</footer>
+            {% endif %}
+          </article>
         {% endfor %}
       </div>
     {% elif query %}
       <div class="search-empty">
         <img class="ui-icon" src="/static/icons/search.svg" alt="">
-        <h2>No matches</h2>
-        <p>Try a broader transcript phrase.</p>
+        <h2>No matches yet</h2>
+        <p>Try fewer words, a person's name, or switch to Everything.</p>
       </div>
     {% else %}
-      <div class="search-empty">
+      <div class="search-empty search-start">
         <img class="ui-icon" src="/static/icons/search.svg" alt="">
-        <h2>Search transcripts</h2>
-        <p>Use the search bar above to find recordings, speakers, and notes.</p>
+        <h2>Start with what you remember</h2>
+        <p>You do not need an exact title. A name, topic, decision, or sentence is enough.</p>
       </div>
     {% endif %}
   </section>

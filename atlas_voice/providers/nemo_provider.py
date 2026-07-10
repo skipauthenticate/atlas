@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 from typing import Any
 
 from atlas_voice.config import Settings
@@ -8,6 +9,9 @@ from atlas_voice.providers.transcript_utils import transcript_from_timestamped_o
 
 PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 CANARY_MODEL = "nvidia/canary-1b-v2"
+_model_cache_lock = threading.Lock()
+_model_cache: dict[tuple[object, ...], Any] = {}
+_model_inference_locks: dict[tuple[object, ...], threading.Lock] = {}
 
 
 def transcribe_parakeet(audio_path: Path, settings: Settings) -> dict[str, Any]:
@@ -63,13 +67,11 @@ def _transcribe_nemo(
             "scripts/install-experimental-asr.sh nemo, then retry."
         ) from exc
 
-    model = ASRModel.from_pretrained(model_name=model_name)
-    if settings.whisperx_device != "cpu":
-        try:
-            model = model.to(settings.whisperx_device)
-        except Exception:
-            pass
-    _disable_cuda_graphs(model)
+    model, inference_lock = _warm_nemo_model(
+        ASRModel,
+        model_name=model_name,
+        device=settings.whisperx_device,
+    )
 
     kwargs: dict[str, Any] = {"timestamps": timestamps}
     if source_lang is not None:
@@ -77,15 +79,46 @@ def _transcribe_nemo(
     if target_lang is not None:
         kwargs["target_lang"] = target_lang
 
-    try:
-        outputs = model.transcribe([str(audio_path)], **kwargs)
-    except TypeError:
-        kwargs.pop("timestamps", None)
-        outputs = model.transcribe([str(audio_path)], **kwargs)
+    with inference_lock:
+        try:
+            outputs = model.transcribe([str(audio_path)], **kwargs)
+        except TypeError:
+            kwargs.pop("timestamps", None)
+            outputs = model.transcribe([str(audio_path)], **kwargs)
 
     if not outputs:
         raise RuntimeError(f"{model_name} returned no transcription output")
     return outputs[0]
+
+
+def _warm_nemo_model(
+    model_class: Any,
+    *,
+    model_name: str,
+    device: str,
+) -> tuple[Any, threading.Lock]:
+    key: tuple[object, ...] = (model_class, model_name, device)
+    with _model_cache_lock:
+        model = _model_cache.get(key)
+        if model is None:
+            model = model_class.from_pretrained(model_name=model_name)
+            if device != "cpu":
+                try:
+                    model = model.to(device)
+                except Exception:
+                    pass
+            _disable_cuda_graphs(model)
+            _model_cache[key] = model
+            _model_inference_locks[key] = threading.Lock()
+        return model, _model_inference_locks[key]
+
+
+def _clear_model_cache() -> None:
+    """Clear warmed NeMo models for tests and controlled runtime reloads."""
+
+    with _model_cache_lock:
+        _model_cache.clear()
+        _model_inference_locks.clear()
 
 
 def _disable_cuda_graphs(model: Any) -> None:

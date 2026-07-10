@@ -2,9 +2,11 @@
   const DEFAULT_SAMPLE_RATE = 24000;
   const CAPTURE_FRAME_SIZE = 4096;
 
-  function websocketUrl(path) {
+  function websocketUrl(path, token) {
     const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${scheme}//${window.location.host}${path}`;
+    const url = new URL(`${scheme}//${window.location.host}${path}`);
+    if (token) url.searchParams.set('token', token);
+    return url.toString();
   }
 
   function bytesToBase64(bytes) {
@@ -74,26 +76,28 @@
     return body;
   }
 
-  function insertRecordingRow(payload) {
-    const list = document.querySelector('[data-dashboard-recording-list]');
-    if (!list || !payload?.recording_id) return;
-    document.querySelector('[data-recordings-empty]')?.remove();
-    list.hidden = false;
-
-    const row = document.createElement('a');
-    row.className = 'recording-row';
-    row.href = payload.url || `/recordings/${payload.recording_id}`;
-    const copy = document.createElement('span');
-    const title = document.createElement('strong');
-    title.textContent = payload.title || 'Uploaded recording';
-    const created = document.createElement('small');
-    created.textContent = payload.created_at_display || 'just now';
-    copy.append(title, created);
-    const status = document.createElement('span');
-    status.className = `status status-${payload.status || 'queued'}`;
-    status.textContent = payload.status || 'queued';
-    row.append(copy, status);
-    list.prepend(row);
+  function appendSources(messageBody, sources) {
+    if (!messageBody?.parentElement || !Array.isArray(sources) || !sources.length) return;
+    messageBody.parentElement.querySelector('.voice-message-sources')?.remove();
+    const list = document.createElement('div');
+    list.className = 'voice-message-sources';
+    list.setAttribute('aria-label', 'Web sources');
+    sources.slice(0, 4).forEach((source) => {
+      try {
+        const url = new URL(source?.url || '');
+        if (!['http:', 'https:'].includes(url.protocol)) return;
+        const link = document.createElement('a');
+        link.href = url.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = source?.title || url.hostname;
+        link.title = `${source?.title || url.hostname}, ${url.hostname}`;
+        list.append(link);
+      } catch (_error) {
+        // Ignore malformed provider URLs.
+      }
+    });
+    if (list.childElementCount) messageBody.parentElement.append(list);
   }
 
   class VoiceBubble {
@@ -247,6 +251,7 @@
 
     const enabled = root.dataset.assistantEnabled === 'true';
     const socketPath = root.dataset.websocketPath || '/v1/realtime';
+    const realtimeToken = root.dataset.realtimeToken || '';
     const targetSampleRate = Number(root.dataset.audioSampleRate) || DEFAULT_SAMPLE_RATE;
     const form = root.querySelector('[data-voice-prompt]');
     const input = root.querySelector('#voice-prompt-input');
@@ -258,6 +263,7 @@
     const callState = root.querySelector('[data-call-state]');
     const bubbleKicker = root.querySelector('[data-bubble-kicker]');
     const liveCaption = root.querySelector('[data-live-caption]');
+    const captureHelp = root.querySelector('[data-capture-help]');
     const chatVoiceToggle = root.querySelector('[data-chat-voice-toggle]');
     const audio = root.querySelector('[data-response-audio]');
     const playbackStatus = root.querySelector('[data-playback-status]');
@@ -269,9 +275,13 @@
     const attachButton = form.querySelector('[data-chat-attach]');
     const attachmentTray = form.querySelector('[data-chat-attachments]');
     const uploadStatus = form.querySelector('[data-chat-upload-status]');
+    const uploadOptions = form.querySelector('[data-upload-options]');
+    const expectedSpeakers = form.querySelector('[name="expected_main_speakers"]');
+    const qualityTier = form.querySelector('[name="quality_tier"]');
     const uploadEndpoint = form.dataset.uploadEndpoint || '/upload';
     const sourceMenu = form.querySelector('[data-chat-source-menu]');
     const sourceInput = form.querySelector('[data-chat-source]');
+    const recordingInput = form.querySelector('[data-chat-recording-id]');
     const sourceTrigger = form.querySelector('[data-chat-source-trigger]');
     const sourceList = form.querySelector('[data-chat-source-list]');
     const sourceLabel = form.querySelector('[data-chat-source-label]');
@@ -288,8 +298,9 @@
     let callActive = false;
     let callEnding = false;
     let micEnabled = false;
-    let paused = false;
-    let privateMode = false;
+    let captureMode = 'open';
+    let resumeMicrophoneAfterCaptureMode = false;
+    let captureTransitioning = false;
     let micSpeechPending = false;
     let micStream = null;
     let captureContext = null;
@@ -301,6 +312,183 @@
     let handleSocketClosed = () => {};
     let refreshPromptAvailability = () => {};
 
+    const voiceProfileControl = root.querySelector('[data-voice-profile-control]');
+    const voiceProfileOptions = Array.from(
+      voiceProfileControl?.querySelectorAll('[data-voice-profile]') || [],
+    );
+    const voiceProfileStatus = voiceProfileControl?.querySelector(
+      '[data-voice-profile-status]',
+    );
+    const effectiveVoiceProfileName = document.querySelector(
+      '[data-effective-voice-profile]',
+    );
+    const effectiveVoiceProfileIcon = document.querySelector(
+      '[data-effective-voice-profile-icon]',
+    );
+    const effectiveVoiceModelName = document.querySelector(
+      '[data-effective-voice-model]',
+    );
+    const voiceProfileStorageKey = 'atlas.voice.profile';
+    const voiceProfileMetadata = new Map(
+      voiceProfileOptions.map((option) => [
+        option.dataset.voiceProfile || '',
+        {
+          name: option.dataset.profileName || option.textContent.trim(),
+          icon: safeModeIconFilename(option.dataset.profileIcon),
+        },
+      ]),
+    );
+    const allowedVoiceProfiles = new Map(
+      Array.from(voiceProfileMetadata, ([profileId, metadata]) => [profileId, metadata.name]),
+    );
+    const configuredDefaultVoiceProfile = voiceProfileControl?.dataset.defaultVoiceProfile || '';
+    const defaultVoiceProfile = allowedVoiceProfiles.has(configuredDefaultVoiceProfile)
+      ? configuredDefaultVoiceProfile
+      : (voiceProfileOptions[0]?.dataset.voiceProfile || '');
+
+    function safeVoiceModelLabel(value) {
+      const label = String(value || '').trim();
+      if (!label || /^[a-z][a-z\d+.-]*:\/\//i.test(label)) return 'Local model';
+      const basename = label.split(/[\\/]/).filter(Boolean).pop();
+      if (!basename || basename === '.' || basename === '..') return 'Local model';
+      return basename.slice(0, 120);
+    }
+
+    function safeModeIconFilename(value) {
+      const filename = String(value || '').trim().toLowerCase();
+      return /^[a-z0-9-]+\.svg$/.test(filename) ? filename : 'flame.svg';
+    }
+
+    function updateModeSelectIcon(select) {
+      const icon = select.closest('.mode-select-field')?.querySelector('[data-mode-select-icon]');
+      const selected = select.selectedOptions?.[0];
+      if (!icon || !selected) return;
+      icon.src = '/static/icons/' + safeModeIconFilename(selected.dataset.icon);
+    }
+
+    function readPreferredVoiceProfile() {
+      if (!voiceProfileControl) return null;
+      try {
+        const stored = window.localStorage.getItem(voiceProfileStorageKey);
+        if (allowedVoiceProfiles.has(stored)) return stored;
+        if (stored) window.localStorage.removeItem(voiceProfileStorageKey);
+      } catch (_error) {
+        // Storage can be unavailable in hardened or private browser contexts.
+      }
+      return null;
+    }
+
+    function persistPreferredVoiceProfile(profileId) {
+      if (!allowedVoiceProfiles.has(profileId)) return;
+      try {
+        window.localStorage.setItem(voiceProfileStorageKey, profileId);
+      } catch (_error) {
+        // The session-local selection still works when persistence is unavailable.
+      }
+    }
+
+    let preferredVoiceProfile = readPreferredVoiceProfile() || defaultVoiceProfile;
+    let effectiveVoiceProfile = defaultVoiceProfile;
+    let effectiveVoiceModel = safeVoiceModelLabel(effectiveVoiceModelName?.textContent);
+    let pendingVoiceProfile = null;
+
+    function renderVoiceProfileState() {
+      if (!voiceProfileControl) return;
+      const waiting = Boolean(pendingVoiceProfile && pendingVoiceProfile !== effectiveVoiceProfile);
+      voiceProfileOptions.forEach((option) => {
+        const selected = option.dataset.voiceProfile === preferredVoiceProfile;
+        option.setAttribute('aria-checked', selected ? 'true' : 'false');
+        option.tabIndex = selected ? 0 : -1;
+        option.disabled = waiting;
+      });
+      voiceProfileControl.dataset.preferredVoiceProfile = preferredVoiceProfile;
+      voiceProfileControl.dataset.effectiveVoiceProfile = effectiveVoiceProfile;
+      voiceProfileControl.classList.toggle('is-pending', waiting);
+      if (waiting) voiceProfileControl.setAttribute('aria-busy', 'true');
+      else voiceProfileControl.removeAttribute('aria-busy');
+
+      const preferredMetadata = voiceProfileMetadata.get(preferredVoiceProfile) || {
+        name: 'Voice',
+        icon: 'flame.svg',
+      };
+      const effectiveMetadata = voiceProfileMetadata.get(effectiveVoiceProfile) || {
+        name: 'Voice',
+        icon: 'flame.svg',
+      };
+      if (voiceProfileStatus) {
+        if (waiting) voiceProfileStatus.textContent = 'Switching to ' + preferredMetadata.name;
+        else if (callActive) voiceProfileStatus.textContent = effectiveMetadata.name + ' active';
+        else voiceProfileStatus.textContent = preferredMetadata.name + ' selected for next call';
+      }
+      const diagnosticMetadata = callActive ? effectiveMetadata : preferredMetadata;
+      if (effectiveVoiceProfileName) effectiveVoiceProfileName.textContent = diagnosticMetadata.name;
+      if (effectiveVoiceProfileIcon) {
+        effectiveVoiceProfileIcon.src = '/static/icons/' + diagnosticMetadata.icon;
+      }
+      if (effectiveVoiceModelName) effectiveVoiceModelName.textContent = effectiveVoiceModel;
+    }
+
+    function requestVoiceProfile(profileId, { persist = true, force = false } = {}) {
+      if (!allowedVoiceProfiles.has(profileId)) return false;
+      if (pendingVoiceProfile && pendingVoiceProfile !== effectiveVoiceProfile) return false;
+      preferredVoiceProfile = profileId;
+      if (persist) persistPreferredVoiceProfile(profileId);
+      if (callActive && (force || profileId !== effectiveVoiceProfile)) {
+        pendingVoiceProfile = profileId;
+        sendRealtimeEvent({
+          type: 'session.update',
+          voice_profile: profileId,
+        });
+      }
+      renderVoiceProfileState();
+      return true;
+    }
+
+    function applySessionVoiceProfile(session, { confirmPreference = false } = {}) {
+      if (!voiceProfileControl || !session || typeof session !== 'object') return;
+      const profileId = String(session.voice_profile || '').trim().toLowerCase();
+      if (allowedVoiceProfiles.has(profileId)) {
+        effectiveVoiceProfile = profileId;
+        if (confirmPreference) {
+          preferredVoiceProfile = profileId;
+          persistPreferredVoiceProfile(profileId);
+        }
+        if (confirmPreference || pendingVoiceProfile === profileId) pendingVoiceProfile = null;
+      }
+      const model = safeVoiceModelLabel(session.model || session.llm_model);
+      if (model !== 'Local model' || !effectiveVoiceModel) effectiveVoiceModel = model;
+      renderVoiceProfileState();
+    }
+
+    voiceProfileOptions.forEach((option, index) => {
+      option.addEventListener('click', () => {
+        requestVoiceProfile(option.dataset.voiceProfile || '');
+      });
+      option.addEventListener('keydown', (event) => {
+        let nextIndex = null;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+          nextIndex = (index + 1) % voiceProfileOptions.length;
+        } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+          nextIndex = (index - 1 + voiceProfileOptions.length) % voiceProfileOptions.length;
+        } else if (event.key === 'Home') {
+          nextIndex = 0;
+        } else if (event.key === 'End') {
+          nextIndex = voiceProfileOptions.length - 1;
+        }
+        if (nextIndex === null) return;
+        event.preventDefault();
+        const nextOption = voiceProfileOptions[nextIndex];
+        nextOption.focus();
+        requestVoiceProfile(nextOption.dataset.voiceProfile || '');
+      });
+    });
+
+    root.querySelectorAll('[data-mode-select]').forEach((select) => {
+      updateModeSelectIcon(select);
+      select.addEventListener('change', () => updateModeSelectIcon(select));
+    });
+    if (preferredVoiceProfile) persistPreferredVoiceProfile(preferredVoiceProfile);
+    renderVoiceProfileState();
     const resizePromptInput = () => {
       if (!(input instanceof HTMLTextAreaElement)) return;
       input.style.height = 'auto';
@@ -353,7 +541,9 @@
       if (!option || !sourceInput || !sourceTrigger || !sourceLabel) return;
       const value = option.dataset.sourceValue || '';
       const label = option.dataset.sourceLabel || option.textContent.trim();
+      const recordingId = option.dataset.recordingId || '';
       sourceInput.value = value;
+      if (recordingInput) recordingInput.value = recordingId;
       sourceLabel.textContent = label;
       sourceTrigger.setAttribute('aria-label', `Select source: ${label}`);
       const optionIcon = option.querySelector('.ui-icon');
@@ -362,7 +552,25 @@
         item.setAttribute('aria-selected', item === option ? 'true' : 'false');
       });
       sourceInput.dispatchEvent(new Event('change', { bubbles: true }));
-      sendRealtimeEvent({ type: 'session.update', source_context: value });
+      recordingInput?.dispatchEvent(new Event('change', { bubbles: true }));
+      sendRealtimeEvent({
+        type: 'session.update',
+        source_context: value,
+        recording_id: recordingId || null,
+      });
+      const contextPanel = root.querySelector('[data-recording-context-panel]');
+      document.body.classList.toggle('chat-recording-focus', Boolean(recordingId));
+      if (recordingId) {
+        root.classList.add('has-recording-context');
+        if (contextPanel) contextPanel.hidden = false;
+        window.history.replaceState({}, '', `/?recording=${encodeURIComponent(recordingId)}`);
+      } else {
+        root.classList.remove('has-recording-context');
+        if (contextPanel) contextPanel.hidden = true;
+        if (window.location.search.includes('recording=')) {
+          window.history.replaceState({}, '', '/');
+        }
+      }
       setSourceMenuOpen(false);
       sourceTrigger.focus();
     };
@@ -457,6 +665,37 @@
       if (playbackStatus) playbackStatus.textContent = state;
     }
 
+    function setCaptureHelp(message) {
+      if (captureHelp) captureHelp.textContent = message;
+    }
+
+    function restoreCapturePresentation() {
+      root.dataset.captureMode = callActive ? captureMode : 'idle';
+      if (!callActive) return;
+      if (captureMode === 'paused') {
+        setConnection('paused');
+        setPlaybackStatus('Mic paused; typing available');
+        setVoiceState('paused', 'Microphone paused. You can keep typing.');
+        setCaptureHelp('Microphone paused. Type a message, or resume to turn the microphone back on.');
+        return;
+      }
+      if (captureMode === 'private') {
+        setConnection('private');
+        setPlaybackStatus('Private; all input blocked');
+        setVoiceState('private', 'Private is on. New input is blocked.');
+        setCaptureHelp('Private is on. The current mic buffer was discarded and no new input can be sent.');
+        return;
+      }
+      setConnection(micEnabled ? 'listening' : 'online');
+      setPlaybackStatus(micEnabled ? 'Listening' : 'Microphone muted');
+      setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Ready when you are' : 'Microphone is muted');
+      setCaptureHelp(
+        micEnabled
+          ? 'Microphone on. Pause keeps typing available; Private discards capture and blocks all input.'
+          : 'Microphone muted. Typed messages are still available.',
+      );
+    }
+
     function revokeCurrentAudioUrl() {
       if (!currentAudioUrl) return;
       URL.revokeObjectURL(currentAudioUrl);
@@ -492,8 +731,7 @@
         setPlaybackStatus('Audio queued');
         playNextAudio();
       } else {
-        setPlaybackStatus(micEnabled ? 'Listening' : 'In call');
-        setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Ready when you are' : 'Microphone is muted');
+        restoreCapturePresentation();
       }
     });
 
@@ -507,12 +745,15 @@
     function connect() {
       if (!enabled || !callActive) return null;
       if (socket && socket.readyState <= WebSocket.OPEN) return socket;
-      socket = new WebSocket(websocketUrl(socketPath));
+      socket = new WebSocket(websocketUrl(socketPath, realtimeToken));
       setConnection('connecting');
       setVoiceState('connecting', 'Opening a local session');
 
       socket.addEventListener('open', () => {
         setConnection('online');
+        if (voiceProfileControl && preferredVoiceProfile) {
+          requestVoiceProfile(preferredVoiceProfile, { persist: false, force: true });
+        }
         while (pendingEvents.length) socket.send(JSON.stringify(pendingEvents.shift()));
       });
 
@@ -526,7 +767,12 @@
 
         if (payload.type === 'session.created') {
           setConnection('online');
+          applySessionVoiceProfile(payload.session || payload);
           setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Ready when you are' : 'Microphone is muted');
+          return;
+        }
+        if (payload.type === 'session.updated') {
+          applySessionVoiceProfile(payload.session || payload, { confirmPreference: true });
           return;
         }
         if (payload.type === 'input_audio_buffer.speech_started') {
@@ -553,6 +799,21 @@
           setVoiceState('thinking', 'Thinking');
           return;
         }
+        if (payload.type === 'response.retrieval.started') {
+          const caption = payload.web
+            ? (payload.local ? 'Searching your history and the web' : 'Searching the web')
+            : 'Searching your history';
+          setPlaybackStatus('Retrieving evidence');
+          setVoiceState('thinking', caption);
+          return;
+        }
+        if (payload.type === 'response.retrieval.done') {
+          appendSources(assistantText, payload.sources);
+          const count = Number(payload.local_hit_count || 0) + Number(payload.web_result_count || 0);
+          const caption = count ? `Found ${count} relevant source${count === 1 ? '' : 's'}` : 'No matching sources found';
+          setVoiceState('thinking', caption);
+          return;
+        }
         if (payload.type === 'response.text.delta' && assistantText) {
           assistantText.textContent += payload.delta || '';
           return;
@@ -563,7 +824,7 @@
           return;
         }
         if (payload.type === 'response.audio.started') {
-          setVoiceState('synthesizing', `Warming ${payload.model || 'voice'}`);
+          setVoiceState('synthesizing', 'Warming local voice');
           return;
         }
         if (payload.type === 'response.audio.delta' && payload.delta) {
@@ -574,8 +835,7 @@
         }
         if (payload.type === 'response.audio.done') {
           if (payload.status === 'skipped') {
-            setPlaybackStatus('Text only');
-            setVoiceState(micEnabled ? 'listening' : 'idle', 'Ready when you are');
+            restoreCapturePresentation();
           } else if (!currentAudioUrl && playbackQueue.length === 0) {
             setPlaybackStatus('Audio ready');
           }
@@ -589,8 +849,12 @@
         if (payload.type === 'response.interrupted' || payload.type === 'response.cancelled') {
           clearPlayback();
           assistantText = null;
-          setPlaybackStatus('Interrupted');
-          setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Listening...' : 'Response stopped');
+          if (captureMode === 'open') {
+            setPlaybackStatus('Interrupted');
+            setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Listening...' : 'Response stopped');
+          } else {
+            restoreCapturePresentation();
+          }
           return;
         }
         if (payload.type === 'response.failed') {
@@ -599,9 +863,15 @@
           return;
         }
         if (payload.type === 'response.done') {
+          const completedResponse = payload.response || payload;
+          const servedModel = safeVoiceModelLabel(completedResponse.served_model);
+          if (servedModel !== 'Local model') {
+            effectiveVoiceModel = servedModel;
+            renderVoiceProfileState();
+          }
           assistantText = null;
           if (!currentAudioUrl && playbackQueue.length === 0 && currentVoiceState !== 'speaking') {
-            setVoiceState(micEnabled ? 'listening' : 'idle', 'Ready when you are');
+            restoreCapturePresentation();
           }
           return;
         }
@@ -644,7 +914,7 @@
     }
 
     function handleCaptureSamples(samples, inputRate) {
-      if (!micEnabled || !callActive || paused || privateMode || !samples?.length) return;
+      if (!micEnabled || !callActive || captureMode !== 'open' || !samples?.length) return;
       let squareSum = 0;
       for (const sample of samples) squareSum += sample * sample;
       const rms = Math.sqrt(squareSum / samples.length);
@@ -727,6 +997,8 @@
         input_audio_sample_rate: targetSampleRate,
         channels: 1,
         media_type: 'audio/pcm',
+        source_context: sourceInput?.value || '',
+        recording_id: recordingInput?.value || null,
       });
     }
 
@@ -766,6 +1038,9 @@
       if (!attachmentTray) return;
       attachmentTray.replaceChildren();
       attachmentTray.hidden = selectedFiles.length === 0;
+      const hasFiles = selectedFiles.length > 0;
+      if (uploadOptions) uploadOptions.hidden = !hasFiles;
+      form.classList.toggle('has-attachments', hasFiles);
       if (attachButton) {
         const count = selectedFiles.length;
         attachButton.classList.toggle('has-files', count > 0);
@@ -826,12 +1101,13 @@
           setUploadStatus(`Uploading ${file.name}`, 'loading');
           const body = new FormData();
           body.append('file', file, file.name);
+          body.append('expected_main_speakers', expectedSpeakers?.value || '');
+          body.append('quality_tier', qualityTier?.value || 'torch');
           const response = await fetch(uploadEndpoint, { method: 'POST', headers: { accept: 'application/json' }, body });
           const contentType = response.headers.get('content-type') || '';
           const payload = contentType.includes('application/json') ? await response.json() : {};
           if (!response.ok) throw new Error(payload.detail || `Upload failed for ${file.name}`);
           uploaded.push(payload);
-          insertRecordingRow(payload);
         }
         selectedFiles = [];
         renderAttachments();
@@ -891,6 +1167,7 @@
         type: 'input_text',
         text,
         source_context: sourceInput?.value || '',
+        recording_id: recordingInput?.value || null,
       });
     });
 
@@ -932,36 +1209,49 @@
         if (timer) timer.textContent = '00:00';
       };
 
+      const setControlLabel = (button, label) => {
+        if (!button) return;
+        button.setAttribute('aria-label', label);
+        button.title = label;
+      };
+
       const markMicState = (active) => {
         micEnabled = active;
-        togglePressed(controls.get('mic'), active);
+        const micButton = controls.get('mic');
+        togglePressed(micButton, active);
         togglePressed(chatVoiceToggle, active);
         chatVoiceToggle?.classList.toggle('is-listening', active);
+        setControlLabel(micButton, active ? 'Mute microphone' : 'Turn on microphone');
         if (chatVoiceToggle) {
           const label = active ? 'Stop voice input' : 'Start voice input';
-          chatVoiceToggle.setAttribute('aria-label', label);
-          chatVoiceToggle.title = label;
+          setControlLabel(chatVoiceToggle, label);
         }
       };
 
       const setControlAvailability = () => {
+        const captureHeld = captureMode !== 'open' || captureTransitioning;
         controls.get('start-call')?.toggleAttribute('disabled', !enabled || callActive);
         controls.get('end-call')?.toggleAttribute('disabled', !enabled || !callActive);
-        ['mic', 'pause', 'private', 'interrupt', 'play'].forEach((action) => {
+        controls.get('mic')?.toggleAttribute('disabled', !enabled || !callActive || captureHeld);
+        controls.get('pause')?.toggleAttribute('disabled', !enabled || !callActive || captureTransitioning);
+        controls.get('private')?.toggleAttribute('disabled', !enabled || !callActive || captureTransitioning);
+        ['interrupt', 'play'].forEach((action) => {
           controls.get(action)?.toggleAttribute('disabled', !enabled || !callActive);
         });
         if (volume) volume.disabled = !enabled || !callActive;
       };
 
       const setPromptAvailability = () => {
-        const blocked = !enabled || !callActive || paused || privateMode;
+        const privateMode = captureMode === 'private';
+        const blocked = !enabled || !callActive || privateMode;
         input.disabled = blocked;
-        submit.disabled = uploading || (
-          selectedFiles.length === 0 && (blocked || !input.value.trim())
+        if (fileInput) fileInput.disabled = privateMode;
+        submit.disabled = uploading || blocked || (
+          selectedFiles.length === 0 && !input.value.trim()
         );
-        if (attachButton) attachButton.disabled = uploading;
-        if (chatVoiceToggle) chatVoiceToggle.disabled = !enabled || uploading;
-        if (sourceTrigger) sourceTrigger.disabled = uploading;
+        if (attachButton) attachButton.disabled = uploading || privateMode;
+        if (chatVoiceToggle) chatVoiceToggle.disabled = !enabled || uploading || captureMode !== 'open';
+        if (sourceTrigger) sourceTrigger.disabled = uploading || privateMode;
         setControlAvailability();
       };
       refreshPromptAvailability = setPromptAvailability;
@@ -972,28 +1262,96 @@
       };
 
       const startMicrophone = async () => {
+        if (!callActive || captureMode !== 'open') return false;
         await startPcmCapture();
         markMicState(true);
         setConnection('listening');
         setPlaybackStatus('Listening');
         setVoiceState('listening', 'Ready when you are');
+        setCaptureHelp('Microphone on. Pause keeps typing available; Private discards capture and blocks all input.');
+        return true;
+      };
+
+      const updateCaptureControls = () => {
+        const isPaused = captureMode === 'paused';
+        const isPrivate = captureMode === 'private';
+        togglePressed(controls.get('pause'), isPaused);
+        togglePressed(controls.get('private'), isPrivate);
+        setControlLabel(controls.get('pause'), isPaused ? 'Resume microphone' : 'Pause microphone');
+        setControlLabel(controls.get('private'), isPrivate ? 'Leave private mode' : 'Go private');
+        root.dataset.captureMode = callActive ? captureMode : 'idle';
+      };
+
+      const setCaptureMode = async (nextMode) => {
+        if (!callActive || captureTransitioning) return;
+        const leavingCurrentMode = captureMode === nextMode;
+        captureTransitioning = true;
+        if (!leavingCurrentMode) {
+          resumeMicrophoneAfterCaptureMode = micEnabled || resumeMicrophoneAfterCaptureMode;
+        }
+        setPromptAvailability();
+        try {
+          if (leavingCurrentMode) {
+            const shouldResume = resumeMicrophoneAfterCaptureMode;
+            captureMode = 'open';
+            resumeMicrophoneAfterCaptureMode = false;
+            updateCaptureControls();
+            if (shouldResume) {
+              setConnection('resuming');
+              setPlaybackStatus('Resuming microphone');
+              setVoiceState('connecting', 'Turning the microphone back on');
+              setCaptureHelp('Resuming the microphone...');
+              try {
+                await startMicrophone();
+              } catch (error) {
+                markMicState(false);
+                setConnection('mic error');
+                setPlaybackStatus('Microphone unavailable');
+                setVoiceState('error', error.message || 'Microphone unavailable');
+                setCaptureHelp('The microphone could not resume. Typing is still available.');
+              }
+            } else {
+              restoreCapturePresentation();
+            }
+            return;
+          }
+
+          const wasListening = micEnabled;
+          captureMode = nextMode;
+          updateCaptureControls();
+          if (wasListening) {
+            markMicState(false);
+            await stopPcmCapture({ commit: nextMode === 'paused' });
+          } else if (nextMode === 'private') {
+            sendRealtimeEvent({ type: 'input_audio_buffer.clear' });
+            micSpeechPending = false;
+          }
+          if (nextMode === 'private') setSourceMenuOpen(false);
+          restoreCapturePresentation();
+        } finally {
+          captureTransitioning = false;
+          setPromptAvailability();
+        }
       };
 
       const startCall = async () => {
         if (!enabled || callActive) return;
         callActive = true;
         callEnding = false;
-        paused = false;
-        privateMode = false;
+        captureMode = 'open';
+        resumeMicrophoneAfterCaptureMode = false;
+        captureTransitioning = false;
         playbackEnabled = true;
         pendingEvents.length = 0;
         togglePressed(controls.get('play'), true);
-        togglePressed(controls.get('pause'), false);
-        togglePressed(controls.get('private'), false);
+        pendingVoiceProfile = null;
+        renderVoiceProfileState();
+        updateCaptureControls();
         refreshCallClass();
         setPromptAvailability();
         startTimer();
         setPlaybackStatus('Connecting');
+        setCaptureHelp('Starting the microphone. Pause will keep typing available; Private will block all input.');
         await bubble.attachOutput(audio).catch(() => {});
         connect();
         try {
@@ -1001,7 +1359,9 @@
         } catch (error) {
           markMicState(false);
           setConnection('mic error');
+          setPlaybackStatus('Microphone unavailable');
           setVoiceState('error', error.message || 'Microphone unavailable');
+          setCaptureHelp('The microphone is unavailable. You can still use typed messages.');
           appendMessage(transcript, 'Atlas', error.message || 'Microphone unavailable');
         }
       };
@@ -1021,16 +1381,21 @@
         }
         socket = null;
         callActive = false;
-        paused = false;
-        privateMode = false;
+        captureMode = 'open';
+        pendingVoiceProfile = null;
+        renderVoiceProfileState();
+        resumeMicrophoneAfterCaptureMode = false;
+        captureTransitioning = false;
         playbackEnabled = false;
         assistantText = null;
         clearPlayback();
         stopTimer();
-        ['mic', 'pause', 'private', 'interrupt', 'play'].forEach((action) => togglePressed(controls.get(action), false));
+        ['mic', 'interrupt', 'play'].forEach((action) => togglePressed(controls.get(action), false));
+        updateCaptureControls();
         setConnection(unexpected ? 'offline' : 'ready');
         setPlaybackStatus(unexpected ? 'Disconnected' : 'Call idle');
         setVoiceState(unexpected ? 'error' : 'idle', unexpected ? 'Local realtime disconnected' : 'Ready when you are');
+        setCaptureHelp(unexpected ? 'The local call disconnected.' : 'Start a call to use the microphone.');
         refreshCallClass();
         setPromptAvailability();
         window.setTimeout(() => { callEnding = false; }, 0);
@@ -1041,47 +1406,31 @@
       controls.get('end-call')?.addEventListener('click', () => { endCall(); });
 
       controls.get('mic')?.addEventListener('click', async () => {
-        if (!callActive) return;
+        if (!callActive || captureMode !== 'open') return;
         if (micEnabled) {
           markMicState(false);
           await stopPcmCapture({ commit: true });
-          setConnection('online');
-          setVoiceState('idle', 'Microphone is muted');
+          restoreCapturePresentation();
         } else {
           try {
             await startMicrophone();
           } catch (error) {
             markMicState(false);
+            setConnection('mic error');
+            setPlaybackStatus('Microphone unavailable');
             setVoiceState('error', error.message || 'Microphone unavailable');
+            setCaptureHelp('The microphone is unavailable. Typed messages are still available.');
           }
         }
         setPromptAvailability();
       });
 
       controls.get('pause')?.addEventListener('click', async () => {
-        if (!callActive) return;
-        paused = !paused;
-        if (paused && micEnabled) {
-          markMicState(false);
-          await stopPcmCapture({ commit: false });
-        }
-        togglePressed(controls.get('pause'), paused);
-        setConnection(paused ? 'paused' : 'online');
-        setVoiceState(paused ? 'paused' : 'idle', paused ? 'Call paused' : 'Microphone is muted');
-        setPromptAvailability();
+        await setCaptureMode('paused');
       });
 
       controls.get('private')?.addEventListener('click', async () => {
-        if (!callActive) return;
-        privateMode = !privateMode;
-        if (privateMode && micEnabled) {
-          markMicState(false);
-          await stopPcmCapture({ commit: false });
-        }
-        togglePressed(controls.get('private'), privateMode);
-        setConnection(privateMode ? 'private' : 'online');
-        setVoiceState(privateMode ? 'private' : 'idle', privateMode ? 'Capture is off' : 'Microphone is muted');
-        setPromptAvailability();
+        await setCaptureMode('private');
       });
 
       controls.get('interrupt')?.addEventListener('click', () => {
@@ -1089,8 +1438,12 @@
         if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'response.cancel', reason: 'client_interrupt' }));
         clearPlayback();
         assistantText = null;
-        setPlaybackStatus('Interrupted');
-        setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Listening...' : 'Response stopped');
+        if (captureMode === 'open') {
+          setPlaybackStatus('Interrupted');
+          setVoiceState(micEnabled ? 'listening' : 'idle', micEnabled ? 'Listening...' : 'Response stopped');
+        } else {
+          restoreCapturePresentation();
+        }
         togglePressed(controls.get('interrupt'), true);
         window.setTimeout(() => togglePressed(controls.get('interrupt'), false), 220);
       });
@@ -1123,19 +1476,46 @@
         refreshCallClass();
         connect();
       }
+      updateCaptureControls();
       refreshCallClass();
       setPromptAvailability();
     }
 
-    root.querySelectorAll('[data-voice-view]').forEach((button) => {
-      button.addEventListener('click', () => {
-        const view = button.dataset.voiceView || 'live';
-        root.dataset.activeView = view;
-        root.querySelectorAll('[data-voice-view]').forEach((item) => {
-          item.setAttribute('aria-selected', item === button ? 'true' : 'false');
-        });
+    const voiceTabs = Array.from(root.querySelectorAll('[role="tab"][data-voice-view]'));
+    const activateVoiceView = (button, { focus = false } = {}) => {
+      if (!button || !voiceTabs.includes(button)) return;
+      root.dataset.activeView = button.dataset.voiceView || 'live';
+      voiceTabs.forEach((item) => {
+        const selected = item === button;
+        item.setAttribute('aria-selected', selected ? 'true' : 'false');
+        item.tabIndex = selected ? 0 : -1;
+        const panelId = item.getAttribute('aria-controls');
+        const panel = panelId ? document.getElementById(panelId) : null;
+        if (panel) panel.hidden = !selected;
       });
+      if (focus) button.focus();
+    };
+
+    voiceTabs.forEach((button) => {
+      button.addEventListener('click', () => activateVoiceView(button));
     });
+
+    root.querySelector('[role="tablist"]')?.addEventListener('keydown', (event) => {
+      const currentTab = event.target.closest?.('[role="tab"]');
+      const currentIndex = voiceTabs.indexOf(currentTab);
+      if (currentIndex < 0) return;
+      let nextIndex;
+      if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % voiceTabs.length;
+      else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + voiceTabs.length) % voiceTabs.length;
+      else if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = voiceTabs.length - 1;
+      else return;
+      event.preventDefault();
+      activateVoiceView(voiceTabs[nextIndex], { focus: true });
+    });
+
+    const initialVoiceTab = voiceTabs.find((button) => button.getAttribute('aria-selected') === 'true') || voiceTabs[0];
+    if (initialVoiceTab) activateVoiceView(initialVoiceTab);
 
     const setupJsonPlayground = (selector, inputSelector, resultSelector, buildRequest, formatResult) => {
       const section = document.querySelector(selector);

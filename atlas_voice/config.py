@@ -78,6 +78,15 @@ class Settings:
     realtime_asr_prefer_hyprwhspr: bool = True
     realtime_asr_fallback_provider: str = "faster-whisper"
     faster_whisper_model: str = "large-v3-turbo"
+    default_quality_tier: str = "torch"
+    quality_light_asr_provider: str = "faster-whisper"
+    quality_light_asr_model: str = "tiny.en"
+    quality_torch_asr_provider: str = "faster-whisper"
+    quality_torch_asr_model: str = "large-v3-turbo"
+    quality_fire_asr_provider: str = "whisperx"
+    quality_fire_asr_model: str = "large-v3"
+    asr_beam_size: int = 1
+    audio_cleanup: str = "none"
     anythingllm_base_url: str = "http://127.0.0.1:3001/api"
     anythingllm_api_key: str | None = None
     anythingllm_workspace_slug: str | None = None
@@ -101,6 +110,13 @@ class Settings:
     realtime_vad_threshold: float = 500.0
     realtime_vad_min_speech_ms: int = 200
     realtime_vad_silence_ms: int = 600
+    web_search_enabled: bool = False
+    web_search_provider: str = "searxng"
+    web_search_base_url: str = "http://127.0.0.1:8888/search"
+    web_search_api_key: str | None = None
+    web_search_timeout: float = 1.5
+    web_search_max_results: int = 4
+    web_search_cache_ttl_seconds: float = 300.0
     ambient_source: str = "mic"
     ambient_mode: str = "ambient"
     ambient_chunk_seconds: float = 15.0
@@ -173,6 +189,33 @@ class Settings:
                 "ATLAS_VOICE_FASTER_WHISPER_MODEL",
                 os.environ.get("WHISPERX_MODEL", "large-v3-turbo"),
             ),
+            default_quality_tier=os.environ.get(
+                "ATLAS_VOICE_DEFAULT_QUALITY_TIER", "torch"
+            ).strip().lower(),
+            quality_light_asr_provider=os.environ.get(
+                "ATLAS_VOICE_LIGHT_ASR_PROVIDER", "faster-whisper"
+            ).strip().lower(),
+            quality_light_asr_model=os.environ.get(
+                "ATLAS_VOICE_LIGHT_ASR_MODEL", "tiny.en"
+            ).strip(),
+            quality_torch_asr_provider=os.environ.get(
+                "ATLAS_VOICE_TORCH_ASR_PROVIDER", "faster-whisper"
+            ).strip().lower(),
+            quality_torch_asr_model=os.environ.get(
+                "ATLAS_VOICE_TORCH_ASR_MODEL", "large-v3-turbo"
+            ).strip(),
+            quality_fire_asr_provider=os.environ.get(
+                "ATLAS_VOICE_FIRE_ASR_PROVIDER", "whisperx"
+            ).strip().lower(),
+            quality_fire_asr_model=os.environ.get(
+                "ATLAS_VOICE_FIRE_ASR_MODEL", "large-v3"
+            ).strip(),
+            asr_beam_size=max(
+                int(os.environ.get("ATLAS_VOICE_ASR_BEAM_SIZE", "1")), 1
+            ),
+            audio_cleanup=os.environ.get("ATLAS_VOICE_AUDIO_CLEANUP", "none")
+            .strip()
+            .lower(),
             anythingllm_base_url=os.environ.get(
                 "ANYTHINGLLM_BASE_URL", "http://127.0.0.1:3001/api"
             ).rstrip("/"),
@@ -219,6 +262,27 @@ class Settings:
             ),
             realtime_vad_silence_ms=int(
                 os.environ.get("ATLAS_VOICE_REALTIME_VAD_SILENCE_MS", "600")
+            ),
+            web_search_enabled=_bool_from_env("ATLAS_VOICE_WEB_SEARCH_ENABLED", False),
+            web_search_provider=os.environ.get(
+                "ATLAS_VOICE_WEB_SEARCH_PROVIDER", "searxng"
+            ).strip().lower(),
+            web_search_base_url=os.environ.get(
+                "ATLAS_VOICE_WEB_SEARCH_BASE_URL", "http://127.0.0.1:8888/search"
+            ).rstrip("/"),
+            web_search_api_key=(
+                os.environ.get("ATLAS_VOICE_WEB_SEARCH_API_KEY")
+                or os.environ.get("BRAVE_SEARCH_API_KEY")
+                or None
+            ),
+            web_search_timeout=max(
+                float(os.environ.get("ATLAS_VOICE_WEB_SEARCH_TIMEOUT", "1.5")), 0.1
+            ),
+            web_search_max_results=max(
+                min(int(os.environ.get("ATLAS_VOICE_WEB_SEARCH_MAX_RESULTS", "4")), 10), 1
+            ),
+            web_search_cache_ttl_seconds=max(
+                float(os.environ.get("ATLAS_VOICE_WEB_SEARCH_CACHE_TTL_SECONDS", "300")), 0.0
             ),
             ambient_source=os.environ.get("ATLAS_VOICE_AMBIENT_SOURCE", "mic"),
             ambient_mode=os.environ.get("ATLAS_VOICE_AMBIENT_MODE", "ambient").strip().lower(),

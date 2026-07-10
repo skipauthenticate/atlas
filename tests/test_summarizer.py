@@ -2,6 +2,7 @@ import unittest
 
 from atlas_voice.summarizer import (
     _SUMMARY_TEMPLATES,
+    _merge_chunk_summaries,
     _strip_summary_markup,
     build_summary_prompt,
     chunk_transcript,
@@ -18,15 +19,21 @@ class TemplateRegistryTests(unittest.TestCase):
 
     def test_all_built_in_templates_registered(self) -> None:
         """Every _build_* function should have registered a template."""
-        ids = list(_SUMMARY_TEMPLATES.keys())
-        self.assertIn("meeting", ids)
-        self.assertIn("personal", ids)
-        self.assertIn("catchup", ids)
-        self.assertIn("call", ids)
-        self.assertIn("interview", ids)
-        self.assertIn("debrief", ids)
-        self.assertIn("sales", ids)
-        self.assertIn("education", ids)
+        self.assertEqual(
+            set(_SUMMARY_TEMPLATES),
+            {
+                "meeting",
+                "team_meeting",
+                "one_on_one",
+                "debrief",
+                "sales",
+                "interview",
+                "education",
+                "brainstorm",
+                "personal",
+                "medical",
+            },
+        )
 
     def test_get_template_returns_none_for_unknown(self) -> None:
         self.assertIsNone(get_template("nonexistent"))
@@ -39,7 +46,17 @@ class TemplateRegistryTests(unittest.TestCase):
 
     def test_list_templates_returns_all(self) -> None:
         templates = list_templates()
-        self.assertEqual(len(templates), 8)
+        self.assertEqual(len(templates), 10)
+
+    def test_legacy_template_ids_resolve_to_safe_replacements(self) -> None:
+        self.assertEqual(get_template("call").id, "meeting")
+        self.assertEqual(get_template("catchup").id, "personal")
+
+    def test_catalog_has_snapshot_and_never_requests_none_placeholders(self) -> None:
+        for template in list_templates().values():
+            self.assertEqual(next(iter(template.section_instructions)), "Snapshot")
+            instructions = " ".join(template.section_instructions.values())
+            self.assertNotIn("Write '- None'", instructions)
 
     def test_template_to_dict(self) -> None:
         tpl = get_template("personal")
@@ -56,12 +73,19 @@ class AutoDetectionTests(unittest.TestCase):
 
     def test_meeting_transcript_detects_meeting(self) -> None:
         transcript = (
-            "We had a team meeting today to discuss the Q3 roadmap. "
+            "We had a planning discussion today about the Q3 launch. "
             "John proposed a new feature and we decided to move forward. "
             "Action item: Sarah will write the spec by Friday."
         )
         tpl = detect_template(transcript)
         self.assertEqual(tpl.id, "meeting")
+
+    def test_team_meeting_transcript_detects_team_meeting(self) -> None:
+        transcript = (
+            "In our team meeting and sprint standup, each workstream gave a status update. "
+            "The main blocker is the API roadmap dependency."
+        )
+        self.assertEqual(detect_template(transcript).id, "team_meeting")
 
     def test_personal_transcript_detects_personal(self) -> None:
         transcript = (
@@ -81,14 +105,12 @@ class AutoDetectionTests(unittest.TestCase):
         tpl = detect_template(transcript)
         self.assertEqual(tpl.id, "interview")
 
-    def test_catchup_transcript_detects_catchup(self) -> None:
+    def test_one_on_one_transcript_detects_one_on_one(self) -> None:
         transcript = (
-            "Hey, how have you been? It's been so long since we last "
-            "met. Let's plan to catch up soon. Remember when we went "
-            "to the beach last summer?"
+            "This is our weekly one-on-one check-in. My manager shared performance "
+            "feedback and we discussed career development."
         )
-        tpl = detect_template(transcript)
-        self.assertEqual(tpl.id, "catchup")
+        self.assertEqual(detect_template(transcript).id, "one_on_one")
 
     def test_debrief_transcript_detects_debrief(self) -> None:
         transcript = (
@@ -117,6 +139,20 @@ class AutoDetectionTests(unittest.TestCase):
         tpl = detect_template(transcript)
         self.assertEqual(tpl.id, "education")
 
+    def test_brainstorm_transcript_detects_brainstorm(self) -> None:
+        transcript = (
+            "This voice memo is me thinking out loud. Let's brainstorm an idea: "
+            "what if we could build a smaller offline assistant?"
+        )
+        self.assertEqual(detect_template(transcript).id, "brainstorm")
+
+    def test_medical_transcript_detects_medical(self) -> None:
+        transcript = (
+            "The patient described symptoms and medical history. Blood pressure was "
+            "recorded, and the clinician discussed medication and a follow-up visit."
+        )
+        self.assertEqual(detect_template(transcript).id, "medical")
+
     def test_empty_transcript_falls_back_to_default(self) -> None:
         tpl = detect_template("")
         self.assertEqual(tpl.id, "meeting")
@@ -144,19 +180,31 @@ class BuildSummaryPromptTests(unittest.TestCase):
     def test_prompt_includes_section_headers(self) -> None:
         tpl = get_template("sales")
         prompt = build_summary_prompt("Some text", template=tpl)
-        self.assertIn("## Call Context", prompt)
+        self.assertIn("## Snapshot", prompt)
         self.assertIn("## Client Needs", prompt)
         self.assertIn("## Objections", prompt)
-        self.assertIn("## Pipeline Notes", prompt)
+        self.assertIn("## Buying Signals", prompt)
 
     def test_default_template_when_none(self) -> None:
         prompt = build_summary_prompt("text", template=None)
-        self.assertIn("Meeting Minutes", prompt)
-        self.assertIn("## Overview", prompt)
+        self.assertIn("Smart Notes", prompt)
+        self.assertIn("## Snapshot", prompt)
 
     def test_prompt_includes_chunk_position(self) -> None:
         prompt = build_summary_prompt("text", chunk_index=2, chunk_count=5)
         self.assertIn("Chunk 2 of 5", prompt)
+
+    def test_prompt_enforces_concision_and_omits_empty_sections(self) -> None:
+        prompt = build_summary_prompt("text")
+        self.assertIn("Snapshot must be 2-4 short sentences", prompt)
+        self.assertIn("one-sentence bullets", prompt)
+        self.assertIn("Omit every other heading", prompt)
+        self.assertIn("never write None, N/A, or a placeholder", prompt)
+
+    def test_medical_prompt_is_documentation_only(self) -> None:
+        prompt = build_summary_prompt("text", template=get_template("medical"))
+        self.assertIn("documentation only", prompt.lower())
+        self.assertIn("Never infer a diagnosis", prompt)
 
 
 class ChunkTranscriptTests(unittest.TestCase):
@@ -276,6 +324,104 @@ class SummaryParsingTests(unittest.TestCase):
         titles = [s["title"] for s in sections]
         self.assertIn("Notable Quotes", titles)
         self.assertIn("Takeaways", titles)
+
+    def test_summary_to_sections_understands_new_canonical_headings(self) -> None:
+        sections = summary_to_sections(
+            "## Snapshot\n"
+            "The team aligned on launch scope.\n\n"
+            "## Agenda & Updates\n"
+            "- Mobile work is complete.\n\n"
+            "## Risks & Gaps\n"
+            "- The API dependency remains open.\n\n"
+            "## Buying Signals\n"
+            "- The client requested a contract."
+        )
+
+        self.assertEqual(
+            [section["title"] for section in sections],
+            ["Snapshot", "Agenda & Updates", "Risks & Gaps", "Buying Signals"],
+        )
+
+    def test_summary_to_sections_normalizes_duplicates_and_caps_bullets(self) -> None:
+        bullets = "\n".join(
+            ["- **Topic:** First point.", "- **topic:** first point!"]
+            + [f"- Distinct takeaway {index}." for index in range(10)]
+        )
+        sections = summary_to_sections(f"## Key Takeaways\n{bullets}")
+
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(len(sections[0]["items"]), 6)
+        first_point_items = [
+            item
+            for item in sections[0]["items"]
+            if item["text"].lower().startswith("first point")
+        ]
+        self.assertEqual(len(first_point_items), 1)
+
+    def test_empty_section_placeholders_are_hidden_but_medical_negatives_remain(self) -> None:
+        sections = summary_to_sections(
+            "## Blockers\n"
+            "- No blockers were reported.\n\n"
+            "## Subjective\n"
+            "- No chest pain was reported."
+        )
+
+        self.assertEqual([section["title"] for section in sections], ["Subjective"])
+        self.assertEqual(sections[0]["items"][0]["text"], "No chest pain was reported.")
+
+    def test_summary_normalization_preserves_non_latin_text(self) -> None:
+        sections = summary_to_sections(
+            "## Snapshot\n今日は重要な決定について話しました。\n\n"
+            "## Key Takeaways\n- 明日までに仕様を確認する。"
+        )
+
+        self.assertEqual(
+            sections[0]["paragraphs"],
+            ["今日は重要な決定について話しました。"],
+        )
+        self.assertEqual(sections[1]["items"][0]["text"], "明日までに仕様を確認する。")
+
+    def test_multi_chunk_merge_returns_one_compact_document(self) -> None:
+        outputs = [
+            {
+                "chunk_index": 1,
+                "text": (
+                    "## Snapshot\n"
+                    "The team reviewed the launch. Scope was confirmed.\n\n"
+                    "## Key Takeaways\n"
+                    "- **Topic:** Mobile is ready.\n"
+                    "- The API remains unfinished.\n\n"
+                    "## Action Items\n"
+                    "- None"
+                ),
+            },
+            {
+                "chunk_index": 2,
+                "text": (
+                    "## Snapshot\n"
+                    "The team reviewed the launch! Delivery moved to Friday.\n\n"
+                    "## Key Takeaways\n"
+                    "- **topic:** mobile is ready!\n"
+                    "- Delivery moved to Friday.\n\n"
+                    "## Open Questions\n"
+                    "- No open questions were reported."
+                ),
+            },
+        ]
+
+        merged = _merge_chunk_summaries(outputs, template=get_template("meeting"))
+
+        self.assertEqual(merged.count("## Snapshot"), 1)
+        self.assertEqual(merged.count("## Key Takeaways"), 1)
+        self.assertEqual(merged.lower().count("mobile is ready"), 1)
+        self.assertNotIn("Chunk 1 summary", merged)
+        self.assertNotIn("## Action Items", merged)
+        self.assertNotIn("## Open Questions", merged)
+        snapshot = merged.split("## Key Takeaways", 1)[0]
+        self.assertLessEqual(
+            len([part for part in snapshot.split(".") if part.strip()]),
+            4,
+        )
 
 
 class StripMarkupTests(unittest.TestCase):

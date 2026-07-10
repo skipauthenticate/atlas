@@ -46,6 +46,25 @@ class PrivacyTests(unittest.TestCase):
         self.assertIn("telemetry", checks)
         self.assertIn("profile.direct_voice.bind", checks)
 
+    def test_enabled_web_search_is_reported_as_explicit_egress(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "assistant.yaml"
+            config_path.write_text(
+                "profiles:\n"
+                "  direct_voice:\n"
+                "    enabled: true\n"
+                "    web_search_enabled: true\n"
+                "    web_search_base_url: http://127.0.0.1:8888/search\n"
+            )
+            report = privacy_summary(_settings(root), load_assistant_config(config_path))
+
+        self.assertEqual(report["status"], "warn")
+        self.assertIn(
+            "web_search_egress",
+            {issue["check"] for issue in report["issues"]},
+        )
+
 
 def _settings(root: Path, **overrides: object) -> Settings:
     values = {

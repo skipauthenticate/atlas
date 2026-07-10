@@ -11,6 +11,11 @@ from .merge import format_diarized_lines
 # ---------------------------------------------------------------------------
 
 _SUMMARY_TEMPLATES: dict[str, "_SummaryTemplate"] = {}
+_TEMPLATE_ALIASES = {
+    # Older saved preferences continue to resolve after the catalog refresh.
+    "call": "meeting",
+    "catchup": "personal",
+}
 
 
 class _SummaryTemplate:
@@ -54,22 +59,33 @@ def list_templates() -> dict[str, _SummaryTemplate]:
 
 def get_template(template_id: str) -> _SummaryTemplate | None:
     """Look up a template by its id, or None if not found."""
-    return _SUMMARY_TEMPLATES.get(template_id)
+    canonical_id = _TEMPLATE_ALIASES.get(template_id, template_id)
+    return _SUMMARY_TEMPLATES.get(canonical_id)
 
 
 def detect_template(transcript: str) -> _SummaryTemplate:
     """Score each template by keyword overlap and return the best match.
 
-    Simple keyword counting: for each template, count how many of its
-    keywords appear in the (lower-cased) transcript.  The template with
-    the highest score wins; ties favour the template marked *default*.
+    Phrases and distinctive longer terms carry more weight than isolated
+    words. The template with the highest score wins; ties favour the
+    template marked *default*.
     """
     transcript_lower = transcript.lower()
     best_score = -1
     best_tpl: _SummaryTemplate | None = None
 
     for tpl in _SUMMARY_TEMPLATES.values():
-        score = sum(transcript_lower.count(kw.lower()) for kw in tpl.keywords)
+        score = 0
+        for keyword in tpl.keywords:
+            keyword_lower = keyword.lower()
+            if re.fullmatch(r"[a-z0-9]+", keyword_lower):
+                count = len(
+                    re.findall(rf"\b{re.escape(keyword_lower)}\b", transcript_lower)
+                )
+            else:
+                count = transcript_lower.count(keyword_lower)
+            weight = 2 if " " in keyword_lower or len(keyword_lower) >= 10 else 1
+            score += count * weight
         if score > best_score or (
             score == best_score and tpl.default and best_tpl is not None
         ):
@@ -89,140 +105,120 @@ def detect_template(transcript: str) -> _SummaryTemplate:
 def _build_meeting_template() -> _SummaryTemplate:
     return _SummaryTemplate(
         id_="meeting",
-        name="Meeting Minutes",
-        description="Standard meeting / conversation with overview, key points, decisions, action items, and open questions.",
+        name="Smart Notes",
+        description=(
+            "A clean default for meetings and conversations, focused on what matters "
+            "and what happens next."
+        ),
         section_instructions={
-            "Overview": (
-                "2-4 concise sentences that describe the recording or conversation. "
-                "Capture the context, participants when identifiable, and the main theme."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the context, participants when "
+                "known, central topic, and outcome."
             ),
-            "Key Points": (
-                "Bullet the important facts, topics, and notable speaker context. "
-                "Keep bullets short and concrete."
+            "Key Takeaways": (
+                "Give up to 6 concrete bullets covering only the most useful facts or insights."
             ),
             "Decisions": (
-                "Bullet any decisions, approvals, or commitments made. "
-                "Write '- None' if none are stated."
+                "List explicit decisions, approvals, and commitments in up to 5 bullets."
             ),
             "Action Items": (
-                "Bullet owner, action, and due date when stated. "
-                "Write '- None' if no action items are assigned."
+                "List up to 8 actions as owner, task, and due date when each is stated."
             ),
             "Open Questions": (
-                "Bullet unresolved questions, uncertainties, or topics left open. "
-                "Write '- None' if all questions were resolved."
+                "List up to 5 unresolved questions or dependencies."
             ),
         },
         keywords=[
-            "meeting", "discuss", "discussed", "decision", "decided",
-            "action item", "next steps", "follow up", "agenda",
-            "attend", "participant", "review", "update",
+            "meeting", "discussion", "decision", "action item", "next steps",
+            "follow up", "agenda", "minutes", "participants",
         ],
         default=True,
     )
 
 
-def _build_personal_template() -> _SummaryTemplate:
+def _build_team_meeting_template() -> _SummaryTemplate:
     return _SummaryTemplate(
-        id_="personal",
-        name="Personal Reflection",
-        description="Personal journaling / daily reflection with mood, events, lessons, and gratitude.",
+        id_="team_meeting",
+        name="Team Meeting",
+        description="Team updates, alignment, decisions, owners, and blockers in one scan.",
         section_instructions={
-            "Mood Overview": (
-                "Describe the overall emotional tone or state reflected in the conversation."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the team's focus, status, and outcome."
             ),
-            "Key Events": (
-                "Bullet the significant happenings, encounters, or milestones mentioned."
+            "Agenda & Updates": (
+                "List up to 6 material updates, grouped by topic or workstream when clear."
             ),
-            "Lessons Learned": (
-                "Bullet any insights, realizations, or takeaways the speaker shared."
+            "Decisions": (
+                "List up to 5 explicit team decisions or approvals."
             ),
-            "Gratitude Notes": (
-                "Bullet things the speaker mentioned being thankful for or proud of. "
-                "Write '- None' if no gratitude is expressed."
+            "Action Items": (
+                "List up to 8 actions as owner, task, and due date when stated."
             ),
-            "Looking Ahead": (
-                "Bullet intentions, plans, or hopes for the future that were mentioned. "
-                "Write '- None' if no forward-looking statements are present."
+            "Blockers": (
+                "List up to 5 blockers, risks, or dependencies and their owners when known."
             ),
         },
         keywords=[
-            "feel", "feeling", "emotion", "grateful", "gratitude",
-            "thankful", "learned", "lesson", "insight", "realized",
-            "personal", "life", "journey", "reflect", "mindful",
-            "proud", "happy", "sad", "excited", "hope",
-            "journal", "diary", "daily",
+            "team meeting", "standup", "stand-up", "sprint", "team update",
+            "blocker", "roadmap", "workstream", "status update", "all hands",
         ],
     )
 
 
-def _build_catchup_template() -> _SummaryTemplate:
+def _build_one_on_one_template() -> _SummaryTemplate:
     return _SummaryTemplate(
-        id_="catchup",
-        name="Personal Catch-up",
-        description="Conversational catch-up between friends or family — highlights, stories, and plans.",
+        id_="one_on_one",
+        name="1:1",
+        description="A private one-to-one with discussion themes, feedback, and commitments.",
         section_instructions={
-            "Main Topics": (
-                "Bullet the primary subjects of conversation."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the context, tone, and main outcome."
             ),
-            "Notable Stories": (
-                "Bullet any anecdotes, experiences, or interesting stories shared."
+            "Discussion Themes": (
+                "List up to 6 important themes, concerns, or updates."
             ),
-            "Updates": (
-                "Bullet life updates, news, or changes the speakers shared. "
-                "E.g. new job, moving, relationships."
+            "Feedback": (
+                "List specific feedback given or requested, preserving attribution."
             ),
-            "Plans Made": (
-                "Bullet any plans, meetups, or future intentions discussed. "
-                "Include dates or times when mentioned. "
-                "Write '- None' if no plans were made."
-            ),
-            "Questions Raised": (
-                "Bullet any questions asked between speakers that weren't answered. "
-                "Write '- None' if all questions were addressed."
-            ),
-        },
-        keywords=[
-            "how are you", "how have you been", "catch up", "what's new",
-            "last time", "haven't seen", "heard from", "story",
-            "remember when", "plan", "let's", "should meet",
-            "friend", "family", "wife", "husband", "kids",
-            "partner", "going out", "weekend",
-        ],
-    )
-
-
-def _build_call_template() -> _SummaryTemplate:
-    return _SummaryTemplate(
-        id_="call",
-        name="Phone / Voice Call",
-        description="General phone or voice call summary with caller info and purpose.",
-        section_instructions={
-            "Call Context": (
-                "Identify who called whom (if identifiable), approximate time, "
-                "and the stated purpose of the call."
-            ),
-            "Main Discussion": (
-                "Bullet the core topics covered during the call. "
-                "Keep it concise — focus on what was communicated, not filler."
-            ),
-            "Outcomes": (
-                "Bullet any decisions, agreements, or commitments made on the call. "
-                "Write '- None' if the call was informational only."
+            "Commitments": (
+                "List promises or decisions made by either person, with owner and timing."
             ),
             "Follow-ups": (
-                "Bullet actions each party committed to. Include deadlines when stated. "
-                "Write '- None' if no follow-up was agreed."
-            ),
-            "Open Items": (
-                "Bullet things left unresolved or needing further discussion. "
-                "Write '- None' if the call fully resolved its purpose."
+                "List up to 5 follow-up actions or topics for the next conversation."
             ),
         },
         keywords=[
-            "called", "call me", "phone", "ring", "answer",
-            "left a voicemail", "missed call", "callback",
-            "can I call you", "give me a call", "let me know",
+            "one on one", "one-on-one", "1:1", "manager", "direct report",
+            "career development", "performance feedback", "check-in", "check in",
+        ],
+    )
+
+
+def _build_brainstorm_template() -> _SummaryTemplate:
+    return _SummaryTemplate(
+        id_="brainstorm",
+        name="Brainstorm / Voice Memo",
+        description="Loose ideas turned into clear themes, promising directions, and next steps.",
+        section_instructions={
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the prompt, intent, and strongest direction."
+            ),
+            "Ideas": (
+                "List up to 8 distinct ideas without repeating variations of the same thought."
+            ),
+            "Promising Directions": (
+                "List ideas the speaker favored and the stated reason or evidence."
+            ),
+            "Questions": (
+                "List assumptions to test, unknowns, or questions raised."
+            ),
+            "Next Steps": (
+                "List up to 5 concrete experiments or actions with owners when stated."
+            ),
+        },
+        keywords=[
+            "brainstorm", "brainstorming", "voice memo", "idea", "what if",
+            "could build", "concept", "rough thought", "thinking out loud",
         ],
     )
 
@@ -230,36 +226,31 @@ def _build_call_template() -> _SummaryTemplate:
 def _build_interview_template() -> _SummaryTemplate:
     return _SummaryTemplate(
         id_="interview",
-        name="Interview / Podcast",
-        description="Interview or podcast with guest highlights, key quotes, and topics.",
+        name="Interview",
+        description="An interview with the subject's background, answers, evidence, and follow-ups.",
         section_instructions={
-            "Interview Context": (
-                "Describe the interview setup: topic, participants, and overall format."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the purpose, participants, and outcome."
             ),
-            "Key Topics Covered": (
-                "Bullet the main subjects or questions addressed during the interview."
+            "Candidate / Guest Profile": (
+                "Summarize the subject's relevant background using only stated facts."
             ),
-            "Notable Quotes": (
-                "Bullet impactful or memorable direct quotes from the interviewee. "
-                "Attribute each quote to the speaker. Keep quotes brief."
+            "Key Responses": (
+                "List up to 6 concise answers or viewpoints, preserving attribution."
             ),
-            "Guest Highlights": (
-                "Bullet the most significant insights, stories, or opinions the guest shared."
+            "Evidence & Highlights": (
+                "List examples, accomplishments, stories, or brief quotes supporting key points."
             ),
-            "Recommended / Cited": (
-                "Bullet any books, tools, people, resources, or references mentioned. "
-                "Include context about why they were recommended. "
-                "Write '- None' if nothing was recommended or cited."
+            "Concerns": (
+                "List unresolved concerns, inconsistencies, or areas needing more evidence."
             ),
-            "Takeaways": (
-                "Bullet the 2-5 most valuable takeaways for the audience."
+            "Follow-ups": (
+                "List up to 5 follow-up questions, checks, or next steps."
             ),
         },
         keywords=[
-            "interview", "podcast", "guest", "host", "episode",
-            "on the show", "on the podcast", "thanks for having me",
-            "listeners", "audience", "subscribe", "coming up",
-            "next", "tell us about", "how did you",
+            "interview", "interviewer", "candidate", "guest", "host", "podcast",
+            "tell me about", "tell us about", "thanks for having me", "listeners",
         ],
     )
 
@@ -267,35 +258,31 @@ def _build_interview_template() -> _SummaryTemplate:
 def _build_debrief_template() -> _SummaryTemplate:
     return _SummaryTemplate(
         id_="debrief",
-        name="Post-Event Debrief",
-        description="Debrief after an event, presentation, or experience — what worked, what didn't.",
+        name="Project Review / Retro",
+        description="A project checkpoint or retrospective with progress, learning, and next moves.",
         section_instructions={
-            "Event Overview": (
-                "Brief description of what event or experience is being debriefed."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the project, review period, and outcome."
             ),
-            "What Went Well": (
-                "Bullet successes, positive outcomes, and things that exceeded expectations."
+            "Progress": (
+                "List up to 5 milestones, results, or status changes."
             ),
-            "What Could Improve": (
-                "Bullet areas for improvement, missteps, or things that didn't work as planned."
+            "What Worked": (
+                "List the strongest outcomes, practices, or evidence of success."
             ),
-            "Key Learnings": (
-                "Bullet lessons or insights gained from the experience."
+            "Risks & Gaps": (
+                "List problems, missed expectations, risks, or dependencies."
             ),
-            "Action Items": (
-                "Bullet concrete changes or actions to implement based on the debrief. "
-                "Include owner when stated. Write '- None' if no actions decided."
+            "Decisions": (
+                "List up to 5 explicit decisions or changes in direction."
             ),
-            "Future Recommendations": (
-                "Bullet suggestions for how to handle similar events differently next time. "
-                "Write '- None' if no recommendations were made."
+            "Next Steps": (
+                "List up to 8 actions as owner, task, and due date when stated."
             ),
         },
         keywords=[
-            "debrief", "de-brief", "after action", "retrospective",
-            "retro", "what went well", "what could improve",
-            "lessons learned", "next time", "would do differently",
-            "presentation", "talk", "talked", "event",
+            "project review", "debrief", "retrospective", "retro", "postmortem",
+            "what went well", "what didn't", "lessons learned", "milestone",
         ],
     )
 
@@ -303,40 +290,31 @@ def _build_debrief_template() -> _SummaryTemplate:
 def _build_sales_template() -> _SummaryTemplate:
     return _SummaryTemplate(
         id_="sales",
-        name="Sales / Business Call",
-        description="Sales call or business conversation with deals, next steps, and pipeline.",
+        name="Sales / Client Call",
+        description="A client conversation organized around needs, objections, signals, and next steps.",
         section_instructions={
-            "Call Context": (
-                "Identify the prospect/client, the deal or opportunity discussed, "
-                "and the purpose of this call."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the account, opportunity, and call outcome."
             ),
             "Client Needs": (
-                "Bullet the client's stated needs, pain points, or requirements."
+                "List up to 6 stated goals, pain points, constraints, or success criteria."
             ),
             "Solutions Discussed": (
-                "Bullet products, services, or approaches presented during the call. "
-                "Include pricing or tiers mentioned."
+                "List proposed solutions, scope, pricing, or implementation details."
             ),
             "Objections": (
-                "Bullet any objections or concerns the client raised. "
-                "Write '- None' if no objections were mentioned."
+                "List client concerns and any response or resolution given."
+            ),
+            "Buying Signals": (
+                "List explicit interest, urgency, authority, budget, or timing signals."
             ),
             "Next Steps": (
-                "Bullet agreed follow-up actions with owners and timelines. "
-                "Include proposal delivery, demo scheduling, or internal reviews. "
-                "Write '- None' if no next steps were agreed."
-            ),
-            "Pipeline Notes": (
-                "Bullet deal stage, estimated close date, or competitive context. "
-                "Write '- None' if no pipeline data was discussed."
+                "List up to 8 agreed actions as owner, task, and due date when stated."
             ),
         },
         keywords=[
-            "client", "prospect", "deal", "sale", "proposal",
-            "pricing", "quote", "contract", "scope",
-            "budget", "ROI", "pipeline", "quarter", "target",
-            "customer", "lead", "opportunity", "demo",
-            "trial", "pilot", "negotiat",
+            "sales call", "client", "prospect", "deal", "proposal", "pricing",
+            "contract", "budget", "pipeline", "buyer", "demo", "renewal",
         ],
     )
 
@@ -344,38 +322,92 @@ def _build_sales_template() -> _SummaryTemplate:
 def _build_education_template() -> _SummaryTemplate:
     return _SummaryTemplate(
         id_="education",
-        name="Education / Lecture",
-        description="Lecture, tutoring, or educational content summary with concepts and notes.",
+        name="Lecture / Study",
+        description="Learning notes with concepts, examples, assignments, and review questions.",
         section_instructions={
-            "Topic Overview": (
-                "2-3 sentences on the subject matter being taught or discussed."
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the subject, level, and learning goal."
             ),
             "Key Concepts": (
-                "Bullet the core concepts, definitions, or principles explained. "
-                "Include any formulas, rules, or frameworks presented."
+                "List up to 8 essential definitions, principles, formulas, or frameworks."
             ),
-            "Examples Given": (
-                "Bullet illustrative examples, case studies, or demonstrations used. "
-                "Write '- None' if no examples were provided."
+            "Examples": (
+                "List concise examples, demonstrations, or applications and what each shows."
             ),
-            "Assignments / Homework": (
-                "Bullet any homework, reading, or practice tasks assigned. "
-                "Include deadlines when stated. Write '- None' if nothing assigned."
+            "Study Notes": (
+                "List up to 6 details worth reviewing, including caveats or common mistakes."
             ),
-            "Key Takeaways": (
-                "Bullet the 2-5 most important things a student should remember."
+            "Assignments": (
+                "List assigned reading, exercises, or deliverables with due dates when stated."
             ),
-            "Questions Raised": (
-                "Bullet any questions asked during the session that need follow-up. "
-                "Write '- None' if no questions arose."
+            "Questions": (
+                "List unresolved questions or topics that need more study."
             ),
         },
         keywords=[
-            "learn", "lesson", "lecture", "course", "class",
-            "student", "teacher", "homework", "assignment", "exam",
-            "test", "study", "teach", "tutorial", "workshop",
-            "concept", "principle", "formula", "definition",
-            "grade", "credit", "semester", "module",
+            "lecture", "lesson", "course", "class", "professor", "teacher",
+            "homework", "assignment", "exam", "study", "tutorial", "formula",
+        ],
+    )
+
+
+def _build_personal_template() -> _SummaryTemplate:
+    return _SummaryTemplate(
+        id_="personal",
+        name="Personal Reflection",
+        description="A private reflection organized into themes, feelings, insights, and intentions.",
+        section_instructions={
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the situation, emotional tone, and insight."
+            ),
+            "Themes": (
+                "List up to 5 recurring topics, experiences, or tensions."
+            ),
+            "Feelings": (
+                "List emotions explicitly expressed and the context linked to each one."
+            ),
+            "Insights": (
+                "List realizations, lessons, or changes in perspective."
+            ),
+            "Intentions": (
+                "List plans, habits, or commitments the speaker wants to carry forward."
+            ),
+        },
+        keywords=[
+            "journal", "diary", "reflection", "reflecting", "I feel", "feeling",
+            "grateful", "thankful", "realized", "personal", "mindful", "intention",
+        ],
+    )
+
+
+def _build_medical_template() -> _SummaryTemplate:
+    return _SummaryTemplate(
+        id_="medical",
+        name="Medical SOAP (Documentation Only)",
+        description=(
+            "Structures explicitly stated visit details for documentation only; it does not "
+            "provide medical advice, diagnosis, or treatment recommendations."
+        ),
+        section_instructions={
+            "Snapshot": (
+                "Write 2-4 concise sentences covering the visit reason, stated history, and plan."
+            ),
+            "Subjective": (
+                "List symptoms, history, concerns, and patient-reported details exactly as stated."
+            ),
+            "Objective": (
+                "List only measurements, examination findings, and test results explicitly stated."
+            ),
+            "Assessment": (
+                "List only assessments or diagnoses explicitly stated by a clinician, with attribution."
+            ),
+            "Plan": (
+                "List only stated medications, tests, referrals, instructions, and follow-up timing."
+            ),
+        },
+        keywords=[
+            "patient", "symptoms", "diagnosis", "medical history", "medication",
+            "blood pressure", "follow-up visit", "clinic", "physician", "doctor",
         ],
     )
 
@@ -383,13 +415,15 @@ def _build_education_template() -> _SummaryTemplate:
 # Register all built-in templates at module load time.
 for _builder in (
     _build_meeting_template,
-    _build_personal_template,
-    _build_catchup_template,
-    _build_call_template,
-    _build_interview_template,
+    _build_team_meeting_template,
+    _build_one_on_one_template,
     _build_debrief_template,
     _build_sales_template,
+    _build_interview_template,
     _build_education_template,
+    _build_brainstorm_template,
+    _build_personal_template,
+    _build_medical_template,
 ):
     _register_template(_builder())
 
@@ -432,9 +466,17 @@ def build_summary_prompt(
                   "meeting" template is used.
     """
     tpl = template or get_template("meeting")
+    if tpl is None:  # Defensive guard for a malformed template registry.
+        raise RuntimeError("The default summary template is not registered")
     sections_markdown = "\n".join(
         f"## {section}\n{instruction}"
         for section, instruction in tpl.section_instructions.items()
+    )
+    medical_guardrail = (
+        "For Medical SOAP, structure documentation only. Never infer a diagnosis, "
+        "measurement, treatment, or recommendation that was not explicitly stated.\n\n"
+        if tpl.id == "medical"
+        else ""
     )
 
     return (
@@ -442,10 +484,16 @@ def build_summary_prompt(
         "Use only the transcript content. Preserve important names, decisions, "
         "action items, dates, and unresolved questions. Do not invent details.\n\n"
         f"You are using a \"{tpl.name}\" summary format designed for: {tpl.description}.\n\n"
+        f"{medical_guardrail}"
         f"Chunk {chunk_index} of {chunk_count}:\n{chunk}\n\n"
-        "Return only Markdown in this exact section order:\n"
+        "Return only Markdown using the supported headings below in this order. "
+        "Always include Snapshot. Omit every other heading when the transcript has "
+        "no supported content for it; never write None, N/A, or a placeholder.\n"
         f"{sections_markdown}\n\n"
-        "Keep bullets short. Do not include code fences or extra commentary."
+        "The Snapshot must be 2-4 short sentences. Every other section must use "
+        "one-sentence bullets. Keep each bullet focused on one fact, avoid repeating "
+        "a fact across sections, and preserve speaker attribution when it matters. "
+        "Do not include code fences or extra commentary."
     )
 
 
@@ -536,22 +584,44 @@ def summarize_with_llm(
                     "template_id": tpl.id if tpl else "meeting",
                 })
 
-    if len(outputs) == 1:
-        return outputs[0]["text"], outputs
-
-    combined = "\n\n".join(
-        f"Chunk {item['chunk_index']} summary:\n{item['text']}" for item in outputs
-    )
-    return combined, outputs
+    return _merge_chunk_summaries(outputs, template=tpl), outputs
 
 
 # ---------------------------------------------------------------------------
-# Summary parsing helpers (unchanged — still generic)
+# Summary parsing helpers
 # ---------------------------------------------------------------------------
 
 _HEADING_RE = re.compile(r"^(?:#{1,3}\s+)?\**([A-Za-z][A-Za-z0-9 /&-]{1,60})\**:?$")
 _BULLET_RE = re.compile(r"^(\s*)(?:[-*•]|\d+[.)])\s+(.*)$")
 _LABEL_RE = re.compile(r"^\*\*([^*:\n]{1,80}):\*\*\s*(.*)$")
+_EMPTY_SECTION_RE = re.compile(
+    r"^no (?:action items?|actions?|blockers?|open questions?|questions?|concerns?|"
+    r"objections?|follow-?ups?|decisions?|assignments?|updates?|examples?|"
+    r"recommendations?|plans?|next steps?|buying signals?)(?: (?:were|was|are|is))? "
+    r"(?:mentioned|stated|identified|provided|reported|discussed|assigned|noted|made)$|"
+    r"^no (?:action items?|actions?|blockers?|open questions?|questions?|concerns?|"
+    r"objections?|follow-?ups?|decisions?|assignments?|updates?|examples?|"
+    r"recommendations?|plans?|next steps?|buying signals?)$"
+)
+_MAX_SECTION_PARAGRAPHS = 4
+_DEFAULT_MAX_SECTION_ITEMS = 8
+_MAX_SECTION_ITEMS = {
+    "Key Takeaways": 6,
+    "Decisions": 5,
+    "Open Questions": 5,
+    "Agenda & Updates": 6,
+    "Blockers": 5,
+    "Discussion Themes": 6,
+    "Follow-ups": 5,
+    "Progress": 5,
+    "Key Responses": 6,
+    "Concerns": 5,
+    "Client Needs": 6,
+    "Study Notes": 6,
+    "Ideas": 8,
+    "Questions": 5,
+    "Next Steps": 8,
+}
 
 
 def summary_to_blocks(text: str) -> list[dict[str, Any]]:
@@ -650,7 +720,7 @@ def _summary_item(text: str, *, depth: int = 0) -> dict[str, Any]:
         "depth": depth,
         "label": _strip_summary_markup(label) if label else None,
         "text": _strip_summary_markup(text),
-        "is_none": _strip_summary_markup(text).lower() == "none",
+        "is_none": _is_empty_summary_value(text),
     }
 
 
@@ -664,25 +734,59 @@ def _strip_summary_markup(text: str | None) -> str:
     return value.strip()
 
 
+def _summary_dedupe_key(*parts: str) -> str:
+    """Normalize harmless Markdown, whitespace, case, and punctuation differences."""
+    value = " ".join(_strip_summary_markup(part) for part in parts if part)
+    value = re.sub(r"[\W_]+", " ", value.casefold(), flags=re.UNICODE)
+    return " ".join(value.split())
+
+
+def _is_empty_summary_value(text: str | None) -> bool:
+    """Return True for placeholder content, without hiding factual negative findings."""
+    normalized = _summary_dedupe_key(text or "")
+    if normalized in {
+        "",
+        "none",
+        "na",
+        "n a",
+        "not applicable",
+        "not mentioned",
+        "not provided",
+        "not stated",
+        "nothing mentioned",
+        "nothing stated",
+    }:
+        return True
+    return bool(_EMPTY_SECTION_RE.fullmatch(normalized))
+
+
 _SECTION_ORDER = [
-    "Overview", "Key Points", "Decisions", "Action Items", "Open Questions",
-    "Mood Overview", "Key Events", "Lessons Learned", "Gratitude Notes",
-    "Looking Ahead",
-    "Main Topics", "Notable Stories", "Updates", "Plans Made",
-    "Questions Raised",
-    "Call Context", "Main Discussion", "Outcomes", "Follow-ups", "Open Items",
-    "Interview Context", "Key Topics Covered", "Notable Quotes",
-    "Guest Highlights", "Recommended / Cited", "Takeaways",
-    "Event Overview", "What Went Well", "What Could Improve",
-    "Key Learnings", "Future Recommendations",
-    "Call Context", "Client Needs", "Solutions Discussed", "Objections",
-    "Next Steps", "Pipeline Notes",
-    "Topic Overview", "Key Concepts", "Examples Given",
-    "Assignments / Homework", "Key Takeaways", "Questions Raised",
+    # Current built-in pack.
+    "Snapshot", "Key Takeaways", "Decisions", "Action Items", "Open Questions",
+    "Agenda & Updates", "Blockers", "Discussion Themes", "Feedback", "Commitments",
+    "Follow-ups", "Progress", "What Worked", "Risks & Gaps", "Next Steps",
+    "Client Needs", "Solutions Discussed", "Objections", "Buying Signals",
+    "Candidate / Guest Profile", "Key Responses", "Evidence & Highlights", "Concerns",
+    "Key Concepts", "Examples", "Study Notes", "Assignments", "Questions",
+    "Ideas", "Promising Directions", "Themes", "Feelings", "Insights", "Intentions",
+    "Subjective", "Objective", "Assessment", "Plan",
+    # Legacy headings remain parseable for summaries already stored on disk.
+    "Overview", "Key Points", "Mood Overview", "Key Events", "Lessons Learned",
+    "Gratitude Notes", "Looking Ahead", "Main Topics", "Notable Stories", "Updates",
+    "Plans Made", "Questions Raised", "Call Context", "Main Discussion", "Outcomes",
+    "Open Items", "Interview Context", "Key Topics Covered", "Notable Quotes",
+    "Guest Highlights", "Recommended / Cited", "Takeaways", "Event Overview",
+    "What Went Well", "What Could Improve", "Key Learnings", "Future Recommendations",
+    "Pipeline Notes", "Topic Overview", "Examples Given", "Assignments / Homework",
 ]
 
 
-def summary_to_sections(text: str) -> list[dict[str, Any]]:
+def summary_to_sections(
+    text: str,
+    *,
+    max_paragraphs: int | None = _MAX_SECTION_PARAGRAPHS,
+    max_items: int | None = _DEFAULT_MAX_SECTION_ITEMS,
+) -> list[dict[str, Any]]:
     """Parse a Markdown summary into structured sections.
 
     Works with any template — section titles are detected from headings
@@ -716,14 +820,19 @@ def summary_to_sections(text: str) -> list[dict[str, Any]]:
         section = ensure_section(current_title)
         if block_type == "paragraph":
             paragraph = str(block.get("text") or "").strip()
-            if paragraph and paragraph.lower() != "none" and paragraph not in section["_seen_paragraphs"]:
+            key = _summary_dedupe_key(paragraph)
+            if (
+                paragraph
+                and not _is_empty_summary_value(paragraph)
+                and key not in section["_seen_paragraphs"]
+            ):
                 section["paragraphs"].append(paragraph)
-                section["_seen_paragraphs"].add(paragraph)
+                section["_seen_paragraphs"].add(key)
         elif block_type == "list":
             for item in block.get("items") or []:
                 item_text = str(item.get("text") or "").strip()
                 item_label = str(item.get("label") or "").strip()
-                key = (item_label.lower(), item_text.lower())
+                key = _summary_dedupe_key(item_label, item_text)
                 if key in section["_seen_items"]:
                     continue
                 section["items"].append(item)
@@ -735,19 +844,163 @@ def summary_to_sections(text: str) -> list[dict[str, Any]]:
     for title in ordered_titles:
         section = sections[title]
         # Always filter out "- None" items.
+        item_limit = (
+            min(_MAX_SECTION_ITEMS.get(title, max_items), max_items)
+            if max_items is not None
+            else None
+        )
         items = [item for item in section["items"] if not item.get("is_none")]
-        if not section["paragraphs"] and not items:
+        if item_limit is not None:
+            items = items[:item_limit]
+        paragraphs = section["paragraphs"]
+        if max_paragraphs is not None:
+            paragraphs = paragraphs[:max_paragraphs]
+        if not paragraphs and not items:
             continue
         result.append(
             {
                 "title": section["title"],
                 "slug": section["slug"],
-                "paragraphs": section["paragraphs"],
+                "paragraphs": paragraphs,
                 "items": items,
                 "item_count": len(items),
             }
         )
     return result
+
+
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
+
+
+def _merge_chunk_summaries(
+    outputs: list[dict[str, Any]],
+    *,
+    template: _SummaryTemplate | None,
+) -> str:
+    """Merge repeated per-chunk sections without another LLM request.
+
+    Raw per-chunk responses remain available in ``outputs``. The persisted summary
+    becomes one bounded, de-duplicated document in the selected template's order.
+    """
+    if not outputs:
+        return "No transcript text was available to summarize."
+
+    wrapped_outputs = "\n\n".join(
+        f"## Summary\n{str(item.get('text') or '').strip()}" for item in outputs
+    )
+    sections = summary_to_sections(
+        wrapped_outputs,
+        max_paragraphs=None,
+        max_items=None,
+    )
+    if not sections:
+        return "No summary available."
+
+    tpl = template or get_template("meeting")
+    section_by_title = {section["title"]: section for section in sections}
+    ordered_titles = list(tpl.section_instructions) if tpl else []
+    ordered_titles.extend(
+        section["title"]
+        for section in sections
+        if section["title"] not in ordered_titles
+    )
+
+    lines: list[str] = []
+    for title in ordered_titles:
+        section = section_by_title.get(title)
+        if not section:
+            continue
+
+        paragraphs = list(section.get("paragraphs") or [])
+        items = list(section.get("items") or [])
+        if title == "Snapshot":
+            item_sentences = [
+                " ".join(
+                    part
+                    for part in (
+                        str(item.get("label") or "").strip(),
+                        str(item.get("text") or "").strip(),
+                    )
+                    if part
+                )
+                for item in items
+            ]
+            snapshot = _compact_snapshot(paragraphs + item_sentences)
+            if not snapshot:
+                continue
+            lines.extend((f"## {title}", snapshot, ""))
+            continue
+
+        paragraph_limit = min(len(paragraphs), 2)
+        item_limit = _MAX_SECTION_ITEMS.get(title, _DEFAULT_MAX_SECTION_ITEMS)
+        paragraphs = paragraphs[:paragraph_limit]
+        items = items[:item_limit]
+        if not paragraphs and not items:
+            continue
+
+        lines.append(f"## {title}")
+        lines.extend(paragraphs)
+        for item in items:
+            label = str(item.get("label") or "").strip()
+            text = str(item.get("text") or "").strip()
+            if not text or _is_empty_summary_value(text):
+                continue
+            depth = max(0, min(int(item.get("depth") or 0), 3))
+            prefix = "  " * depth + "- "
+            content = f"**{label}:** {text}" if label else text
+            lines.append(prefix + content)
+        lines.append("")
+
+    return "\n".join(lines).strip() or "No summary available."
+
+
+def _compact_snapshot(paragraphs: list[str], max_sentences: int = 4) -> str:
+    """Select a short, recording-wide snapshot from per-chunk snapshots."""
+    if max_sentences <= 0:
+        return ""
+
+    sentence_groups: list[list[str]] = []
+    seen: set[str] = set()
+    for paragraph in paragraphs:
+        group: list[str] = []
+        for sentence in _SENTENCE_BOUNDARY_RE.split(paragraph.strip()):
+            sentence = sentence.strip()
+            key = _summary_dedupe_key(sentence)
+            if not key or key in seen or _is_empty_summary_value(sentence):
+                continue
+            seen.add(key)
+            group.append(sentence)
+        if group:
+            sentence_groups.append(group)
+
+    if not sentence_groups:
+        return ""
+
+    first_sentences = [group[0] for group in sentence_groups]
+    selected: list[str] = []
+    if max_sentences == 1:
+        selected.append(first_sentences[0])
+    elif len(first_sentences) <= max_sentences:
+        selected.extend(first_sentences)
+    else:
+        last_index = len(first_sentences) - 1
+        indices = {
+            round(position * last_index / (max_sentences - 1))
+            for position in range(max_sentences)
+        }
+        selected.extend(first_sentences[index] for index in sorted(indices))
+
+    if len(selected) < max_sentences:
+        for sentence_index in range(1, max(len(group) for group in sentence_groups)):
+            for group in sentence_groups:
+                if sentence_index < len(group):
+                    selected.append(group[sentence_index])
+                    if len(selected) == max_sentences:
+                        break
+            if len(selected) == max_sentences:
+                break
+
+    return " ".join(selected[:max_sentences])
 
 
 def _normalize_section_title(title: str) -> str:

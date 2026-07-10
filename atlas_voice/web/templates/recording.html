@@ -1,257 +1,298 @@
 {% extends "base.html" %}
 {% block title %}{{ recording.title }} - Atlas Voice{% endblock %}
+{% block body_class %}recording-page{% endblock %}
 {% block head_extra %}
-  {% if recording.status not in ["done", "failed"] %}
-    <meta http-equiv="refresh" content="5">
-  {% endif %}
+  <script src="/static/recordings.js?v=20260710.2" defer></script>
 {% endblock %}
+
 {% block content %}
-  <section class="panel">
-    <div class="panel-heading">
-      <div>
-        <h1>{{ recording.title }}</h1>
-        <p><code>{{ recording.id }}</code></p>
-      </div>
-      <div class="actions">
-        <span class="status status-{{ recording.status }}">{{ recording.status }}</span>
-        <form action="/recordings/{{ recording.id }}/retry" method="post">
-          <button type="submit">Retry</button>
+  {% set note_sections = cached_summary_sections if is_resummarizing else summary_sections %}
+  <main class="recording-document">
+    <a class="document-back" href="/recordings">
+      <img class="ui-icon" src="/static/icons/chevron-down.svg" alt="">
+      <span>All recordings</span>
+    </a>
+
+    <header class="document-header">
+      <div class="document-title-block">
+        <form class="document-title-form" action="/recordings/{{ recording.id }}/title" method="post">
+          <input type="hidden" name="redirect_to" value="/recordings/{{ recording.id }}">
+          <label class="sr-only" for="recording-title">Recording title</label>
+          <input id="recording-title" name="title" type="text" value="{{ recording.title }}" maxlength="160" required>
+          <button type="submit">Save title</button>
         </form>
+        <div class="document-meta">
+          <span>{{ recording.created_at_display }}</span>
+          <span>{{ recording.duration_label }}</span>
+          <span class="status status-{{ recording.status }}">{{ recording.status_label }}</span>
+          {% if recording.title_origin == 'generated' %}<span>Auto titled</span>{% endif %}
+        </div>
       </div>
-    </div>
-    <section class="runtime-summary" aria-label="Worker runtime">
-      <div>
-        <span>Compute</span>
-        <strong>{{ runtime.accelerator }}</strong>
-        <small>{{ runtime.device }}</small>
+      {% if recording.status == 'duplicate' and duplicate_recording %}
+        <a class="document-chat-action" href="/recordings/{{ duplicate_recording.id }}">
+          <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">
+          <span>Open original</span>
+        </a>
+      {% else %}
+        <a class="document-chat-action" href="/?recording={{ recording.id }}">
+          <img class="ui-icon" src="/static/icons/message-square-text.svg" alt="">
+          <span>Chat about this</span>
+        </a>
+      {% endif %}
+    </header>
+
+    <section class="document-controls" aria-label="Recording controls">
+      <form action="/recordings/{{ recording.id }}/folder" method="post">
+        <input type="hidden" name="redirect_to" value="/recordings/{{ recording.id }}">
+        <label>
+          <span>Folder</span>
+          <select name="folder_id" onchange="this.form.submit()">
+            <option value=""{% if not recording.folder_id %} selected{% endif %}>Unfiled</option>
+            {% for folder in folders %}
+              <option value="{{ folder.id }}"{% if recording.folder_id == folder.id %} selected{% endif %}>{{ folder.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </form>
+      <label>
+        <span>Note style</span>
+        <select
+          id="template-select"
+          data-template-select
+          data-current-template="{{ preferred_template_id }}"
+          data-endpoint="/recordings/{{ recording.id }}/template"
+        >
+          {% for tpl_id, tpl in all_templates.items() %}
+            <option
+              value="{{ tpl_id }}"
+              data-description="{{ tpl.description }}"
+              {% if tpl_id == preferred_template_id %}selected{% endif %}
+            >{{ tpl.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="document-quality" aria-label="Processing level">
+        <img class="mode-icon" src="/static/icons/{{ quality_profile.icon }}" alt="">
+        <span>Processing</span>
+        <strong>{{ quality_profile.name }}</strong>
+        <small>{{ quality_profile.promise }}</small>
       </div>
-      <div>
-        <span>WhisperX</span>
-        <strong>{{ runtime.whisperx_model }}</strong>
-        <small>{{ runtime.compute_type }}</small>
-      </div>
-      <div>
-        <span>Diarization</span>
-        <strong>{{ runtime.pyannote_model }}</strong>
-      </div>
+      {% if preferred_template %}
+        <p data-template-description>{{ preferred_template.description }}</p>
+      {% endif %}
     </section>
 
-    {% if recording.error %}
-      <pre class="error">{{ recording.error }}</pre>
-    {% endif %}
+    <section class="template-confirmation" data-template-confirmation hidden aria-live="polite">
+      <div>
+        <strong data-template-confirm-title>Use this note style?</strong>
+        <p data-template-confirm-copy>Your transcript stays unchanged. Atlas will only update the notes.</p>
+      </div>
+      <div class="template-confirmation-actions">
+        <button class="quiet-button" type="button" data-template-cancel>Keep current</button>
+        <button type="button" data-template-apply>Use style</button>
+      </div>
+      <p class="inline-status" data-template-status></p>
+    </section>
 
-    {% if anythingllm_message %}
-      <p class="notice{% if anythingllm_message.kind == 'error' %} notice-error{% endif %}">{{ anythingllm_message.text }}</p>
-    {% endif %}
+    {% if recording.error %}<pre class="error">{{ recording.error }}</pre>{% endif %}
+    {% if anythingllm_message %}<p class="notice{% if anythingllm_message.kind == 'error' %} notice-error{% endif %}">{{ anythingllm_message.text }}</p>{% endif %}
 
     {% if recording.normalized_path %}
-      <audio class="player" controls src="/media/recordings/{{ recording.id }}/normalized.wav"></audio>
+      <audio id="recording-audio" class="document-audio" controls preload="metadata" src="/media/recordings/{{ recording.id }}/normalized.wav"></audio>
     {% endif %}
 
-    {% set pipeline_steps = [
-      ("ingest", "Ingest"),
-      ("normalize", "Normalize"),
-      ("transcribe", "Transcribe"),
-      ("diarize", "Diarize"),
-      ("merge", "Merge"),
-      ("summarize", "Summarize"),
-    ] %}
-    {% set progress = namespace(points=0) %}
-    {% for step_id, label in pipeline_steps %}
-      {% set state = namespace(job=None) %}
-      {% for job in jobs %}
-        {% if job.step == step_id %}
-          {% set state.job = job %}
-        {% endif %}
-      {% endfor %}
-      {% if state.job and state.job.status == "done" %}
-        {% set progress.points = progress.points + 2 %}
-      {% elif state.job and state.job.status == "running" %}
-        {% set progress.points = progress.points + 1 %}
-      {% endif %}
-    {% endfor %}
-    {% set progress_percent = ((progress.points * 100) / (pipeline_steps | length * 2)) | round(0, "floor") | int %}
-    <section class="progress-overview" aria-label="Overall progress">
-      <div class="progress-heading">
-        <strong>{{ progress_percent }}%</strong>
-        <span>{{ recording.status }}</span>
-      </div>
-      <div class="progress-meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ progress_percent }}">
-        <span style="width: {{ progress_percent }}%"></span>
-      </div>
-    </section>
-    <section class="stage-progress" aria-label="Processing progress">
-      {% for step_id, label in pipeline_steps %}
-        {% set state = namespace(job=None) %}
-        {% for job in jobs %}
-          {% if job.step == step_id %}
-            {% set state.job = job %}
-          {% endif %}
-        {% endfor %}
-        {% set stage_status = state.job.status if state.job else "waiting" %}
-        <div class="stage stage-{{ stage_status }}">
-          <span class="stage-dot" aria-hidden="true"></span>
-          <span class="stage-copy">
-            <strong>{{ label }}</strong>
-            <small>
-              {% if state.job %}
-                {{ state.job.status }}{% if state.job.attempts is not none %}, attempt {{ state.job.attempts }}/{{ state.job.max_attempts }}{% endif %}, {{ state.job.duration_label }}
-              {% else %}
-                waiting
-              {% endif %}
-            </small>
-          </span>
-        </div>
-      {% endfor %}
-    </section>
-
-    <div class="grid">
-      <section>
-        <div class="section-heading">
-          <h2>Summary</h2>
-          <div class="template-selector">
-            <label for="template-select">Template:</label>
-            <select id="template-select" onchange="changeTemplate(this.value)">
-              {% for tpl_id, tpl in all_templates.items() %}
-              <option value="{{ tpl_id }}"{% if tpl_id == preferred_template_id %} selected{% endif %}>
-                {{ tpl.name }}
-              </option>
-              {% endfor %}
-            </select>
-            {% if preferred_template %}
-            <small class="template-desc">{{ preferred_template.description }}</small>
+    {% if recording.status != 'duplicate' %}
+      <section class="recording-people" data-speaker-editor data-endpoint="/recordings/{{ recording.id }}/speakers">
+        <header>
+          <div>
+            <h2>People</h2>
+            {% if detected_speaker_count %}
+              <p>
+                Atlas heard {{ detected_speaker_count }} voice{{ '' if detected_speaker_count == 1 else 's' }}.
+                {% if processing_options.expected_main_speakers %}
+                  You expected {{ processing_options.expected_main_speakers }} main speaker{{ '' if processing_options.expected_main_speakers == 1 else 's' }}.
+                  {% if additional_speaker_count %}{{ additional_speaker_count }} additional voice{{ '' if additional_speaker_count == 1 else 's' }} was kept separate.{% endif %}
+                {% else %}
+                  Add names to make the transcript and notes easier to read.
+                {% endif %}
+              </p>
+            {% else %}
+              <p>Detected voices will appear here after speaker analysis.</p>
             {% endif %}
           </div>
-        </div>
-        {% if is_resummarizing %}
-          <p class="muted resummarizing-banner">Switching to "{{ preferred_template.name }}". Current "{{ cached_summary.template_id }}" summary stays visible until the new one is ready.</p>
-          <div class="summary summary-readable summary-cached">
-            {% for section in cached_summary_sections %}
-              <details class="summary-section summary-section-{{ section.slug }}" open>
-                <summary>
-                  <span>{{ section.title }}</span>
-                  {% if section.item_count %}<small>{{ section.item_count }} items</small>{% endif %}
-                </summary>
-                <div class="summary-section-body">
-                  {% for paragraph in section.paragraphs %}
-                    <p>{{ paragraph }}</p>
-                  {% endfor %}
-                  {% if section["items"] %}
-                    <ul class="summary-list{% if section["items"] | length > 8 %} summary-list-dense{% endif %}">
-                      {% for item in section["items"] %}
-                        <li class="summary-depth-{{ item.depth }}{% if item.is_none %} summary-none{% endif %}">
-                          {% if item.label %}<strong>{{ item.label }}</strong>{% endif %}
-                          {% if item.text %}<span>{{ item.text }}</span>{% endif %}
-                        </li>
-                      {% endfor %}
-                    </ul>
+          {% if processing_options.expected_main_speakers %}
+            <span class="people-count">{{ processing_options.expected_main_speakers }} expected</span>
+          {% else %}
+            <span class="people-count">Atlas decides</span>
+          {% endif %}
+        </header>
+
+        {% if speakers %}
+          <form class="speaker-name-form" data-speaker-name-form>
+            <div class="speaker-name-list">
+              {% for speaker in speakers %}
+                <div class="speaker-name-row">
+                  <span class="speaker-swatch" aria-hidden="true">{{ loop.index }}</span>
+                  <label>
+                    <span>{{ 'Main speaker' if speaker.is_main else 'Additional voice' }}</span>
+                    <input
+                      type="text"
+                      value="{{ speaker.display_name or speaker.default_name }}"
+                      maxlength="80"
+                      autocomplete="off"
+                      data-speaker-name
+                      data-speaker-label="{{ loop.index0 }}"
+                    >
+                  </label>
+                  <small>{{ speaker.talk_seconds | timecode }} speaking</small>
+                  {% if recording.normalized_path %}
+                    <button
+                      class="quiet-button speaker-preview"
+                      type="button"
+                      data-speaker-seek="{{ speaker.first_seen }}"
+                    >Listen</button>
                   {% endif %}
                 </div>
-              </details>
-            {% endfor %}
-          </div>
-        {% elif summary_sections %}
-          <div class="summary summary-readable">
-            {% for section in summary_sections %}
-              <details class="summary-section summary-section-{{ section.slug }}" open>
-                <summary>
-                  <span>{{ section.title }}</span>
-                  {% if section.item_count %}<small>{{ section.item_count }} items</small>{% endif %}
-                </summary>
-                <div class="summary-section-body">
-                  {% for paragraph in section.paragraphs %}
-                    <p>{{ paragraph }}</p>
-                  {% endfor %}
-                  {% if section["items"] %}
-                    <ul class="summary-list{% if section["items"] | length > 8 %} summary-list-dense{% endif %}">
-                      {% for item in section["items"] %}
-                        <li class="summary-depth-{{ item.depth }}{% if item.is_none %} summary-none{% endif %}">
-                          {% if item.label %}<strong>{{ item.label }}</strong>{% endif %}
-                          {% if item.text %}<span>{{ item.text }}</span>{% endif %}
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  {% endif %}
-                </div>
-              </details>
-            {% endfor %}
-          </div>
-        {% else %}
-          <p class="muted">No summary yet.</p>
+              {% endfor %}
+            </div>
+            <footer>
+              <p>Names update the transcript immediately and refresh the notes.</p>
+              <button type="submit">Save names and update notes</button>
+            </footer>
+            <p class="inline-status" data-speaker-status aria-live="polite"></p>
+          </form>
         {% endif %}
       </section>
-      <section>
-        <h2>Jobs</h2>
-        <table>
-          <thead>
-            <tr><th>Step</th><th>Status</th><th>Attempts</th><th>Started</th><th>Finished</th><th>Duration</th></tr>
-          </thead>
-          <tbody>
-            {% for job in jobs %}
-              <tr>
-                <td>{{ job.step }}</td>
-                <td>{{ job.status }}</td>
-                <td>{{ job.attempts }}/{{ job.max_attempts }}</td>
-                <td>{{ job.started_at_display }}</td>
-                <td>{{ job.finished_at_display }}</td>
-                <td>{{ job.duration_label }}</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </section>
-    </div>
+    {% endif %}
 
-    <section>
-      <div class="section-heading">
-        <h2>Transcript</h2>
-        <div class="exports">
-          <a href="/api/recordings/{{ recording.id }}/export?format=json">JSON</a>
-          <a href="/api/recordings/{{ recording.id }}/export?format=md">Markdown</a>
-          <a href="/api/recordings/{{ recording.id }}/export?format=txt">Text</a>
-          <form action="/recordings/{{ recording.id }}/sync-anythingllm" method="post">
-            <button type="submit"{% if not (segments or summary) %} disabled{% endif %}>Sync to AnythingLLM</button>
-          </form>
+    {% if recording.status not in ["done", "failed", "duplicate"] %}
+      {% set pipeline_steps = [("ingest", "Ingest"), ("normalize", "Normalize"), ("transcribe", "Transcribe"), ("diarize", "Speakers"), ("merge", "Assemble"), ("summarize", "Summarize")] %}
+      <section class="processing-note" aria-live="polite" data-recording-status-poll data-status-endpoint="/api/recordings/{{ recording.id }}/status">
+        <span class="processing-spinner" aria-hidden="true"></span>
+        {% if recording.status == 'waiting_resources' %}
+          <div><strong>Waiting for device room</strong><p>Atlas will continue automatically when enough memory is free.</p></div>
+        {% else %}
+          <div><strong>Processing your recording</strong><p>Transcript and notes update here automatically.</p></div>
+        {% endif %}
+      </section>
+    {% endif %}
+
+    {% if is_resummarizing %}
+      <p class="resummarizing-banner">Updating your notes. The current version stays visible until the update is ready.</p>
+    {% endif %}
+
+    <article class="note-reader" aria-label="Processed recording notes">
+      {% if recording.status == 'duplicate' %}
+        <div class="note-empty note-terminal-state">
+          <h2>This recording is already in your library</h2>
+          {% if duplicate_recording %}
+            <p>It matches <a href="/recordings/{{ duplicate_recording.id }}">{{ duplicate_recording.title }}</a>. Open the original for its notes, transcript, and chat.</p>
+          {% else %}
+            <p>Atlas found an identical audio file, but the original is no longer available.</p>
+          {% endif %}
         </div>
-      </div>
-      {% if segments %}
-        <div class="transcript">
-          {% for segment in segments %}
-            <article class="segment">
-              <div class="segment-meta">
-                <strong>{{ segment.speaker }}</strong>
-                <span>{{ segment.start | timecode }} - {{ segment.end | timecode }}</span>
-              </div>
-              <p>{{ segment.text }}</p>
-            </article>
-          {% endfor %}
+      {% elif note_sections %}
+        {% for section in note_sections %}
+          <section class="recording-note-section summary-section-{{ section.slug }}{% if section.slug in ['snapshot', 'overview', 'executive-summary'] %} note-snapshot{% endif %}{% if section.slug in ['decisions', 'risks-and-blockers', 'recommendation'] %} note-callout{% endif %}">
+            <h2>{{ section.title }}</h2>
+            {% for paragraph in section.paragraphs[:2] %}<p>{{ paragraph }}</p>{% endfor %}
+            {% if section.paragraphs | length > 2 %}
+              <details class="note-more">
+                <summary>More context</summary>
+                {% for paragraph in section.paragraphs[2:] %}<p>{{ paragraph }}</p>{% endfor %}
+              </details>
+            {% endif %}
+            {% if section["items"] %}
+              {% set item_limit = 8 if section.slug in ['action-items', 'next-steps', 'commitments'] else 6 %}
+              <ul{% if section.slug in ['action-items', 'next-steps', 'commitments'] %} class="note-checklist"{% endif %}>
+                {% for item in section["items"][:item_limit] %}
+                  <li class="summary-depth-{{ item.depth }}">
+                    {% if section.slug in ['action-items', 'next-steps', 'commitments'] %}<span class="note-checkbox" aria-hidden="true"></span>{% endif %}
+                    <span>{% if item.label %}<strong>{{ item.label }}</strong>{% endif %}{% if item.text %}{{ item.text }}{% endif %}</span>
+                  </li>
+                {% endfor %}
+              </ul>
+              {% if section["items"] | length > item_limit %}
+                <details class="note-more">
+                  <summary>{{ section["items"] | length - item_limit }} more</summary>
+                  <ul>
+                    {% for item in section["items"][item_limit:] %}
+                      <li>{% if item.label %}<strong>{{ item.label }}</strong>{% endif %}{{ item.text }}</li>
+                    {% endfor %}
+                  </ul>
+                </details>
+              {% endif %}
+            {% endif %}
+          </section>
+        {% endfor %}
+      {% elif recording.status == 'failed' %}
+        <div class="note-empty note-terminal-state">
+          <h2>Notes could not be created</h2>
+          <p>The recording needs another processing attempt before structured notes are available.</p>
+          <form action="/recordings/{{ recording.id }}/retry" method="post"><button type="submit">Retry processing</button></form>
         </div>
       {% else %}
-        <p class="muted">No transcript yet.</p>
+        <div class="note-empty">
+          <h2>Notes are on the way</h2>
+          <p>Atlas will organize the transcript into a concise, readable document.</p>
+        </div>
       {% endif %}
-    </section>
-  </section>
+    </article>
 
-  <script>
-    function changeTemplate(templateId) {
-      if (!templateId) return;
-      fetch('/recordings/{{ recording.id }}/template', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ template_id: templateId })
-      })
-      .then(function(resp) { return resp.json(); })
-      .then(function(data) {
-        if (data.error) {
-          alert('Error: ' + data.error);
-        } else {
-          // Reload the page to show the re-summarized content
-          location.reload();
-        }
-      })
-      .catch(function(err) {
-        alert('Failed to change template: ' + err);
-      });
-    }
-  </script>
+    {% if recording.status != 'duplicate' %}
+      <details class="recording-transcript" data-lazy-transcript data-transcript-layout="document" data-transcript-endpoint="/api/recordings/{{ recording.id }}/transcript" data-audio-target="recording-audio">
+        <summary>
+          <span><strong>Transcript</strong><small>{{ segment_count }} segment{{ '' if segment_count == 1 else 's' }}</small></span>
+          <span>Show full transcript</span>
+        </summary>
+        <div class="recording-transcript-list" data-transcript-list>
+          <p class="transcript-load-state">Open to load the full transcript.</p>
+        </div>
+      </details>
+    {% endif %}
+
+    <details class="processing-details">
+      <summary>Processing details</summary>
+      <div class="processing-stage-list">
+        {% for job in jobs %}
+          <div>
+            <span class="stage-dot stage-{{ job.status }}" aria-hidden="true"></span>
+            <strong>{{ job.step | replace('_', ' ') | title }}</strong>
+            <span>{{ job.status }}</span>
+            <small>{{ job.duration_label }}</small>
+          </div>
+        {% endfor %}
+      </div>
+      <div class="document-runtime">
+        <span>{{ runtime.accelerator }}</span>
+        <span>{{ runtime.whisperx_model }}</span>
+        <span>{{ runtime.pyannote_model }}</span>
+      </div>
+    </details>
+
+    <footer class="document-footer">
+      <div class="exports" aria-label="Export recording">
+        {% if recording.status == 'duplicate' and duplicate_recording %}
+          <span>Original</span>
+          <a href="/recordings/{{ duplicate_recording.id }}">{{ duplicate_recording.title }}</a>
+        {% else %}
+          <span>Export</span>
+          <a href="/api/recordings/{{ recording.id }}/export?format=md">Markdown</a>
+          <a href="/api/recordings/{{ recording.id }}/export?format=txt">Text</a>
+          <a href="/api/recordings/{{ recording.id }}/export?format=json">JSON</a>
+        {% endif %}
+      </div>
+      <div class="document-footer-actions">
+        {% if recording.status != 'duplicate' %}
+          <form action="/recordings/{{ recording.id }}/sync-anythingllm" method="post">
+            <button class="quiet-button" type="submit"{% if not (segment_count or summary) %} disabled{% endif %}>Sync to AnythingLLM</button>
+          </form>
+        {% endif %}
+        {% if recording.status == 'failed' %}
+          <form action="/recordings/{{ recording.id }}/retry" method="post"><button type="submit">Retry processing</button></form>
+        {% endif %}
+      </div>
+    </footer>
+  </main>
+
 {% endblock %}

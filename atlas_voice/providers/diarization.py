@@ -12,11 +12,19 @@ from atlas_voice.providers.transcript_utils import (
 
 
 def diarize_audio(
-    audio_path: Path, settings: Settings, *, transcript: dict[str, Any] | None = None
+    audio_path: Path,
+    settings: Settings,
+    *,
+    transcript: dict[str, Any] | None = None,
+    expected_speakers: int | None = None,
 ) -> list[dict[str, Any]]:
     provider = settings.diarization_provider.lower()
     if provider == "pyannote":
-        return diarize_pyannote(audio_path, settings)
+        return diarize_pyannote(
+            audio_path,
+            settings,
+            expected_speakers=expected_speakers,
+        )
     if provider == "transcript":
         if transcript is None:
             raise RuntimeError("Transcript diarization requires transcript metadata.")

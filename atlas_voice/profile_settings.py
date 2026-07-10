@@ -6,6 +6,7 @@ from typing import Any
 
 from .assistant_config import AssistantConfig
 from .config import Settings
+from .voice_profiles import voice_profile as resolve_voice_profile
 
 PROFILE_SETTING_KEYS = {
     "stt_provider": "asr_provider",
@@ -59,6 +60,12 @@ PROFILE_SETTING_KEYS = {
     "realtime_vad_threshold": "realtime_vad_threshold",
     "realtime_vad_min_speech_ms": "realtime_vad_min_speech_ms",
     "realtime_vad_silence_ms": "realtime_vad_silence_ms",
+    "web_search_enabled": "web_search_enabled",
+    "web_search_provider": "web_search_provider",
+    "web_search_base_url": "web_search_base_url",
+    "web_search_timeout": "web_search_timeout",
+    "web_search_max_results": "web_search_max_results",
+    "web_search_cache_ttl_seconds": "web_search_cache_ttl_seconds",
 }
 
 _LOWERCASE_SETTINGS = {
@@ -69,6 +76,7 @@ _LOWERCASE_SETTINGS = {
     "ambient_mode",
     "ambient_vad_provider",
     "ambient_vad_fallback_provider",
+    "web_search_provider",
 }
 
 
@@ -97,6 +105,34 @@ def settings_for_profile(
         )
 
     return replace(settings, **updates) if updates else settings
+
+
+def settings_for_voice_profile(
+    settings: Settings,
+    assistant_config: AssistantConfig,
+    profile_id: object | None = None,
+) -> Settings:
+    """Resolve a session-local voice tier on top of the legacy direct-voice profile."""
+
+    direct_settings = settings_for_profile(settings, assistant_config, "direct_voice")
+    selected_value = profile_id
+    if selected_value is None:
+        direct_overrides = assistant_config.profile_overrides("direct_voice")
+        selected_value = direct_overrides.get(
+            "voice_profile", direct_overrides.get("voice_tier")
+        )
+        if selected_value is None:
+            return direct_settings
+
+    selected = resolve_voice_profile(assistant_config, selected_value)
+    updates: dict[str, Any] = {}
+    _apply_llm_profile_updates(
+        updates,
+        direct_settings,
+        assistant_config,
+        selected.llm_profile,
+    )
+    return replace(direct_settings, **updates) if updates else direct_settings
 
 
 def settings_for_pipeline(settings: Settings, assistant_config: AssistantConfig) -> Settings:

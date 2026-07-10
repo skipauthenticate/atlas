@@ -4,15 +4,19 @@ import asyncio
 import copy
 import math
 import os
+import re
+import secrets
 import shutil
 import subprocess
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import (
     FastAPI,
@@ -27,6 +31,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from atlas_voice.assistant_config import load_assistant_config
 from atlas_voice.anythingllm import (
@@ -40,7 +45,13 @@ from atlas_voice.exporter import export_payload, export_recording
 from atlas_voice.merge import format_seconds
 from atlas_voice.pipeline import PipelineProcessor
 from atlas_voice.privacy import privacy_summary
-from atlas_voice.profile_settings import settings_for_pipeline, settings_for_profile
+from atlas_voice.retrieval import build_focused_recording_context
+from atlas_voice.profile_settings import (
+    settings_for_pipeline,
+    settings_for_profile,
+    settings_for_voice_profile,
+)
+from atlas_voice.quality import normalize_quality_tier, quality_profile, quality_profiles
 from atlas_voice.realtime import (
     MAX_REALTIME_HISTORY_MESSAGES,
     REALTIME_SYSTEM_PROMPT,
@@ -49,6 +60,7 @@ from atlas_voice.realtime import (
     decode_audio_delta,
     extract_text_input,
     generate_realtime_reply,
+    is_false_history_access_refusal,
     is_tts_sidecar_provider,
     normalize_tts_provider,
     synthesize_with_espeak_ng,
@@ -62,19 +74,37 @@ from atlas_voice.storage import safe_filename
 from atlas_voice.summarizer import get_template, list_templates, summary_to_sections
 from atlas_voice.tools import ToolRegistry, ToolRegistryError, load_tool_registry
 from atlas_voice.turn_state import RealtimeTurnState
+from atlas_voice.voice_profiles import (
+    VoiceProfile,
+    VoiceProfileError,
+    normalize_voice_profile_id,
+    public_voice_profiles,
+    voice_profile,
+)
+from atlas_voice.web_search import (
+    WebSearchResponse,
+    WebSearchResult,
+    close_web_search_client,
+    search_web,
+    web_search_requested,
+)
 
 
 settings = Settings.from_env()
 assistant_config = load_assistant_config(settings.assistant_config_path)
 db = Database(settings.db_path)
 processor = PipelineProcessor(settings_for_pipeline(settings, assistant_config), db)
+_REALTIME_ACCESS_TOKEN = secrets.token_urlsafe(32)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     settings.ensure_directories()
     db.initialize()
-    yield
+    try:
+        yield
+    finally:
+        close_web_search_client()
 
 
 app = FastAPI(
@@ -83,6 +113,41 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+_trusted_hosts = ["127.0.0.1", "localhost", "localhost.localdomain", "[::1]", "testserver"]
+if settings.host not in {"", "0.0.0.0", "::"}:
+    _trusted_hosts.append(settings.host)
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(dict.fromkeys(_trusted_hosts)))
+
+
+@app.middleware("http")
+async def block_cross_origin_writes(request: Request, call_next: Any) -> Response:
+    """Reject browser writes that originate outside the local Atlas host."""
+
+    if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        return await call_next(request)
+
+    request_host = request.headers.get("host", "").casefold()
+    for header_name in ("origin", "referer"):
+        source = request.headers.get(header_name)
+        if not source:
+            continue
+        parsed = urlparse(source)
+        if parsed.scheme not in {"http", "https"} or parsed.netloc.casefold() != request_host:
+            return JSONResponse(
+                {"detail": "Cross-origin write blocked"},
+                status_code=403,
+            )
+
+    if (
+        not request.headers.get("origin")
+        and not request.headers.get("referer")
+        and request.headers.get("sec-fetch-site", "").casefold() == "cross-site"
+    ):
+        return JSONResponse(
+            {"detail": "Cross-origin write blocked"},
+            status_code=403,
+        )
+    return await call_next(request)
 
 templates_dir = Path(__file__).parent / "templates"
 static_dir = Path(__file__).parent / "static"
@@ -116,6 +181,7 @@ COMMON_ASR_MODELS = (
 )
 RUNTIME_ENV_KEYS = {
     "ATLAS_VOICE_AMBIENT_MODE",
+    "ATLAS_VOICE_DEFAULT_QUALITY_TIER",
     "ATLAS_VOICE_ASR_PROVIDER",
     "ATLAS_VOICE_ASR_MODEL",
     "ATLAS_VOICE_DIARIZATION_PROVIDER",
@@ -123,10 +189,76 @@ RUNTIME_ENV_KEYS = {
     "WHISPERX_MODEL",
 }
 ASSISTANT_MODE_OPTIONS = ("ambient", "paused", "private")
-REALTIME_SOURCE_SCOPES = frozenset({"", "recordings", "uploads", "voice"})
-MAX_REALTIME_SOURCE_CONTEXT_CHARS = 6000
-MAX_REALTIME_RECORDING_HITS = 8
-MAX_REALTIME_VOICE_SESSIONS = 4
+REALTIME_SOURCE_SCOPES = frozenset({"", "all", "recordings", "uploads", "voice", "web"})
+MAX_REALTIME_SOURCE_CONTEXT_CHARS = 1800
+MAX_REALTIME_RECORDING_HITS = 4
+MAX_REALTIME_VOICE_HITS = 6
+MAX_REALTIME_WEB_HITS = 4
+MAX_REALTIME_RECENT_VOICE_SESSIONS = 3
+MAX_UPLOAD_BYTES = 16 * 1024 * 1024 * 1024
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+_LOCAL_RETRIEVAL_PATTERNS = (
+    re.compile(r"\b(?:remember|recall|last\s+time|earlier|before|previous(?:ly)?)\b", re.I),
+    re.compile(
+        r"\b(?:recordings?|transcripts?|meetings?|calls?|voice\s+chats?|conversations?|notes?)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:what|when|where|who)\s+did\s+(?:i|we|you|they)\b", re.I),
+    re.compile(r"\b(?:search|find|look\s+through)\s+(?:in\s+)?(?:my|our|the)\b", re.I),
+)
+_LOCAL_RETRIEVAL_STOPWORDS = frozenset(
+    """
+    a about all an and any are as at be before bit can chat chats conversation conversations
+    could did discuss discussed discussing do earlier example examples find for from give had has
+    have history i in into is it know last little look me meeting meetings most my note notes of
+    on our overview past please previous previously recording recordings recall remember said say
+    search show some summarize summary talk talked talking tell that the their them these thing
+    things this through topic topics transcript transcripts up us ve voice was we were what when
+    where which who with you your
+    """.split()
+)
+_HISTORY_REQUEST_PREFIX = re.compile(
+    r"^\s*(?:can|could|would|please|what|when|where|who|tell|show|search|find|look|do\s+you|have\s+we)\b",
+    re.I,
+)
+
+
+class _RealtimeStreamCancelled(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class RealtimeRetrieval:
+    context: str
+    searched_local: bool
+    local_hit_count: int
+    web: WebSearchResponse | None
+    latency_ms: int
+
+
+def _ambient_listener_view(current_settings: Settings) -> dict[str, Any]:
+    heartbeat = db.get_runtime_setting("ambient_listener_heartbeat")
+    mode = db.get_runtime_setting("ambient_listener_mode")
+    source = db.get_runtime_setting("ambient_listener_source")
+    active = False
+    age_seconds: float | None = None
+    if heartbeat:
+        try:
+            seen_at = datetime.fromisoformat(heartbeat)
+            if seen_at.tzinfo is None:
+                seen_at = seen_at.replace(tzinfo=timezone.utc)
+            age_seconds = max((datetime.now(timezone.utc) - seen_at).total_seconds(), 0.0)
+            active = age_seconds <= max(current_settings.ambient_chunk_seconds * 2 + 10, 45)
+        except ValueError:
+            active = False
+    return {
+        "active": active,
+        "mode": mode or db.get_runtime_setting("assistant_mode") or current_settings.ambient_mode,
+        "source": source or current_settings.ambient_source,
+        "last_seen": heartbeat,
+        "age_seconds": round(age_seconds, 1) if age_seconds is not None else None,
+    }
 
 
 def runtime_info(current_settings: Settings) -> dict[str, Any]:
@@ -145,7 +277,13 @@ def runtime_info(current_settings: Settings) -> dict[str, Any]:
         "diarization_provider": current_settings.diarization_provider,
         "diarization_providers": DIARIZATION_PROVIDERS,
         "pyannote_model": current_settings.pyannote_model,
-        "ambient_mode": current_settings.ambient_mode,
+        "ambient_mode": db.get_runtime_setting("assistant_mode") or current_settings.ambient_mode,
+        "ambient_listener": _ambient_listener_view(current_settings),
+        "default_quality_tier": normalize_quality_tier(current_settings.default_quality_tier),
+        "quality_profiles": [
+            profile.to_public_dict()
+            for profile in quality_profiles(current_settings).values()
+        ],
         "assistant_mode_options": ASSISTANT_MODE_OPTIONS,
         "summary_llm_model_value": _summary_llm_profile_value("model", "qwen-27b-instruct"),
         "summary_llm_base_url_value": _summary_llm_profile_value("base_url", settings.llm_base_url),
@@ -289,8 +427,14 @@ def _profile_settings(profile_name: str) -> Settings:
     return settings_for_profile(settings, assistant_config, profile_name)
 
 
-def _direct_voice_settings() -> Settings:
-    return _profile_settings("direct_voice")
+def _direct_voice_settings(voice_profile_id: object | None = None) -> Settings:
+    if voice_profile_id is None:
+        return _profile_settings("direct_voice")
+    return settings_for_voice_profile(
+        settings,
+        assistant_config,
+        voice_profile_id,
+    )
 
 
 def _restart_worker_if_idle() -> str:
@@ -328,9 +472,17 @@ def _runtime_settings_message(status: str | None, worker: str | None) -> str | N
 
 
 def _assistant_mode_message(status: str | None) -> str | None:
-    if status == "saved":
-        return "Assistant mode saved."
-    return None
+    if status != "saved":
+        return None
+    mode = db.get_runtime_setting("assistant_mode") or settings.ambient_mode
+    listener = _ambient_listener_view(settings)
+    if not listener["active"]:
+        return "Background listening choice saved. No listener is currently running."
+    if mode == "ambient":
+        return "Background listening resumed. Speech is processed locally."
+    if mode == "paused":
+        return "Background listening paused. No new audio is being captured."
+    return "Private mode is on. The background microphone is off."
 
 
 def _anythingllm_message(status: str | None, error: str | None) -> dict[str, str] | None:
@@ -394,25 +546,106 @@ def _timestamp_label(value: datetime | None) -> str:
     return value.astimezone().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _recording_status_label(status: object) -> str:
+    value = str(status or "queued").strip().lower()
+    if value == "done":
+        return "Ready"
+    if value == "failed":
+        return "Needs attention"
+    if value == "duplicate":
+        return "Duplicate"
+    if value == "waiting_resources":
+        return "Waiting for room"
+    return "Processing"
+
+
+def _summary_excerpt(summary: object, *, max_chars: int = 180) -> str:
+    text = str(summary or "").strip()
+    if not text:
+        return ""
+    for section in summary_to_sections(text):
+        paragraphs = section.get("paragraphs") or []
+        if paragraphs:
+            excerpt = str(paragraphs[0])
+            break
+        items = section.get("items") or []
+        if items:
+            excerpt = str(items[0].get("text") or "")
+            break
+    else:
+        excerpt = re.sub(r"[#*_`]", "", text)
+    excerpt = " ".join(excerpt.split())
+    if len(excerpt) <= max_chars:
+        return excerpt
+    return excerpt[: max_chars - 1].rstrip(" ,.;:") + "…"
+
+
+def _recording_library_views(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    views: list[dict[str, Any]] = []
+    for row in rows:
+        duration = row.get("duration_seconds")
+        views.append(
+            {
+                **row,
+                "created_at_display": _timestamp_label(_parse_timestamp(row.get("created_at"))),
+                "duration_label": format_seconds(float(duration)) if duration is not None else "-",
+                "status_label": _recording_status_label(row.get("status")),
+                "summary_excerpt": _summary_excerpt(row.get("summary")),
+            }
+        )
+    return views
+
+
+def _selected_recording_view(recording_id: str | None) -> dict[str, Any] | None:
+    if not recording_id:
+        return None
+    recording = row_to_dict(db.get_recording(recording_id))
+    if recording is None:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    segment_stats = db.get_recording_segment_stats(recording_id)
+    folders = db.list_recording_folders()
+    folder_name = next(
+        (
+            folder["name"]
+            for folder in folders
+            if folder["id"] == recording.get("folder_id")
+        ),
+        None,
+    )
+    recording["created_at_display"] = _timestamp_label(
+        _parse_timestamp(recording.get("created_at"))
+    )
+    recording["status_label"] = _recording_status_label(recording.get("status"))
+    recording["folder_name"] = folder_name
+    recording["duration_label"] = (
+        format_seconds(segment_stats["duration_seconds"])
+        if segment_stats["duration_seconds"] is not None
+        else "-"
+    )
+    summary = db.get_summary(recording_id)
+    return {
+        **recording,
+        "summary": summary,
+        "summary_sections": summary_to_sections(summary["text"]) if summary else [],
+        "segment_count": segment_stats["segment_count"],
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
     runtime_settings: str | None = None,
     worker: str | None = None,
     assistant_mode: str | None = None,
+    recording: str | None = None,
 ) -> Response:
-    recordings = [dict(row) for row in db.list_recordings()]
-    for recording in recordings:
-        recording["created_at_display"] = _timestamp_label(
-            _parse_timestamp(recording.get("created_at"))
-        )
     voice_runtime_settings = _direct_voice_settings()
     voice_status = collect_runtime_status(voice_runtime_settings, db, assistant_config)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
-            "recordings": recordings,
+            "selected_recording": _selected_recording_view(recording),
             "runtime": runtime_info(voice_runtime_settings),
             "status": voice_status,
             "assistant_enabled": voice_runtime_settings.assistant_enabled,
@@ -422,6 +655,7 @@ def dashboard(
             "voice_settings": _voice_settings_view(voice_runtime_settings),
             "runtime_settings_message": _runtime_settings_message(runtime_settings, worker),
             "assistant_mode_message": _assistant_mode_message(assistant_mode),
+            "realtime_token": _REALTIME_ACCESS_TOKEN,
         },
     )
 
@@ -447,6 +681,7 @@ def voice_console(request: Request, prompt: str | None = None) -> Response:
             "privacy_events": _privacy_events_view(limit=8),
             "coaching_goals": _coaching_goals_view(status="active"),
             "coaching_progress": _coaching_progress_view(),
+            "realtime_token": _REALTIME_ACCESS_TOKEN,
         },
     )
 
@@ -691,20 +926,32 @@ def _compact_float(value: Any) -> str:
 def _voice_settings_view(current_settings: Settings | None = None) -> dict[str, Any]:
     current_settings = current_settings or _direct_voice_settings()
     tts_provider = _realtime_tts_provider(current_settings)
+    default_profile = voice_profile(assistant_config)
     return {
         "realtime_host": f"{current_settings.host}:{current_settings.port}",
         "websocket_path": "/v1/realtime",
         "sample_rate": current_settings.realtime_audio_sample_rate,
         "channels": current_settings.realtime_audio_channels,
         "tts_provider": tts_provider,
-        "tts_model": _realtime_tts_model(tts_provider, current_settings)
+        "tts_model": _public_realtime_model_name(
+            _realtime_tts_model(tts_provider, current_settings),
+            fallback=tts_provider,
+        )
         if tts_provider != "none"
         else "none",
-        "tts_voice": current_settings.tts_voice,
+        "tts_voice": _public_realtime_model_name(
+            current_settings.tts_voice,
+            fallback="default",
+        ),
         "tts_base_url": current_settings.tts_base_url
         if is_tts_sidecar_provider(tts_provider)
         else None,
-        "llm_model": current_settings.llm_model,
+        "llm_model": _public_realtime_model_name(current_settings.llm_model),
+        "default_voice_profile": default_profile.id,
+        "voice_profiles": public_voice_profiles(assistant_config),
+        "web_search_enabled": current_settings.web_search_enabled,
+        "web_search_provider": current_settings.web_search_provider,
+        "web_search_base_url": current_settings.web_search_base_url,
     }
 
 
@@ -759,6 +1006,7 @@ def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
     current_settings.ensure_directories()
     db.initialize()
     provider = "stub" if current_settings.stub_mode else "openai-compatible"
+    requested_model = _public_realtime_model_name(current_settings.llm_model)
     try:
         reply = generate_realtime_reply(
             text,
@@ -768,16 +1016,19 @@ def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 - playground errors should surface cleanly.
         db.log_model_run(
             provider=provider,
-            model=current_settings.llm_model,
+            model=requested_model,
             task="voice_playground_model",
             input_ref="voice_playground:text",
             error=f"{type(exc).__name__}: {exc}",
         )
         raise HTTPException(status_code=502, detail=_safe_realtime_error(exc)) from exc
 
+    served_model = _safe_realtime_model_name(reply.served_model)
+    attributed_model = served_model or requested_model
+
     db.log_model_run(
         provider=provider,
-        model=current_settings.llm_model,
+        model=attributed_model,
         task="voice_playground_model",
         input_ref="voice_playground:text",
         latency_ms=reply.latency_ms,
@@ -788,7 +1039,9 @@ def api_voice_playground_model(payload: dict[str, Any]) -> JSONResponse:
         {
             "status": "ok",
             "provider": provider,
-            "model": current_settings.llm_model,
+            "model": attributed_model,
+            "requested_model": requested_model,
+            "served_model": served_model,
             "text": reply.text,
             "latency_ms": reply.latency_ms,
             "tokens_in": reply.tokens_in,
@@ -912,6 +1165,7 @@ def update_assistant_mode(mode: str = Form(...), redirect_to: str = Form("/")) -
     os.environ.update(values)
     _refresh_runtime_settings()
     db.initialize()
+    db.set_runtime_setting("assistant_mode", selected)
     db.log_privacy_event(
         "assistant.mode",
         f"Dashboard set assistant mode to {selected}.",
@@ -919,13 +1173,38 @@ def update_assistant_mode(mode: str = Form(...), redirect_to: str = Form("/")) -
     )
     target = _safe_local_redirect_path(redirect_to)
     separator = "&" if "?" in target else "?"
-    return RedirectResponse(f"{target}{separator}assistant_mode=saved", status_code=303)
+    return RedirectResponse(
+        f"{target}{separator}assistant_mode=saved",
+        status_code=303,
+    )
 
 
 def _safe_local_redirect_path(path: str) -> str:
     if not path or not path.startswith("/") or path.startswith("//") or "\\" in path:
         return "/"
     return path
+
+
+@app.post("/settings/quality")
+def update_default_quality(
+    quality_tier: str = Form(...),
+    redirect_to: str = Form("/"),
+) -> Response:
+    requested = quality_tier.strip().lower()
+    if requested not in {"light", "torch", "fire"}:
+        raise HTTPException(status_code=400, detail="Unknown processing level")
+    selected = normalize_quality_tier(requested)
+    values = {"ATLAS_VOICE_DEFAULT_QUALITY_TIER": selected}
+    _write_dotenv_values(values)
+    os.environ.update(values)
+    _refresh_runtime_settings()
+    worker_state = _restart_worker_if_idle()
+    target = _safe_local_redirect_path(redirect_to)
+    separator = "&" if "?" in target else "?"
+    return RedirectResponse(
+        f"{target}{separator}runtime_settings=saved&worker={worker_state}",
+        status_code=303,
+    )
 
 
 @app.post("/settings/runtime")
@@ -975,16 +1254,79 @@ def update_runtime_settings(
     return RedirectResponse(f"/?runtime_settings=saved&worker={worker_state}", status_code=303)
 
 
+def _expected_main_speakers(value: str | None) -> int | None:
+    cleaned = str(value or "").strip().lower()
+    if cleaned in {"", "auto", "not_sure", "not-sure"}:
+        return None
+    try:
+        count = int(cleaned)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Main speakers must be a number or Not sure",
+        ) from exc
+    if count < 1 or count > 20:
+        raise HTTPException(
+            status_code=422,
+            detail="Main speakers must be between 1 and 20",
+        )
+    return count
+
+
+def _save_upload_atomic(file: UploadFile, destination: Path) -> int:
+    temporary = destination.with_name(f".{destination.name}.{uuid.uuid4().hex}.part")
+    total = 0
+    try:
+        with temporary.open("xb") as handle:
+            while True:
+                chunk = file.file.read(UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="Recording is larger than the 16 GB local upload limit",
+                    )
+                handle.write(chunk)
+        if total == 0:
+            raise HTTPException(status_code=400, detail="The uploaded recording is empty")
+        temporary.replace(destination)
+        return total
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 @app.post("/upload")
-def upload_audio(request: Request, file: UploadFile = File(...)) -> Response:
+def upload_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    expected_main_speakers: str = Form(""),
+    quality_tier: str = Form(""),
+) -> Response:
     settings.ensure_directories()
     upload_dir = settings.inbox_dir / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename = safe_filename(file.filename or "upload")
     destination = upload_dir / f"{uuid.uuid4().hex}-{filename}"
-    with destination.open("wb") as handle:
-        shutil.copyfileobj(file.file, handle)
-    recording_id = processor.enqueue_source(destination)
+    expected = _expected_main_speakers(expected_main_speakers)
+    requested_tier = str(quality_tier or "").strip().lower()
+    if requested_tier and requested_tier not in {"light", "torch", "fire"}:
+        raise HTTPException(status_code=422, detail="Unknown processing level")
+    tier = normalize_quality_tier(
+        requested_tier,
+        default=settings.default_quality_tier,
+    )
+    upload_bytes = _save_upload_atomic(file, destination)
+    try:
+        recording_id = processor.enqueue_source(
+            destination,
+            expected_main_speakers=expected,
+            quality_tier=tier,
+        )
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
     wants_json = request.query_params.get(
         "format"
     ) == "json" or "application/json" in request.headers.get("accept", "")
@@ -999,9 +1341,129 @@ def upload_audio(request: Request, file: UploadFile = File(...)) -> Response:
                 "url": f"/recordings/{recording_id}",
                 "created_at": created_at,
                 "created_at_display": _timestamp_label(_parse_timestamp(created_at)),
+                "expected_main_speakers": expected,
+                "quality_tier": tier,
+                "upload_bytes": upload_bytes,
             }
         )
     return RedirectResponse(f"/recordings/{recording_id}", status_code=303)
+
+
+@app.get("/recordings", response_class=HTMLResponse)
+def recordings_library(
+    request: Request,
+    folder: str | None = None,
+    status: str | None = None,
+    page: int = 1,
+) -> Response:
+    selected_folder = (folder or "all").strip()
+    selected_status = (status or "all").strip().lower()
+    if selected_status not in {"all", "done", "failed", "processing"}:
+        selected_status = "all"
+    folder_id = (
+        ""
+        if selected_folder == "unfiled"
+        else None
+        if selected_folder in {"", "all"}
+        else selected_folder
+    )
+    query_status = None if selected_status == "all" else selected_status
+
+    page_size = 50
+    total_recordings = db.count_recording_library(
+        folder_id=folder_id,
+        status=query_status,
+    )
+    total_pages = max((total_recordings + page_size - 1) // page_size, 1)
+    current_page = min(max(page, 1), total_pages)
+    rows = db.list_recording_library(
+        folder_id=folder_id,
+        status=query_status,
+        limit=page_size,
+        offset=(current_page - 1) * page_size,
+    )
+
+    folders = db.list_recording_folders()
+    count_payload = db.recording_library_folder_counts()
+    counts: dict[str, int] = {
+        "all": count_payload["all"],
+        "unfiled": count_payload["unfiled"],
+        **count_payload["folders"],
+    }
+
+    voice_runtime_settings = _direct_voice_settings()
+    return templates.TemplateResponse(
+        request,
+        "recordings.html",
+        {
+            "recordings": _recording_library_views(rows),
+            "folders": folders,
+            "folder_counts": counts,
+            "selected_folder": selected_folder,
+            "selected_status": selected_status,
+            "total_recordings": total_recordings,
+            "current_page": current_page,
+            "total_pages": total_pages,
+            "runtime": runtime_info(voice_runtime_settings),
+        },
+    )
+
+
+@app.post("/recording-folders")
+def create_recording_folder(name: str = Form(...)) -> Response:
+    try:
+        folder_id = db.create_recording_folder(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/recordings?folder={quote(folder_id)}", status_code=303)
+
+
+@app.post("/recording-folders/{folder_id}/rename")
+def rename_recording_folder(folder_id: str, name: str = Form(...)) -> Response:
+    try:
+        renamed = db.rename_recording_folder(folder_id, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not renamed:
+        raise HTTPException(status_code=404, detail="Recording folder not found")
+    return RedirectResponse(f"/recordings?folder={quote(folder_id)}", status_code=303)
+
+
+@app.post("/recording-folders/{folder_id}/delete")
+def delete_recording_folder(folder_id: str) -> Response:
+    if not db.delete_recording_folder(folder_id):
+        raise HTTPException(status_code=404, detail="Recording folder not found")
+    return RedirectResponse("/recordings?folder=unfiled", status_code=303)
+
+
+@app.post("/recordings/{recording_id}/folder")
+def move_recording_to_folder(
+    recording_id: str,
+    folder_id: str = Form(""),
+    redirect_to: str = Form("/recordings"),
+) -> Response:
+    try:
+        moved = db.set_recording_folder(recording_id, folder_id.strip() or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not moved:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return RedirectResponse(_safe_local_redirect_path(redirect_to), status_code=303)
+
+
+@app.post("/recordings/{recording_id}/title")
+def rename_recording(
+    recording_id: str,
+    title: str = Form(...),
+    redirect_to: str = Form("/recordings"),
+) -> Response:
+    try:
+        renamed = db.update_recording_title(recording_id, title, origin="manual")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not renamed:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    return RedirectResponse(_safe_local_redirect_path(redirect_to), status_code=303)
 
 
 @app.get("/recordings/{recording_id}", response_class=HTMLResponse)
@@ -1014,20 +1476,56 @@ def recording_detail(
     recording = row_to_dict(db.get_recording(recording_id))
     if recording is None:
         raise HTTPException(status_code=404, detail="Recording not found")
+    segment_stats = db.get_recording_segment_stats(recording_id)
+    processing_options = db.get_recording_processing_options(recording_id)
+    speaker_views = db.list_recording_speakers(recording_id)
+    selected_quality = quality_profile(processing_options["quality_tier"], settings)
+    folders = db.list_recording_folders()
+    recording["created_at_display"] = _timestamp_label(
+        _parse_timestamp(recording.get("created_at"))
+    )
+    recording["status_label"] = _recording_status_label(recording.get("status"))
+    recording["folder_name"] = next(
+        (
+            folder["name"]
+            for folder in folders
+            if folder["id"] == recording.get("folder_id")
+        ),
+        None,
+    )
+    recording["duration_label"] = (
+        format_seconds(segment_stats["duration_seconds"])
+        if segment_stats["duration_seconds"] is not None
+        else "-"
+    )
+    duplicate_recording = None
+    if recording.get("duplicate_of"):
+        original = db.get_recording(str(recording["duplicate_of"]))
+        if original is not None:
+            duplicate_recording = {
+                "id": original["id"],
+                "title": original["title"],
+            }
     summary = db.get_summary(recording_id)
     preferred_template_id = db.get_recording_template(recording_id)
     summary_template_id = summary.get("template_id") if summary else None
-    selected_template_id = preferred_template_id or summary_template_id or "meeting"
-    preferred_template = get_template(selected_template_id) or get_template("meeting")
+    requested_template_id = preferred_template_id or summary_template_id or "meeting"
+    preferred_template = get_template(requested_template_id) or get_template("meeting")
+    selected_template_id = preferred_template.id if preferred_template else "meeting"
 
-    # Check if a summary is being regenerated (old template in use, new template set)
-    # If so, keep the cached summary but note the pending change
-    cached_summary = summary  # existing summary (may be None)
-    is_resummarizing = (
-        summary is not None
-        and preferred_template_id
-        and preferred_template is not None
-        and summary.get("template_id") != preferred_template_id
+    cached_summary = summary
+    recording_jobs = job_views(db.jobs_for_recording(recording_id))
+    summary_refresh_active = any(
+        job["step"] == "summarize" and job["status"] in {"queued", "running"}
+        for job in recording_jobs
+    )
+    is_resummarizing = summary is not None and (
+        summary_refresh_active
+        or (
+            preferred_template_id
+            and preferred_template is not None
+            and summary.get("template_id") != preferred_template_id
+        )
     )
 
     return templates.TemplateResponse(
@@ -1035,9 +1533,19 @@ def recording_detail(
         "recording.html",
         {
             "recording": recording,
+            "duplicate_recording": duplicate_recording,
             "runtime": runtime_info(settings),
-            "jobs": job_views(db.jobs_for_recording(recording_id)),
-            "segments": db.get_segments(recording_id),
+            "jobs": recording_jobs,
+            "segment_count": segment_stats["segment_count"],
+            "processing_options": processing_options,
+            "quality_profile": selected_quality.to_public_dict(),
+            "speakers": speaker_views,
+            "detected_speaker_count": len(speaker_views),
+            "additional_speaker_count": (
+                max(len(speaker_views) - processing_options["expected_main_speakers"], 0)
+                if processing_options["expected_main_speakers"] is not None
+                else 0
+            ),
             "summary": summary,
             "summary_sections": summary_to_sections(summary["text"]) if summary else [],
             "cached_summary": cached_summary,
@@ -1048,6 +1556,7 @@ def recording_detail(
             "all_templates": {tid: tpl.to_dict() for tid, tpl in list_templates().items()},
             "preferred_template_id": selected_template_id,
             "preferred_template": preferred_template.to_dict() if preferred_template else None,
+            "folders": folders,
             "anythingllm_workspace_slug": settings.anythingllm_workspace_slug,
             "anythingllm_message": _anythingllm_message(anythingllm, anythingllm_error),
         },
@@ -1166,13 +1675,96 @@ def api_coaching_progress(limit: int = 100) -> JSONResponse:
     return JSONResponse(_coaching_progress_view(limit=max(min(limit, 500), 1)))
 
 
+def _speaker_result_label(value: object) -> str:
+    label = str(value or "").strip()
+    match = re.fullmatch(r"SPEAKER[_ -]?(\d+)", label, flags=re.IGNORECASE)
+    if match:
+        return f"Speaker {int(match.group(1)) + 1}"
+    return label
+
+
+def _search_snippet_parts(value: object) -> list[dict[str, Any]]:
+    text_value = str(value or "")
+    parts: list[dict[str, Any]] = []
+    cursor = 0
+    for match in re.finditer(r"\[([^\]]+)\]", text_value):
+        if match.start() > cursor:
+            parts.append({"text": text_value[cursor : match.start()], "highlight": False})
+        parts.append({"text": match.group(1), "highlight": True})
+        cursor = match.end()
+    if cursor < len(text_value):
+        parts.append({"text": text_value[cursor:], "highlight": False})
+    return parts or [{"text": text_value, "highlight": False}]
+
+
+def _group_search_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    labels = {
+        "title": "Recording",
+        "summary": "Notes",
+        "transcript": "Transcript",
+        "speaker": "Person",
+    }
+    for result in results:
+        recording_id = str(result.get("recording_id") or "")
+        group = groups.setdefault(
+            recording_id,
+            {
+                "recording_id": recording_id,
+                "title": str(result.get("title") or "Untitled recording"),
+                "status": str(result.get("status") or "queued"),
+                "created_at_display": _timestamp_label(
+                    _parse_timestamp(result.get("created_at"))
+                ),
+                "match_count": 0,
+                "matches": [],
+            },
+        )
+        group["match_count"] += 1
+        if len(group["matches"]) >= 3:
+            continue
+        kind = str(result.get("kind") or "transcript")
+        group["matches"].append(
+            {
+                "kind": kind,
+                "kind_label": labels.get(kind, kind.title()),
+                "speaker": _speaker_result_label(result.get("speaker")),
+                "snippet_parts": _search_snippet_parts(result.get("snippet")),
+            }
+        )
+    return list(groups.values())
+
+
 @app.get("/search", response_class=HTMLResponse)
-def search(request: Request, q: str = "") -> Response:
-    results = db.search(q) if q.strip() else []
+def search(
+    request: Request,
+    q: str = "",
+    scope: str = "all",
+) -> Response:
+    selected_scope = scope.strip().lower()
+    if selected_scope not in {"all", "summary", "transcript", "speaker"}:
+        selected_scope = "all"
+    clean_query = q.strip()
+    results = (
+        db.search(
+            clean_query,
+            limit=100,
+            kind=None if selected_scope == "all" else selected_scope,
+        )
+        if clean_query
+        else []
+    )
     return templates.TemplateResponse(
         request,
         "search.html",
-        {"query": q, "results": results, "runtime": runtime_info(settings)},
+        {
+            "query": q,
+            "scope": selected_scope,
+            "results": results,
+            "result_groups": _group_search_results(results),
+            "result_count": len(results),
+            "runtime": runtime_info(settings),
+        },
     )
 
 
@@ -1182,6 +1774,48 @@ def api_recording(recording_id: str) -> JSONResponse:
         return JSONResponse(export_payload(db, recording_id))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/recordings/{recording_id}/status")
+def api_recording_status(recording_id: str) -> JSONResponse:
+    recording = db.get_recording(recording_id)
+    if recording is None:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    status = str(recording["status"] or "queued")
+    return JSONResponse(
+        {
+            "recording_id": recording_id,
+            "status": status,
+            "status_label": _recording_status_label(status),
+            "terminal": status in {"done", "failed", "duplicate"},
+            "duplicate_of": recording["duplicate_of"],
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/recordings/{recording_id}/transcript")
+def api_recording_transcript(recording_id: str) -> JSONResponse:
+    if db.get_recording(recording_id) is None:
+        raise HTTPException(status_code=404, detail="Recording not found")
+    segments = [
+        {
+            "idx": segment["idx"],
+            "start": segment["start"],
+            "end": segment["end"],
+            "speaker_label": segment.get("speaker_label", segment["speaker"]),
+            "speaker": segment["speaker"],
+            "text": segment["text"],
+        }
+        for segment in db.get_segments(recording_id)
+    ]
+    return JSONResponse(
+        {
+            "recording_id": recording_id,
+            "segments": segments,
+        },
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 @app.get("/api/recordings/{recording_id}/export")
@@ -1211,6 +1845,9 @@ def normalized_audio(recording_id: str) -> FileResponse:
 
 @app.websocket("/v1/realtime")
 async def realtime_websocket(websocket: WebSocket) -> None:
+    if not _realtime_websocket_authorized(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     if not settings.assistant_enabled:
         await _send_realtime_error(
@@ -1219,7 +1856,13 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         )
         await websocket.close(code=1008)
         return
-    realtime_settings = _direct_voice_settings()
+    try:
+        selected_voice_profile = voice_profile(assistant_config)
+        realtime_settings = _direct_voice_settings(selected_voice_profile.id)
+    except VoiceProfileError as exc:
+        await _send_realtime_error(websocket, f"Voice profile configuration is invalid: {exc}")
+        await websocket.close(code=1011)
+        return
     realtime_settings.ensure_directories()
     db.initialize()
     session_id = db.create_ambient_session(
@@ -1236,6 +1879,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
     active_response_task: asyncio.Task[None] | None = None
     conversation_history: list[dict[str, str]] = []
     source_scope = ""
+    selected_recording_id: str | None = None
 
     await _send_realtime_event(
         websocket,
@@ -1243,7 +1887,11 @@ async def realtime_websocket(websocket: WebSocket) -> None:
         session={
             "id": session_id,
             "object": "realtime.session",
-            "model": realtime_settings.llm_model,
+            "model": _public_realtime_model_name(realtime_settings.llm_model),
+            "voice_profile": selected_voice_profile.id,
+            "model_tier": selected_voice_profile.id,
+            "context_budget_chars": selected_voice_profile.context_budget_chars,
+            "voice_profiles": public_voice_profiles(assistant_config),
             "modalities": ["text", "audio"],
             "input_audio_format": "pcm16",
             "output_audio_format": "wav" if _tts_outputs_audio(tts_provider) else "none",
@@ -1254,6 +1902,7 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 "min_speech_ms": realtime_settings.realtime_vad_min_speech_ms,
                 "silence_ms": realtime_settings.realtime_vad_silence_ms,
             },
+            "recording_id": None,
         },
     )
 
@@ -1326,7 +1975,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                 tts_provider=tts_provider,
                 state=state,
                 current_settings=realtime_settings,
+                voice_profile_id=selected_voice_profile.id,
+                context_budget_chars=selected_voice_profile.context_budget_chars,
                 source_scope=source_scope,
+                recording_id=selected_recording_id,
             )
         )
 
@@ -1335,6 +1987,21 @@ async def realtime_websocket(websocket: WebSocket) -> None:
             event = await websocket.receive_json()
             event_type = str(event.get("type") or "")
             if event_type == "session.update":
+                try:
+                    requested_profile_id = _requested_realtime_voice_profile_id(event)
+                    next_voice_profile: VoiceProfile | None = (
+                        voice_profile(assistant_config, requested_profile_id)
+                        if requested_profile_id is not None
+                        else None
+                    )
+                    next_realtime_settings = (
+                        _direct_voice_settings(next_voice_profile.id)
+                        if next_voice_profile is not None
+                        else None
+                    )
+                except VoiceProfileError as exc:
+                    await _send_realtime_error(websocket, str(exc), event_type=event_type)
+                    continue
                 if "source_context" in event:
                     try:
                         source_scope = _normalize_realtime_source_scope(
@@ -1347,6 +2014,30 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                             event_type=event_type,
                         )
                         continue
+                if "recording_id" in event:
+                    try:
+                        next_recording_id = _normalize_realtime_recording_id(
+                            event.get("recording_id")
+                        )
+                    except ValueError as exc:
+                        await _send_realtime_error(
+                            websocket,
+                            str(exc),
+                            event_type=event_type,
+                        )
+                        continue
+                    if next_recording_id != selected_recording_id:
+                        await cancel_active_response("recording_scope_changed")
+                        conversation_history.clear()
+                    selected_recording_id = next_recording_id
+                if selected_recording_id:
+                    source_scope = "recordings"
+                if next_voice_profile and next_voice_profile.id != selected_voice_profile.id:
+                    await cancel_active_response("voice_profile_changed")
+                    selected_voice_profile = next_voice_profile
+                    assert next_realtime_settings is not None
+                    realtime_settings = next_realtime_settings
+                    tts_provider = _realtime_tts_provider(realtime_settings)
                 instructions = _updated_realtime_instructions(event, instructions)
                 state.update_audio_format(event)
                 await _send_realtime_event(
@@ -1354,8 +2045,13 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     "session.updated",
                     session={
                         "id": session_id,
+                        "model": _public_realtime_model_name(realtime_settings.llm_model),
+                        "voice_profile": selected_voice_profile.id,
+                        "model_tier": selected_voice_profile.id,
+                        "context_budget_chars": selected_voice_profile.context_budget_chars,
                         "instructions": instructions,
                         "source_context": source_scope,
+                        "recording_id": selected_recording_id,
                     },
                 )
                 continue
@@ -1448,10 +2144,20 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                     continue
                 try:
                     turn_source_scope = source_scope
+                    turn_recording_id = selected_recording_id
                     if "source_context" in event:
                         turn_source_scope = _normalize_realtime_source_scope(
                             event.get("source_context")
                         )
+                    if "recording_id" in event:
+                        turn_recording_id = _normalize_realtime_recording_id(
+                            event.get("recording_id")
+                        )
+                        if turn_recording_id != selected_recording_id:
+                            conversation_history.clear()
+                            selected_recording_id = turn_recording_id
+                    if turn_recording_id:
+                        turn_source_scope = "recordings"
                 except ValueError as exc:
                     await _send_realtime_error(
                         websocket,
@@ -1472,7 +2178,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         tts_provider=tts_provider,
                         state=state,
                         current_settings=realtime_settings,
+                        voice_profile_id=selected_voice_profile.id,
+                        context_budget_chars=selected_voice_profile.context_budget_chars,
                         source_scope=turn_source_scope,
+                        recording_id=turn_recording_id,
                     )
                 )
                 continue
@@ -1508,6 +2217,10 @@ async def realtime_websocket(websocket: WebSocket) -> None:
                         tts_provider=tts_provider,
                         state=state,
                         current_settings=realtime_settings,
+                        voice_profile_id=selected_voice_profile.id,
+                        context_budget_chars=selected_voice_profile.context_budget_chars,
+                        source_scope=source_scope,
+                        recording_id=selected_recording_id,
                     )
                 )
                 continue
@@ -1598,7 +2311,10 @@ async def _handle_realtime_user_text(
     tts_provider: str,
     state: RealtimeTurnState,
     current_settings: Settings,
+    voice_profile_id: str,
+    context_budget_chars: int,
     source_scope: str | None = None,
+    recording_id: str | None = None,
 ) -> None:
     utterance_id = db.add_utterance(
         session_id=session_id,
@@ -1628,31 +2344,129 @@ async def _handle_realtime_user_text(
     )
 
     provider = "stub" if current_settings.stub_mode else "openai-compatible"
-    try:
-        turn_instructions = instructions
-        if source_scope is not None:
-            source_context = await asyncio.to_thread(
-                _build_realtime_source_context,
-                text,
-                source_scope,
-                current_session_id=session_id,
-            )
-            turn_instructions = _realtime_turn_instructions(
-                instructions,
-                source_scope=source_scope,
-                source_context=source_context,
-            )
-        reply = await asyncio.to_thread(
-            generate_realtime_reply,
-            text,
-            current_settings,
-            instructions=turn_instructions,
-            history=conversation_history,
+    requested_model = _public_realtime_model_name(current_settings.llm_model)
+    recent_user_turns = tuple(
+        item["content"]
+        for item in conversation_history
+        if item.get("role") == "user" and item.get("content")
+    )[-2:]
+    retrieval: RealtimeRetrieval | None = None
+    stream_cancelled = threading.Event()
+    streamed_text = False
+    event_loop = asyncio.get_running_loop()
+
+    def emit_text_delta(delta: str) -> None:
+        nonlocal streamed_text
+        if stream_cancelled.is_set() or state.active_response_id != response_id:
+            raise _RealtimeStreamCancelled
+        if not delta:
+            return
+        delivery = asyncio.run_coroutine_threadsafe(
+            _send_realtime_event(
+                websocket,
+                "response.text.delta",
+                response_id=response_id,
+                delta=delta,
+            ),
+            event_loop,
         )
+        delivery.result()
+        if stream_cancelled.is_set() or state.active_response_id != response_id:
+            raise _RealtimeStreamCancelled
+        streamed_text = True
+
+    try:
+        retrieve_local, retrieve_web = _realtime_retrieval_plan(
+            text,
+            source_scope,
+            current_settings,
+            recording_id=recording_id,
+        )
+        if retrieve_local or retrieve_web:
+            await _send_realtime_event(
+                websocket,
+                "response.retrieval.started",
+                response_id=response_id,
+                local=retrieve_local,
+                web=retrieve_web,
+                recording_id=recording_id,
+            )
+            retrieval = await _build_realtime_retrieval(
+                text,
+                source_scope=source_scope,
+                current_session_id=session_id,
+                current_settings=current_settings,
+                retrieve_local=retrieve_local,
+                retrieve_web=retrieve_web,
+                recent_user_turns=recent_user_turns,
+                max_chars=context_budget_chars,
+                recording_id=recording_id,
+            )
+            await _send_realtime_event(
+                websocket,
+                "response.retrieval.done",
+                response_id=response_id,
+                latency_ms=retrieval.latency_ms,
+                local_hit_count=retrieval.local_hit_count,
+                web_result_count=len(retrieval.web.results) if retrieval.web else 0,
+                web_latency_ms=retrieval.web.latency_ms if retrieval.web else None,
+                web_cached=retrieval.web.cached if retrieval.web else False,
+                web_error=retrieval.web.error if retrieval.web else None,
+                recording_id=recording_id,
+                sources=[
+                    result.to_public_dict()
+                    for result in (retrieval.web.results if retrieval.web else ())
+                ],
+            )
+            if retrieval.web is not None:
+                db.log_model_run(
+                    provider=f"web:{retrieval.web.provider}",
+                    model="search",
+                    task="web_search",
+                    input_ref=f"utterance:{utterance_id}",
+                    latency_ms=retrieval.web.latency_ms,
+                    error=retrieval.web.error,
+                )
+        reply_options: dict[str, Any] = {
+            "instructions": instructions,
+            "history": conversation_history,
+        }
+        if retrieval and retrieval.context:
+            reply_options["retrieval_context"] = retrieval.context
+
+        def generate_reply() -> Any:
+            try:
+                return generate_realtime_reply(
+                    text,
+                    current_settings,
+                    on_text_delta=emit_text_delta,
+                    **reply_options,
+                )
+            except TypeError as exc:
+                error_message = str(exc)
+                if (
+                    "on_text_delta" not in error_message
+                    or "unexpected keyword" not in error_message
+                ):
+                    raise
+                return generate_realtime_reply(
+                    text,
+                    current_settings,
+                    **reply_options,
+                )
+
+        try:
+            reply = await asyncio.to_thread(generate_reply)
+        except asyncio.CancelledError:
+            stream_cancelled.set()
+            raise
+        except _RealtimeStreamCancelled as exc:
+            stream_cancelled.set()
+            raise asyncio.CancelledError from exc
     except Exception as exc:  # noqa: BLE001 - send realtime errors to client.
         db.log_model_run(
             provider=provider,
-            model=current_settings.llm_model,
+            model=requested_model,
             task="realtime_chat",
             input_ref=f"utterance:{utterance_id}",
             error=f"{type(exc).__name__}: {exc}",
@@ -1666,6 +2480,9 @@ async def _handle_realtime_user_text(
         state.complete_response()
         return
 
+    served_model = _safe_realtime_model_name(reply.served_model)
+    attributed_model = served_model or requested_model
+
     conversation_history.extend(
         [
             {"role": "user", "content": text},
@@ -1675,13 +2492,14 @@ async def _handle_realtime_user_text(
     if len(conversation_history) > MAX_REALTIME_HISTORY_MESSAGES:
         del conversation_history[:-MAX_REALTIME_HISTORY_MESSAGES]
 
-    for delta in chunk_text(reply.text):
-        await _send_realtime_event(
-            websocket,
-            "response.text.delta",
-            response_id=response_id,
-            delta=delta,
-        )
+    if not streamed_text:
+        for delta in chunk_text(reply.text):
+            await _send_realtime_event(
+                websocket,
+                "response.text.delta",
+                response_id=response_id,
+                delta=delta,
+            )
     await _send_realtime_event(
         websocket,
         "response.text.done",
@@ -1702,7 +2520,10 @@ async def _handle_realtime_user_text(
             "response.audio.started",
             response_id=response_id,
             provider=tts_provider,
-            model=_realtime_tts_model(tts_provider, current_settings),
+            model=_public_realtime_model_name(
+                _realtime_tts_model(tts_provider, current_settings),
+                fallback=tts_provider,
+            ),
         )
         try:
             if tts_provider == "piper":
@@ -1777,13 +2598,13 @@ async def _handle_realtime_user_text(
         user_utterance_id=utterance_id,
         text=reply.text,
         audio_path=audio_path,
-        model=current_settings.llm_model,
+        model=attributed_model,
         latency_ms=reply.latency_ms,
         tool_calls=tool_calls,
     )
     db.log_model_run(
         provider=provider,
-        model=current_settings.llm_model,
+        model=attributed_model,
         task="realtime_chat",
         input_ref=f"utterance:{utterance_id}",
         output_ref=f"assistant_turn:{turn_id}",
@@ -1797,6 +2618,13 @@ async def _handle_realtime_user_text(
         response={
             "id": response_id,
             "status": "completed",
+            "model": attributed_model,
+            "requested_model": requested_model,
+            "served_model": served_model,
+            "ttft_ms": reply.ttft_ms,
+            "tokens_per_second": reply.tokens_per_second,
+            "voice_profile": voice_profile_id,
+            "model_tier": voice_profile_id,
             "output": [{"type": "message", "text": reply.text}],
             "turn_id": turn_id,
             "latency_ms": reply.latency_ms,
@@ -1914,6 +2742,29 @@ async def _send_realtime_error(
     await _send_realtime_event(websocket, "error", **payload)
 
 
+def _requested_realtime_voice_profile_id(
+    event: dict[str, Any],
+) -> str | None:
+    session = event.get("session")
+    payloads = [event]
+    if isinstance(session, dict):
+        payloads.append(session)
+
+    candidates: list[object] = []
+    for payload in payloads:
+        for key in ("voice_profile", "model_tier"):
+            if key in payload:
+                candidates.append(payload[key])
+
+    if not candidates:
+        return None
+
+    normalized = [normalize_voice_profile_id(value) for value in candidates]
+    if len(set(normalized)) != 1:
+        raise VoiceProfileError("voice_profile and model_tier must select the same tier")
+    return normalized[0]
+
+
 def _normalize_realtime_source_scope(value: object) -> str:
     if value is None:
         return ""
@@ -1921,8 +2772,137 @@ def _normalize_realtime_source_scope(value: object) -> str:
         raise ValueError("source_context must be a string")
     scope = value.strip().lower()
     if scope not in REALTIME_SOURCE_SCOPES:
-        raise ValueError("source_context must be one of: all, recordings, uploads, voice")
+        raise ValueError(
+            "source_context must be one of: auto, all, recordings, uploads, voice, web"
+        )
     return scope
+
+
+def _normalize_realtime_recording_id(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError("recording_id must be a string or null")
+    recording_id = value.strip().lower()
+    if not re.fullmatch(r"[a-f0-9]{32}", recording_id):
+        raise ValueError("recording_id is invalid")
+    if db.get_recording(recording_id) is None:
+        raise ValueError("recording_id was not found")
+    return recording_id
+
+
+def _realtime_websocket_authorized(websocket: WebSocket) -> bool:
+    supplied_token = websocket.query_params.get("token") or ""
+    if not secrets.compare_digest(supplied_token, _REALTIME_ACCESS_TOKEN):
+        return False
+    origin = websocket.headers.get("origin")
+    if not origin:
+        return True
+    try:
+        parsed = urlparse(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    request_host = (websocket.headers.get("host") or "").casefold()
+    return bool(request_host and parsed.netloc.casefold() == request_host)
+
+
+def _realtime_retrieval_plan(
+    query: str,
+    source_scope: str | None,
+    current_settings: Settings,
+    *,
+    recording_id: str | None = None,
+) -> tuple[bool, bool]:
+    del current_settings  # Disabled providers still return useful, explicit status to the model/UI.
+    if recording_id:
+        return True, False
+    scope = _normalize_realtime_source_scope(source_scope)
+    retrieve_local = scope in {"all", "recordings", "uploads", "voice"}
+    retrieve_web = scope in {"all", "web"}
+    if scope == "":
+        retrieve_local = any(pattern.search(query) for pattern in _LOCAL_RETRIEVAL_PATTERNS)
+        retrieve_web = not retrieve_local and web_search_requested(query)
+    return retrieve_local, retrieve_web
+
+
+async def _build_realtime_retrieval(
+    query: str,
+    *,
+    source_scope: str | None,
+    current_session_id: str,
+    current_settings: Settings,
+    retrieve_local: bool,
+    retrieve_web: bool,
+    recent_user_turns: tuple[str, ...] = (),
+    max_chars: int | None = None,
+    recording_id: str | None = None,
+) -> RealtimeRetrieval:
+    started = time.perf_counter()
+    context_limit = max_chars if max_chars is not None else MAX_REALTIME_SOURCE_CONTEXT_CHARS
+    scope = _normalize_realtime_source_scope(source_scope)
+    local_task: asyncio.Task[tuple[str, int]] | None = None
+    web_task: asyncio.Task[WebSearchResponse] | None = None
+    if retrieve_local:
+        local_task = asyncio.create_task(
+            asyncio.to_thread(
+                _build_realtime_source_context_result,
+                query,
+                scope,
+                current_session_id=current_session_id,
+                recent_user_turns=recent_user_turns,
+                max_chars=context_limit,
+                recording_id=recording_id,
+            )
+        )
+    if retrieve_web:
+        web_task = asyncio.create_task(asyncio.to_thread(search_web, query, current_settings))
+
+    local_context, local_hit_count = await local_task if local_task else ("", 0)
+    web = await web_task if web_task else None
+
+    blocks: list[str] = []
+    shared_budget = max((context_limit - 160) // 2, 1)
+    if retrieve_local:
+        bounded_local = _bounded_realtime_source_context(
+            [local_context],
+            max_chars=shared_budget if web is not None else context_limit,
+        )
+        if recording_id:
+            blocks.append(
+                bounded_local
+                or "No transcript evidence was found in the selected recording."
+            )
+        else:
+            blocks.append(
+                f"Private local evidence:\n{bounded_local}"
+                if bounded_local
+                else "No matching evidence was found in the selected private local sources."
+            )
+    if web is not None:
+        if web.results:
+            web_context = _bounded_realtime_source_context(
+                [_web_source_context_block(item) for item in web.results],
+                max_chars=shared_budget if retrieve_local else context_limit,
+            )
+            blocks.append(
+                f"Public web evidence:\n{web_context}"
+            )
+        elif web.error == "disabled":
+            blocks.append("Web search is disabled, so no current public evidence was retrieved.")
+        elif web.error:
+            blocks.append("Web search was unavailable, so do not guess time-sensitive public facts.")
+        else:
+            blocks.append("Web search returned no matching public results.")
+
+    return RealtimeRetrieval(
+        context=_bounded_realtime_source_context(blocks, max_chars=context_limit),
+        searched_local=retrieve_local,
+        local_hit_count=local_hit_count,
+        web=web,
+        latency_ms=max(round((time.perf_counter() - started) * 1000), 0),
+    )
 
 
 def _build_realtime_source_context(
@@ -1930,24 +2910,219 @@ def _build_realtime_source_context(
     source_scope: str,
     *,
     current_session_id: str,
+    recent_user_turns: tuple[str, ...] = (),
+    max_chars: int | None = None,
+    recording_id: str | None = None,
 ) -> str:
+    context, _hit_count = _build_realtime_source_context_result(
+        query,
+        source_scope,
+        current_session_id=current_session_id,
+        recent_user_turns=recent_user_turns,
+        max_chars=max_chars,
+        recording_id=recording_id,
+    )
+    return context
+
+
+def _build_realtime_source_context_result(
+    query: str,
+    source_scope: str,
+    *,
+    current_session_id: str,
+    recent_user_turns: tuple[str, ...] = (),
+    max_chars: int | None = None,
+    recording_id: str | None = None,
+) -> tuple[str, int]:
     scope = _normalize_realtime_source_scope(source_scope)
+    if recording_id:
+        return _selected_recording_source_context(
+            recording_id,
+            query,
+            recent_user_turns=recent_user_turns,
+            max_chars=max_chars,
+        )
+    retrieval_query = _local_retrieval_query(query)
+    include_recordings = scope in {"", "all", "recordings", "uploads"}
+    include_voice = scope in {"", "all", "voice"}
     blocks: list[str] = []
-    if scope in {"", "recordings", "uploads"}:
-        blocks.extend(
-            _recording_source_context_blocks(
-                query,
-                uploads_only=scope == "uploads",
+    if not retrieval_query:
+        if include_voice:
+            blocks.extend(
+                _recent_voice_source_context_blocks(
+                    current_session_id=current_session_id,
+                )
             )
-        )
-    if scope in {"", "voice"}:
-        blocks.extend(
-            _voice_source_context_blocks(
-                query,
-                current_session_id=current_session_id,
+        if include_recordings:
+            blocks.extend(
+                _recent_recording_source_context_blocks(
+                    uploads_only=scope == "uploads",
+                )
             )
+    else:
+        if include_recordings:
+            blocks.extend(
+                _recording_source_context_blocks(
+                    retrieval_query,
+                    uploads_only=scope == "uploads",
+                )
+            )
+        if include_voice:
+            blocks.extend(
+                _voice_source_context_blocks(
+                    retrieval_query,
+                    current_session_id=current_session_id,
+                )
+            )
+    return _bounded_realtime_source_context(blocks, max_chars=max_chars), len(blocks)
+
+
+def _local_retrieval_query(query: str) -> str:
+    tokens = re.findall(r"\w+", query, flags=re.UNICODE)
+    meaningful = [token for token in tokens if token.casefold() not in _LOCAL_RETRIEVAL_STOPWORDS]
+    return " ".join(meaningful[:16])
+
+
+def _is_history_retrieval_request(text: str) -> bool:
+    return bool(
+        _HISTORY_REQUEST_PREFIX.search(text)
+        and any(pattern.search(text) for pattern in _LOCAL_RETRIEVAL_PATTERNS)
+    )
+
+
+def _is_low_value_history_utterance(text: str) -> bool:
+    normalized = _clean_realtime_context_text(text).casefold()
+    if len(re.findall(r"\w+", normalized, flags=re.UNICODE)) < 3:
+        return True
+    return normalized.startswith(
+        (
+            "introduce yourself",
+            "reply only",
+            "reply with exactly",
+            "say hello",
+            "say it now",
+            "what can you do for me",
+            "what model are you running",
+            "who am i talking to",
         )
-    return _bounded_realtime_source_context(blocks)
+    )
+
+
+def _selected_recording_evidence_policy(context_limit: int) -> tuple[int, int, int]:
+    """Scale transcript breadth with the selected voice profile's context budget."""
+
+    if context_limit <= 3000:
+        return 3, 700, 6
+    if context_limit <= 6000:
+        return 5, 900, 8
+    return 7, 1200, 10
+
+
+def _selected_recording_source_context(
+    recording_id: str,
+    query: str,
+    *,
+    recent_user_turns: tuple[str, ...] = (),
+    max_chars: int | None = None,
+) -> tuple[str, int]:
+    recording = row_to_dict(db.get_recording(recording_id))
+    if recording is None:
+        return "", 0
+
+    context_limit = max(
+        max_chars if max_chars is not None else MAX_REALTIME_SOURCE_CONTEXT_CHARS,
+        256,
+    )
+    max_evidence_windows, target_window_chars, max_window_turns = (
+        _selected_recording_evidence_policy(context_limit)
+    )
+    result = build_focused_recording_context(
+        recording,
+        db.get_summary(recording_id),
+        db.get_segments(recording_id),
+        query,
+        recent_user_turns=recent_user_turns,
+        max_chars=context_limit,
+        max_tokens=max(math.ceil(context_limit / 4), 64),
+        max_evidence_windows=max_evidence_windows,
+        target_window_chars=target_window_chars,
+        max_window_turns=max_window_turns,
+    )
+    return result.context, len(result.evidence)
+
+
+def _recent_recording_source_context_blocks(*, uploads_only: bool) -> list[str]:
+    candidate_limit = 50 if uploads_only else MAX_REALTIME_RECORDING_HITS
+    recordings = db.list_recent_recording_summaries(limit=candidate_limit)
+    blocks: list[str] = []
+    for recording in recordings:
+        if uploads_only and not _recording_source_path_is_dashboard_upload(
+            recording.get("source_path")
+        ):
+            continue
+        title = _clean_realtime_context_text(recording.get("title")) or "Untitled recording"
+        created_at = _clean_realtime_context_text(recording.get("created_at"))
+        summary = _clean_realtime_context_text(recording.get("summary"))
+        summary = re.sub(r"[#*_`]+", " ", summary)
+        summary = _clean_realtime_context_text(summary)[:480]
+        if not summary:
+            continue
+        heading = f"Recent recording: {title}"
+        if created_at:
+            heading += f" ({created_at})"
+        blocks.append(f"{heading}\nSummary: {summary}")
+        if len(blocks) >= MAX_REALTIME_RECORDING_HITS:
+            break
+    return blocks
+
+
+def _recent_voice_source_context_blocks(*, current_session_id: str) -> list[str]:
+    sessions = db.list_recent_conversation_excerpts(
+        session_limit=12,
+        utterances_per_session=3,
+        mode="direct_voice",
+        exclude_session_id=current_session_id,
+    )
+    sessions.sort(
+        key=lambda session: (
+            any(
+                str(item.get("source_provider") or "").casefold() != "text"
+                for item in session.get("utterances", [])
+            ),
+            str(session.get("started_at") or ""),
+        ),
+        reverse=True,
+    )
+    blocks: list[str] = []
+    seen_text: set[str] = set()
+    for session in sessions:
+        lines: list[str] = []
+        for utterance in session.get("utterances", []):
+            text = _clean_realtime_context_text(utterance.get("text"))
+            if (
+                not text
+                or not _local_retrieval_query(text)
+                or _is_history_retrieval_request(text)
+                or _is_low_value_history_utterance(text)
+            ):
+                continue
+            normalized = text.casefold()
+            if normalized in seen_text:
+                continue
+            seen_text.add(normalized)
+            speaker = _clean_realtime_context_text(utterance.get("speaker")).title() or "User"
+            lines.append(f"{speaker}: {text[:320]}")
+        if not lines:
+            continue
+        title = _clean_realtime_context_text(session.get("title")) or "Voice chat"
+        started_at = _clean_realtime_context_text(session.get("started_at"))
+        heading = f"Recent past voice chat: {title}"
+        if started_at:
+            heading += f" ({started_at})"
+        blocks.append(f"{heading}\n" + "\n".join(lines))
+        if len(blocks) >= MAX_REALTIME_RECENT_VOICE_SESSIONS:
+            break
+    return blocks
 
 
 def _recording_source_context_blocks(
@@ -1958,9 +3133,27 @@ def _recording_source_context_blocks(
     candidate_limit = 50 if uploads_only else MAX_REALTIME_RECORDING_HITS * 2
     hits = db.search(query, limit=candidate_limit)
     blocks: list[str] = []
+    seen_recording_ids: set[str] = set()
     seen: set[tuple[str, str, str]] = set()
+    for recording in db.search_recording_titles(query, limit=candidate_limit):
+        recording_id = str(recording.get("recording_id") or "")
+        if uploads_only and not _recording_source_path_is_dashboard_upload(
+            recording.get("source_path")
+        ):
+            continue
+        summary = _clean_realtime_context_text(recording.get("summary"))
+        summary = _clean_realtime_context_text(re.sub(r"[#*_`]+", " ", summary))[:520]
+        if not recording_id or not summary:
+            continue
+        title = _clean_realtime_context_text(recording.get("title")) or "Untitled recording"
+        blocks.append(f"Recording title match: {title}\nSummary: {summary}")
+        seen_recording_ids.add(recording_id)
+        if len(blocks) >= MAX_REALTIME_RECORDING_HITS:
+            return blocks
     for hit in hits:
         recording_id = str(hit.get("recording_id") or "")
+        if recording_id in seen_recording_ids:
+            continue
         if uploads_only and not _recording_is_dashboard_upload(recording_id):
             continue
         kind = _clean_realtime_context_text(hit.get("kind")) or "transcript"
@@ -1982,11 +3175,15 @@ def _recording_is_dashboard_upload(recording_id: str) -> bool:
     recording = db.get_recording(recording_id)
     if recording is None:
         return False
+    return _recording_source_path_is_dashboard_upload(recording["source_path"])
+
+
+def _recording_source_path_is_dashboard_upload(source_path_value: object) -> bool:
     try:
-        source_path = Path(str(recording["source_path"])).expanduser().resolve()
+        source_path = Path(str(source_path_value)).expanduser().resolve()
         upload_root = (settings.inbox_dir / "uploads").expanduser().resolve()
         relative_path = source_path.relative_to(upload_root)
-    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         return False
     return relative_path != Path(".")
 
@@ -1996,54 +3193,66 @@ def _voice_source_context_blocks(
     *,
     current_session_id: str,
 ) -> list[str]:
-    sessions = db.list_ambient_sessions(
-        limit=MAX_REALTIME_VOICE_SESSIONS + 1,
+    hits = db.search_conversations(
+        query,
+        limit=MAX_REALTIME_VOICE_HITS * 4,
         mode="direct_voice",
-        query=query,
+        exclude_session_id=current_session_id,
     )
     blocks: list[str] = []
-    query_text = query.strip().casefold()
-    for session in sessions:
-        session_id = str(session.get("id") or "")
-        if not session_id or session_id == current_session_id:
-            continue
-        lines = [
-            f"User: {_clean_realtime_context_text(item.get('text'))}"
-            for item in db.list_utterances(session_id)
-            if _clean_realtime_context_text(item.get("text"))
-        ]
-        lines.extend(
-            f"Atlas: {_clean_realtime_context_text(item.get('text'))}"
-            for item in db.list_assistant_turns(session_id)
-            if _clean_realtime_context_text(item.get("text"))
+    seen: set[tuple[str, str, str]] = set()
+    for hit in hits:
+        session_id = _clean_realtime_context_text(hit.get("session_id"))
+        kind = _clean_realtime_context_text(hit.get("kind"))
+        snippet = _clean_realtime_context_text(hit.get("snippet")).replace("[", "").replace(
+            "]", ""
         )
-        matching_lines = [line for line in lines if query_text and query_text in line.casefold()]
-        selected_lines = matching_lines[:8] if matching_lines else lines[-8:]
-        if not selected_lines:
+        key = (session_id, kind, snippet)
+        if not session_id or not snippet or key in seen:
             continue
-        title = _clean_realtime_context_text(session.get("title")) or "Voice chat"
-        started_at = _clean_realtime_context_text(session.get("started_at"))
+        if kind == "utterance" and _is_history_retrieval_request(snippet):
+            continue
+        if kind == "assistant" and is_false_history_access_refusal(snippet):
+            continue
+        seen.add(key)
+        title = _clean_realtime_context_text(hit.get("title")) or "Voice chat"
+        started_at = _clean_realtime_context_text(hit.get("started_at"))
         heading = f"Past voice chat: {title}"
         if started_at:
             heading += f" ({started_at})"
-        blocks.append("\n".join([heading, *selected_lines]))
-        if len(blocks) >= MAX_REALTIME_VOICE_SESSIONS:
+        role = "Atlas" if kind == "assistant" else _clean_realtime_context_text(
+            hit.get("speaker")
+        ).title() or "User"
+        blocks.append(f"{heading}\n{role}: {snippet}")
+        if len(blocks) >= MAX_REALTIME_VOICE_HITS:
             break
     return blocks
+
+
+def _web_source_context_block(result: WebSearchResult) -> str:
+    published = f", {result.published_at}" if result.published_at else ""
+    source = f" via {result.source}" if result.source else ""
+    heading = f"Web result: {result.title}{source}{published}"
+    return f"{heading}\n{result.snippet}" if result.snippet else heading
 
 
 def _clean_realtime_context_text(value: object) -> str:
     return " ".join(str(value or "").split())
 
 
-def _bounded_realtime_source_context(blocks: list[str]) -> str:
+def _bounded_realtime_source_context(
+    blocks: list[str],
+    *,
+    max_chars: int | None = None,
+) -> str:
+    limit = max_chars if max_chars is not None else MAX_REALTIME_SOURCE_CONTEXT_CHARS
     context = ""
     for block in blocks:
         clean_block = block.strip()
         if not clean_block:
             continue
         separator = "\n\n" if context else ""
-        remaining = MAX_REALTIME_SOURCE_CONTEXT_CHARS - len(context) - len(separator)
+        remaining = limit - len(context) - len(separator)
         if remaining <= 0:
             break
         context += separator + clean_block[:remaining].rstrip()
@@ -2144,6 +3353,17 @@ def _realtime_tts_model(tts_provider: str, current_settings: Settings | None = N
 def _realtime_artifact_dir(session_id: str, current_settings: Settings | None = None) -> Path:
     current_settings = current_settings or _direct_voice_settings()
     return current_settings.artifacts_dir / "realtime" / session_id
+
+
+def _safe_realtime_model_name(value: object) -> str | None:
+    model = str(value or "").strip().replace("\\", "/")
+    basename = model.rsplit("/", 1)[-1]
+    sanitized = re.sub(r"[^A-Za-z0-9_.:+-]+", "_", basename).strip("_")
+    return sanitized[:160] or None
+
+
+def _public_realtime_model_name(value: object, *, fallback: str = "local-model") -> str:
+    return _safe_realtime_model_name(value) or fallback
 
 
 def _safe_realtime_error(exc: Exception) -> str:
@@ -2249,6 +3469,71 @@ def api_delete_ambient_session(session_id: str) -> JSONResponse:
     return JSONResponse({**result, "artifact_count": artifact_count})
 
 
+def _queue_summary_refresh(recording_id: str) -> bool:
+    if db.get_summary(recording_id) is None:
+        return False
+    recording = db.get_recording(recording_id)
+    if recording is None:
+        return False
+    active_summary = any(
+        job["step"] == "summarize" and job["status"] == "running"
+        for job in db.jobs_for_recording(recording_id)
+    )
+    if active_summary:
+        return False
+    queued = db.reset_summary_job(recording_id)
+    if not queued:
+        db.enqueue_job(recording_id, "summarize")
+        db.update_recording(recording_id, status="queued", error=None)
+        queued = True
+    return queued
+
+
+@app.post("/recordings/{recording_id}/speakers")
+async def api_set_speaker_names(recording_id: str, request: Request) -> JSONResponse:
+    if db.get_recording(recording_id) is None:
+        return JSONResponse({"error": "Recording not found"}, status_code=404)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+    if not isinstance(body, dict) or not isinstance(body.get("names"), dict):
+        return JSONResponse(
+            {"error": "names must be an object keyed by speaker label"},
+            status_code=400,
+        )
+    available_speakers = db.list_recording_speakers(recording_id)
+    labels = [str(speaker["speaker_label"]) for speaker in available_speakers]
+    resolved_names: dict[str, str] = {}
+    for identifier, name in body["names"].items():
+        key = str(identifier)
+        if key in labels:
+            label = key
+        elif key.isdigit() and int(key) < len(labels):
+            label = labels[int(key)]
+        else:
+            return JSONResponse({"error": "Unknown detected speaker"}, status_code=400)
+        resolved_names[label] = str(name or "")
+    try:
+        speakers = db.save_recording_speaker_names(recording_id, resolved_names)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    queued = _queue_summary_refresh(recording_id)
+    return JSONResponse(
+        {
+            "status": "ok",
+            "speakers": speakers,
+            "queued": queued,
+            "message": (
+                "Names saved. Atlas is updating the notes."
+                if queued
+                else "Names saved."
+            ),
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Template management endpoints
 # ---------------------------------------------------------------------------
@@ -2263,46 +3548,57 @@ def api_list_templates() -> JSONResponse:
 
 @app.post("/recordings/{recording_id}/template")
 async def api_set_template(recording_id: str, request: Request) -> JSONResponse:
-    """Set the summary template for a recording and re-run only summarization."""
-    recording = db.get_recording(recording_id)
-    if recording is None:
+    """Apply a template only after an explicit user confirmation."""
+    if db.get_recording(recording_id) is None:
         return JSONResponse({"error": "Recording not found"}, status_code=404)
 
-    body = {}
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
-
     if not isinstance(body, dict):
         return JSONResponse({"error": "JSON body must be an object"}, status_code=400)
 
-    template_id = body.get("template_id", "")
+    template_id = str(body.get("template_id") or "").strip()
     if not template_id:
         return JSONResponse({"error": "template_id is required"}, status_code=400)
-
     template = get_template(template_id)
     if template is None:
         return JSONResponse({"error": f"Unknown template: {template_id}"}, status_code=400)
 
+    if body.get("confirmed") is not True:
+        return JSONResponse(
+            {
+                "status": "confirmation_required",
+                "template_id": template_id,
+                "template_name": template.name,
+                "message": f"Use {template.name} for this recording?",
+            },
+            status_code=409,
+        )
+
+    current_template = db.get_recording_template(recording_id)
+    if current_template == template_id:
+        return JSONResponse(
+            {
+                "status": "ok",
+                "template_id": template_id,
+                "queued": False,
+                "message": f"{template.name} is already in use.",
+            }
+        )
+
     db.set_recording_template(recording_id, template_id)
-
-    queued = db.reset_summary_job(recording_id)
-    if not queued and recording["status"] == "done":
-        db.enqueue_job(recording_id, "summarize")
-        db.update_recording(recording_id, status="queued", error=None)
-        queued = True
-
-    if queued:
-        message = f"Template changed to {template.name}; re-summarizing."
-    else:
-        message = f"Template changed to {template.name}; it will be used when summarization runs."
-
+    queued = _queue_summary_refresh(recording_id)
     return JSONResponse(
         {
             "status": "ok",
             "template_id": template_id,
             "queued": queued,
-            "message": message,
+            "message": (
+                f"Using {template.name}. Atlas is updating the notes."
+                if queued
+                else f"{template.name} will be used when notes are created."
+            ),
         }
     )

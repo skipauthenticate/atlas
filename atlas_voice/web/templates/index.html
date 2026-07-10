@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - Atlas Voice{% endblock %}
+{% block title %}Chat - Atlas Voice{% endblock %}
+{% block body_class %}chat-page{% if selected_recording %} chat-recording-focus{% endif %}{% endblock %}
 
 {% block head_extra %}
   <script>
@@ -26,11 +27,16 @@
       });
     });
   </script>
-  <script src="/static/voice.js?v=20260709.4" defer></script>
+  <script src="/static/voice.js?v=20260710.5" defer></script>
+  <script src="/static/recordings.js?v=20260710.2" defer></script>
 {% endblock %}
 
 {% block content %}
-  <section class="assistant-home dashboard-simple dashboard-chat-only" aria-label="Atlas assistant dashboard" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}">
+  {% set default_quality_view = namespace(name=runtime.default_quality_tier | title, icon='flame.svg') %}
+  {% for profile in runtime.quality_profiles %}
+    {% if profile.id == runtime.default_quality_tier %}{% set default_quality_view.name = profile.name %}{% set default_quality_view.icon = profile.icon %}{% endif %}
+  {% endfor %}
+  <section class="assistant-home dashboard-simple dashboard-chat-only{% if selected_recording %} has-recording-context{% endif %}" aria-label="Atlas assistant dashboard" data-voice-console="true" data-assistant-enabled="{{ 'true' if assistant_enabled else 'false' }}" data-websocket-path="{{ voice_settings.websocket_path }}" data-realtime-token="{{ realtime_token }}" data-selected-recording-id="{{ selected_recording.id if selected_recording else '' }}">
     {% if runtime_settings_message %}
       <div class="notice">{{ runtime_settings_message }}</div>
     {% endif %}
@@ -51,12 +57,15 @@
         </div>
         <dl class="command-runtime" aria-label="Runtime snapshot">
           <div>
-            <dt>Compute</dt>
-            <dd>{{ runtime.accelerator }}</dd>
+            <dt>Privacy</dt>
+            <dd>On-device</dd>
           </div>
           <div>
-            <dt>Speech</dt>
-            <dd>{{ runtime.asr_model }}</dd>
+            <dt>Processing</dt>
+            <dd class="command-runtime-mode">
+              <img class="mode-icon" src="/static/icons/{{ default_quality_view.icon }}" alt="">
+              <span>{{ default_quality_view.name }}</span>
+            </dd>
           </div>
           <div>
             <dt>Sessions</dt>
@@ -75,22 +84,56 @@
         <textarea id="voice-prompt-input" class="chat-text-input dashboard-prompt-input" name="prompt" rows="3" autocomplete="off" placeholder="Ask Atlas about your recordings..." {% if not assistant_enabled %}disabled{% endif %}></textarea>
         <span class="chat-attachment-tray" data-chat-attachments hidden></span>
         <span class="chat-upload-status" data-chat-upload-status aria-live="polite"></span>
+        <div class="chat-upload-options" data-upload-options hidden>
+          <label>
+            <span>Main speakers</span>
+            <select name="expected_main_speakers">
+              <option value="">Not sure</option>
+              {% for count in range(1, 9) %}<option value="{{ count }}">{{ count }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="mode-select-field">
+            <span>Processing</span>
+            <span class="mode-select-control">
+              <img class="mode-icon" src="/static/icons/{{ default_quality_view.icon }}" alt="" data-mode-select-icon>
+              <select name="quality_tier" data-mode-select>
+                {% for profile in runtime.quality_profiles %}
+                  <option value="{{ profile.id }}" data-icon="{{ profile.icon }}" {% if runtime.default_quality_tier == profile.id %}selected{% endif %}>{{ profile.name }} - {{ profile.promise }}</option>
+                {% endfor %}
+              </select>
+            </span>
+          </label>
+          <small>These choices apply to every attached recording. Atlas can still notice extra voices.</small>
+        </div>
         <div class="dashboard-composer-actions">
           <div class="dashboard-composer-left">
             <button class="composer-round chat-attach-button" type="button" data-chat-attach aria-label="Attach audio" title="Attach audio">
               <img class="ui-icon" src="/static/icons/paperclip.svg" alt="">
             </button>
             <div class="chat-source-menu" data-chat-source-menu>
-              <input type="hidden" name="source_context" value="" data-chat-source>
-              <button class="chat-source-trigger" type="button" aria-label="Select source: All local sources" aria-haspopup="listbox" aria-expanded="false" aria-controls="dashboard-source-list" data-chat-source-trigger>
-                <img class="ui-icon source-trigger-icon" src="/static/icons/library.svg" alt="">
-                <span data-chat-source-label>All local sources</span>
+              <input type="hidden" name="source_context" value="{{ 'recordings' if selected_recording else '' }}" data-chat-source>
+              <input type="hidden" name="recording_id" value="{{ selected_recording.id if selected_recording else '' }}" data-chat-recording-id>
+              <button class="chat-source-trigger" type="button" aria-label="Select source: {{ selected_recording.title if selected_recording else 'Auto' }}" aria-haspopup="listbox" aria-expanded="false" aria-controls="dashboard-source-list" data-chat-source-trigger>
+                <img class="ui-icon source-trigger-icon" src="/static/icons/{{ 'audio-lines.svg' if selected_recording else 'library.svg' }}" alt="">
+                <span data-chat-source-label>{{ selected_recording.title if selected_recording else 'Auto' }}</span>
                 <img class="ui-icon source-trigger-chevron" src="/static/icons/chevron-down.svg" alt="">
               </button>
               <div id="dashboard-source-list" class="chat-source-popover" role="listbox" aria-label="Source" data-chat-source-list hidden>
-                <button class="chat-source-option" type="button" role="option" aria-selected="true" tabindex="-1" data-source-value="" data-source-label="All local sources">
+                {% if selected_recording %}
+                <button class="chat-source-option" type="button" role="option" aria-selected="true" tabindex="-1" data-source-value="recordings" data-source-label="{{ selected_recording.title }}" data-recording-id="{{ selected_recording.id }}">
+                  <img class="ui-icon" src="/static/icons/audio-lines.svg" alt="">
+                  <span>{{ selected_recording.title }}</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+                {% endif %}
+                <button class="chat-source-option" type="button" role="option" aria-selected="{{ 'false' if selected_recording else 'true' }}" tabindex="-1" data-source-value="" data-source-label="Auto">
                   <img class="ui-icon" src="/static/icons/library.svg" alt="">
-                  <span>All local sources</span>
+                  <span>Auto</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+                <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="all" data-source-label="Local + web">
+                  <img class="ui-icon" src="/static/icons/search.svg" alt="">
+                  <span>Local + web</span>
                   <span class="chat-source-selected" aria-hidden="true"></span>
                 </button>
                 <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="recordings" data-source-label="Recording library">
@@ -106,6 +149,11 @@
                 <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="voice" data-source-label="Past voice chats">
                   <img class="ui-icon" src="/static/icons/mic.svg" alt="">
                   <span>Past voice chats</span>
+                  <span class="chat-source-selected" aria-hidden="true"></span>
+                </button>
+                <button class="chat-source-option" type="button" role="option" aria-selected="false" tabindex="-1" data-source-value="web" data-source-label="Search web">
+                  <img class="ui-icon" src="/static/icons/search.svg" alt="">
+                  <span>Search web</span>
                   <span class="chat-source-selected" aria-hidden="true"></span>
                 </button>
               </div>
@@ -147,6 +195,75 @@
       {% endif %}
     </section>
 
+    {% if selected_recording %}
+      <aside class="recording-context-panel" aria-label="Selected recording context" data-recording-context-panel>
+        <header class="recording-context-header">
+          <div>
+            <span>Answering from</span>
+            <h2>{{ selected_recording.title }}</h2>
+            <p>{{ selected_recording.created_at_display }}{% if selected_recording.folder_name %} · {{ selected_recording.folder_name }}{% endif %}</p>
+          </div>
+          <a href="/" aria-label="Clear selected recording" title="Clear selected recording">
+            <img class="ui-icon" src="/static/icons/x.svg" alt="">
+          </a>
+        </header>
+
+        {% if selected_recording.normalized_path %}
+          <audio id="context-recording-audio" class="context-audio" controls preload="metadata" src="/media/recordings/{{ selected_recording.id }}/normalized.wav"></audio>
+        {% endif %}
+
+        <div class="recording-context-scroll">
+          <section class="context-summary" aria-label="Recording summary">
+            <h3>Summary</h3>
+            {% if selected_recording.summary_sections %}
+              {% for section in selected_recording.summary_sections %}
+                <article class="context-summary-section context-summary-{{ section.slug }}">
+                  <h4>{{ section.title }}</h4>
+                  {% for paragraph in section.paragraphs[:1] %}<p>{{ paragraph }}</p>{% endfor %}
+                  {% if section.paragraphs | length > 1 %}
+                    <details class="context-more">
+                      <summary>More context</summary>
+                      {% for paragraph in section.paragraphs[1:] %}<p>{{ paragraph }}</p>{% endfor %}
+                    </details>
+                  {% endif %}
+                  {% if section["items"] %}
+                    <ul>
+                      {% for item in section["items"][:5] %}
+                        <li>{% if item.label %}<strong>{{ item.label }}</strong>{% endif %}<span>{{ item.text }}</span></li>
+                      {% endfor %}
+                    </ul>
+                    {% if section["items"] | length > 5 %}
+                      <details class="context-more">
+                        <summary>{{ section["items"] | length - 5 }} more</summary>
+                        <ul>
+                          {% for item in section["items"][5:] %}
+                            <li>{% if item.label %}<strong>{{ item.label }}</strong>{% endif %}<span>{{ item.text }}</span></li>
+                          {% endfor %}
+                        </ul>
+                      </details>
+                    {% endif %}
+                  {% endif %}
+                </article>
+              {% endfor %}
+            {% else %}
+              <p class="muted">The summary is still processing.</p>
+            {% endif %}
+          </section>
+
+          <details class="context-transcript" data-lazy-transcript data-transcript-layout="context" data-transcript-endpoint="/api/recordings/{{ selected_recording.id }}/transcript" data-audio-target="context-recording-audio">
+            <summary>Full transcript <span>{{ selected_recording.segment_count }} segment{{ '' if selected_recording.segment_count == 1 else 's' }}</span></summary>
+            <div class="context-transcript-list" data-transcript-list>
+              <p class="transcript-load-state">Open to load the full transcript.</p>
+            </div>
+          </details>
+        </div>
+
+        <footer class="recording-context-footer">
+          <a href="/recordings/{{ selected_recording.id }}">Open recording</a>
+        </footer>
+      </aside>
+    {% endif %}
+
     <div class="assistant-transport" data-voice-transport aria-hidden="true">
       <button type="button" data-transport-action="mic" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Mic</button>
       <button type="button" data-transport-action="pause" aria-pressed="false" {% if not assistant_enabled %}disabled{% endif %}>Pause</button>
@@ -160,25 +277,5 @@
       <time data-voice-timer>00:00</time>
     </div>
 
-    <section id="recordings" class="dashboard-recordings" aria-label="Past recordings">
-      <div class="section-heading compact">
-        <h2>Recordings</h2>
-        <small data-recording-count data-count="{{ recordings | length }}">{{ recordings | length }} recent</small>
-      </div>
-      <div class="recording-list dashboard-recording-list" data-dashboard-recording-list {% if not recordings %}hidden{% endif %}>
-        {% for recording in recordings %}
-          <a class="recording-row" href="/recordings/{{ recording.id }}">
-            <span>
-              <strong>{{ recording.title }}</strong>
-              <small>{{ recording.created_at_display }}</small>
-            </span>
-            <span class="status status-{{ recording.status }}">{{ recording.status }}</span>
-          </a>
-        {% endfor %}
-      </div>
-      {% if not recordings %}
-        <div class="empty tight" data-recordings-empty>No recordings yet.</div>
-      {% endif %}
-    </section>
   </section>
 {% endblock %}
