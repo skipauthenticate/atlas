@@ -1,0 +1,19 @@
+[Unit]
+Description=Atlas Voice llama.cpp model router
+After=network-online.target
+Wants=network-online.target
+Before=atlas-voice-web.service atlas-voice-worker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+WorkingDirectory=@ATLAS_VOICE_ROOT@
+ExecStart=@ATLAS_VOICE_ROOT@/scripts/run-local-service.sh llm
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=0
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

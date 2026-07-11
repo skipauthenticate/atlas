@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "corpus_version": "voice-model-smoke-1.0.0",
+  "description": "Eight synthetic, deterministic evidence-grounding checks for local voice-model smoke comparison. Facts and distractors are fictional. This corpus is intentionally small and does not measure general model accuracy.",
+  "abstention_phrases": [
+    "not provided in the evidence",
+    "cannot determine from the evidence",
+    "the evidence does not say",
+    "unknown from the evidence"
+  ],
+  "cases": [
+    {
+      "id": "local-detail-launch",
+      "category": "local_detail",
+      "evidence": [
+        "The current launch owner for Project Lantern is Mira Chen.",
+        "A superseded draft named Jonah Bell as launch owner; that draft is explicitly obsolete.",
+        "The production launch window is 2026-08-14 at 09:30 UTC."
+      ],
+      "question": "Who owns the Project Lantern launch, and what is the production launch window?",
+      "required_facts": [
+        {"id": "owner", "any_of": ["Mira Chen"]},
+        {"id": "date", "any_of": ["2026-08-14", "August 14 2026", "August 14th 2026"]},
+        {"id": "time", "any_of": ["09:30 UTC", "9:30 UTC"]}
+      ],
+      "forbidden_claims": [
+        {"id": "obsolete-owner", "any_of": ["Jonah Bell owns", "owner is Jonah Bell"]}
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "multi-window-release",
+      "category": "multi_window_synthesis",
+      "evidence": [
+        "Planning note: the team selected the Cobalt release channel; Emerald was rejected.",
+        "Ownership note: Asha Imani owns the migration; Mateo Ruiz is only the reviewer.",
+        "Schedule note: migration completion is due 2026-09-02."
+      ],
+      "question": "State the selected channel, migration owner, and due date.",
+      "required_facts": [
+        {"id": "channel", "any_of": ["Cobalt"]},
+        {"id": "owner", "any_of": ["Asha Imani"]},
+        {"id": "due-date", "any_of": ["2026-09-02", "September 2 2026", "September 2nd 2026"]}
+      ],
+      "forbidden_claims": [
+        {"id": "rejected-channel", "any_of": ["selected Emerald", "Emerald release channel"]},
+        {"id": "reviewer-as-owner", "any_of": ["Mateo Ruiz owns", "owner is Mateo Ruiz"]}
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "temporal-retention",
+      "category": "temporal_update",
+      "evidence": [
+        "Before 2026-05-01, export retention was 30 days.",
+        "On 2026-05-01, decision D-204 replaced that policy with 14-day retention for new uploads.",
+        "No later decision changed D-204."
+      ],
+      "question": "What retention rule currently applies to new uploads?",
+      "required_facts": [
+        {"id": "duration", "any_of": ["14 day", "14-day"]},
+        {"id": "scope", "any_of": ["new uploads"]}
+      ],
+      "forbidden_claims": [
+        {"id": "superseded-duration", "any_of": ["currently 30 days", "current retention is 30 days"]}
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "speaker-action-key-rotation",
+      "category": "speaker_decision_action",
+      "evidence": [
+        "Priya Nair assigned Ravi Shah to rotate the staging API keys.",
+        "Ravi Shah acknowledged the task and accepted the deadline.",
+        "The deadline is Friday, 2026-07-17."
+      ],
+      "question": "Who must do what, and by when?",
+      "required_facts": [
+        {"id": "assignee", "any_of": ["Ravi Shah"]},
+        {"id": "action", "any_of": ["rotate the staging API keys", "rotate staging API keys"]},
+        {"id": "deadline", "any_of": ["2026-07-17", "July 17 2026", "Friday July 17"]}
+      ],
+      "forbidden_claims": [
+        {"id": "assigner-as-assignee", "any_of": ["Priya Nair must rotate", "Priya Nair is assigned"]}
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "numeric-capacity-decision",
+      "category": "numeric_decision",
+      "evidence": [
+        "Capacity review approved a cap of 48 concurrent sessions.",
+        "A proposed cap of 64 concurrent sessions was rejected after the thermal test.",
+        "The approved cap remains in force."
+      ],
+      "question": "What is the approved session cap, and was 64 accepted?",
+      "required_facts": [
+        {"id": "approved-cap", "any_of": ["48 concurrent sessions", "cap of 48", "session cap is 48"]},
+        {"id": "rejection", "any_of": ["64 was rejected", "64 was not accepted", "64 is not accepted"]}
+      ],
+      "forbidden_claims": [
+        {"id": "invented-approval", "any_of": ["approved 64", "64 was accepted", "cap is 64"]}
+      ],
+      "should_abstain": false
+    },
+    {
+      "id": "unanswerable-budget",
+      "category": "unanswerable",
+      "evidence": [
+        "Project Harbor includes offline transcription and encrypted local storage.",
+        "The feature review is scheduled for 2026-10-05.",
+        "The packet contains no financial plan or approved budget."
+      ],
+      "question": "What budget was approved for Project Harbor?",
+      "required_facts": [],
+      "forbidden_claims": [
+        {"id": "invented-120k", "any_of": ["$120,000", "120000 dollars", "120 thousand dollars"]},
+        {"id": "invented-80k", "any_of": ["$80,000", "80000 dollars", "80 thousand dollars"]}
+      ],
+      "should_abstain": true
+    },
+    {
+      "id": "unresolved-venue-conflict",
+      "category": "contradictory_evidence",
+      "evidence": [
+        "Source A lists North Hall as the workshop venue.",
+        "Source B lists South Hall as the workshop venue.",
+        "The facilitator marked the conflict unresolved and instructed readers not to select either venue."
+      ],
+      "question": "What is the final workshop venue?",
+      "required_facts": [],
+      "forbidden_claims": [
+        {"id": "invented-north-final", "any_of": ["final venue is North Hall", "final workshop venue is North Hall"]},
+        {"id": "invented-south-final", "any_of": ["final venue is South Hall", "final workshop venue is South Hall"]}
+      ],
+      "should_abstain": true
+    },
+    {
+      "id": "negative-ship-constraint",
+      "category": "negation_constraint",
+      "evidence": [
+        "Issue AX-417 must not ship before privacy review PRV-88 is complete.",
+        "Privacy review PRV-88 is still pending.",
+        "Issue AX-416 passed its separate review, but that does not change AX-417."
+      ],
+      "question": "Can AX-417 ship now, and why?",
+      "required_facts": [
+        {"id": "blocked", "any_of": ["cannot ship", "must not ship", "can not ship"]},
+        {"id": "reason", "any_of": ["PRV-88 is still pending", "privacy review is still pending", "privacy review PRV-88"]}
+      ],
+      "forbidden_claims": [
+        {"id": "false-clearance", "any_of": ["AX-417 can ship", "AX-417 may ship", "cleared to ship"]}
+      ],
+      "should_abstain": false
+    }
+  ]
+}

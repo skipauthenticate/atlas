@@ -62,8 +62,14 @@ where = ["."]
 include = ["atlas_voice*"]
 
 [tool.setuptools.package-data]
-atlas_voice = ["web/templates/*.html", "web/static/*.css", "web/static/*.js", "web/static/icons/*"]
+atlas_voice = [
+  "report_assets/*.html",
+  "web/templates/*.html",
+  "web/static/*.css",
+  "web/static/*.js",
+  "web/static/icons/*",
 
+]
 [tool.ruff]
 line-length = 100
 target-version = "py310"

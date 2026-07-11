@@ -48,20 +48,23 @@ class VoiceProfileTests(unittest.TestCase):
             self.assertIn(f"[{model_id}]", preset)
         for stale_alias in ("atlas-light", "atlas-torch", "atlas-fire"):
             self.assertNotIn(f"[{stale_alias}]", preset)
+        self.assertNotIn("version=1", preset)
+        self.assertNotIn("[default]", preset)
+        self.assertIn('chat-template-kwargs = {"enable_thinking": false}', preset)
+        for filename in (
+            "Qwen_Qwen3.5-2B-Q8_0.gguf",
+            "Qwen_Qwen3.5-9B-Q8_0.gguf",
+            "Qwen3.6-35B-A3B-Q8_0.gguf",
+        ):
+            self.assertIn(filename, preset)
         self.assertEqual(preset.count("load-on-startup = true"), 1)
-        torch_section = preset.split("[qwen3.5-9b]", 1)[1].split(
-            "[qwen3.6-35b-a3b]", 1
-        )[0]
+        torch_section = preset.split("[qwen3.5-9b]", 1)[1].split("[qwen3.6-35b-a3b]", 1)[0]
         self.assertIn("load-on-startup = true", torch_section)
 
     def test_unknown_profiles_are_not_configurable_or_resolvable(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "assistant.yaml"
-            path.write_text(
-                "voice_profiles:\n"
-                "  spark:\n"
-                "    llm_profile: qwen-voice\n"
-            )
+            path.write_text("voice_profiles:\n  spark:\n    llm_profile: qwen-voice\n")
             config = load_assistant_config(path)
 
         self.assertNotIn("spark", config.voice_profiles)
@@ -98,7 +101,12 @@ class VoiceProfileTests(unittest.TestCase):
         self.assertEqual(
             set(torch),
             {
-                "id", "name", "rank", "promise", "description", "icon",
+                "id",
+                "name",
+                "rank",
+                "promise",
+                "description",
+                "icon",
                 "context_budget_chars",
             },
         )
@@ -208,10 +216,7 @@ class VoiceProfileTests(unittest.TestCase):
         self.assertEqual(torch.llm_base_url, "http://127.0.0.1:8181/v1/chat/completions")
         self.assertEqual(torch.llm_max_tokens, 555)
         self.assertEqual(config.llm_profiles["qwen-voice-light"]["model"], "qwen3.5-2b")
-        self.assertEqual(
-            config.llm_profiles["qwen-voice-fire"]["model"], "qwen3.6-35b-a3b"
-        )
-
+        self.assertEqual(config.llm_profiles["qwen-voice-fire"]["model"], "qwen3.6-35b-a3b")
 
     def test_invalid_profile_configuration_fails_closed(self) -> None:
         with TemporaryDirectory() as tmp:

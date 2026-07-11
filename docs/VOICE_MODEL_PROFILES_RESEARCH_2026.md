@@ -1,7 +1,7 @@
 # Voice model profiles and on-device research
 
 Date: 2026-07-10
-Status: recommendation and benchmark plan; no new model has been promoted
+Status: three Q8 candidates installed and audited; no new model promoted; incumbent restored
 
 ## Decision
 
@@ -12,10 +12,11 @@ Voice Studio should expose three text-model profiles while keeping one shared sp
   Qwen3.5-4B only if the 9B candidate misses the memory or latency gate.
 - **Fire:** Qwen3.6-35B-A3B, reserved for difficult synthesis and reasoning.
 
-These are benchmark candidates, not measured winners. None was downloaded or locally benchmarked
-during this investigation because the running 27B Q8 LLM and TTS service already placed the live
-device under substantial unified-memory pressure. Downloading or loading another large artifact
-would have risked disrupting the active voice service and invalidating the measurements below.
+All three candidates are now installed and were benchmarked one model at a time. Light and Torch
+met the isolated decode and switch-time targets, but neither beat the incumbent 27B on the
+deterministic long-context score. Fire decoded quickly once resident but failed the hard swap and
+profile-switch gates. No candidate was promoted: the benchmark router was stopped and the original
+Qwen3.6-27B Q8 runtime was restored on port 8080 with the production TTS and worker.
 
 Qwen3.6 is the latest official Qwen family as of this report. Qwen released 35B-A3B on
 2026-04-16 and dense 27B on 2026-04-22, and its official repository documents `llama.cpp`
@@ -30,6 +31,142 @@ The immediate architecture recommendation is therefore:
 4. promote a profile only after it passes the explicit gates in this document.
 
 The example router preset is in `config/voice-models.example.ini`.
+
+## Audited benchmark results — 2026-07-10
+
+### Installed artifacts and runtime
+
+The hardened installer independently rehashed each read-only file after installation. The exact
+inventory used by the router and benchmark harness was
+`benchmarks/voice_models_q8_inventory.json` version
+`voice-q8-candidates-2026-07-10.2`, SHA-256
+`c9606c80e398303cd489e4a3bf44c4cabefdd8da059d12662aec161209f146e5`.
+
+| Profile | Exact installed file | Bytes | SHA-256 | Artifact source revision | Upstream reference |
+| --- | --- | ---: | --- | --- | --- |
+| Light | `Qwen_Qwen3.5-2B-Q8_0.gguf` | 2,080,140,384 | `be647507ce6cde229b838924d47bfff9763171105563f7f908670dae57c4dbe2` | `bartowski/Qwen_Qwen3.5-2B-GGUF@7d26695454df6de5fbcce2e58681e62dae06ce43` | `Qwen/Qwen3.5-2B@15852e8c16360a2fea060d615a32b45270f8a8fc` |
+| Torch | `Qwen_Qwen3.5-9B-Q8_0.gguf` | 9,804,541,984 | `b58fe056b5435070240de259f3f981aa38fee96825bbd78c088d5fd90e46f2b5` | `bartowski/Qwen_Qwen3.5-9B-GGUF@182be2fd6c7bc44887d88a91cb03ff009cc9f549` | `Qwen/Qwen3.5-9B@c202236235762e1c871ad0ccb60c8ee5ba337b9a` |
+| Fire | `Qwen3.6-35B-A3B-Q8_0.gguf` | 36,903,139,360 | `1222a3ee7580c004176fa3a17f12f969e9c441a41e799696dbd25978be9f782c` | `ggml-org/Qwen3.6-35B-A3B-GGUF@93800d9884ff8b7451997a47d169e5e550e5db92` | `Qwen/Qwen3.6-35B-A3B@995ad96eacd98c81ed38be0c5b274b04031597b0` |
+
+The Light and Torch files are community GGUF conversions. Their publishers do not declare the
+exact upstream commit used for conversion, so the upstream revisions above are contextual
+references, not asserted lineage. Fire's ggml-org conversion declares its upstream lineage. All
+three use Apache-2.0 upstream weights.
+
+The local runtime was CUDA `llama.cpp` build 9913, commit `bec4772f6`, on Jetson AGX Orin 64GB,
+JetPack 7.2 / L4T 39.2, MAXN. Clean `llama-bench` runs used full GPU offload, Flash Attention,
+Q8 KV, batch 2048 / micro-batch 512, and five repetitions for both 512-token prompt processing
+(`pp512`) and 128-token generation (`tg128`):
+
+| Profile | `pp512` mean | `tg128` mean |
+| --- | ---: | ---: |
+| Light | 2,756.889 tok/s | 51.931 tok/s |
+| Torch | 815.830 tok/s | 17.518 tok/s |
+| Fire | 612.921 tok/s | 29.501 tok/s |
+
+### Routed smoke, switching, and memory
+
+The router exposed exactly the three inventory IDs, loaded at most one model, verified the loaded
+absolute path, and returned to an unloaded state. Each model completed 40/40 smoke trials. The
+following latency and memory figures come from the same five-cycle routed run:
+
+| Profile | TTFT p50 / p95 | Server decode p50 | Load p50 / p95 | Peak router-tree RSS | Minimum `MemAvailable` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Light | 142.8 / 152.1 ms | 51.940 tok/s | 3.016 / 27.513 s | 3,870 MB | 45,044 MB |
+| Torch | 406.6 / 479.6 ms | 17.891 tok/s | 8.538 / 12.555 s | 11,541 MB | 41,754 MB |
+| Fire | 673.9 / 742.9 ms | 30.101 tok/s | 69.821 / 176.436 s | 36,979 MB | 16,616 MB |
+
+Fire's five observed loads were 43.694, 56.747, 69.821, 181.256, and 157.154 seconds. It missed
+the predeclared 30-second p95 switch gate by nearly sixfold. In the clean one-load quality run it
+also consumed the full 2,047.996 MB swap device, versus zero swap for Light and Torch, and left
+only 9,832 MB `MemAvailable` at the recorded low point. This violates the no-more-than-256-MiB
+swap-growth hard gate even though no request crashed. Fire Q8 is installed for reproducibility but
+is not activated or safe to present as a production voice mode on this configuration.
+
+The smoke run is a fixed synthetic routing/runtime test, not an answer-quality evaluation. Its
+lexical pass rates must not be compared with the 60-case suite below.
+
+### Deterministic 60-case conversation suite
+
+The frozen corpus SHA-256 is
+`99fd0e8cfa4c260006299f5f8bb96061e6128643f880f7256b55157abcdb2126`. It contains 15 local-detail,
+15 multi-window, 10 temporal-order, 10 speaker/decision/action, and 10 contradiction or
+unanswerable cases. Every model completed all 60 cases with no runtime error; the incumbent also
+completed all 60, for 240 successful trials total.
+
+| Model | Exact lexical passes | Required-fact lexical hits | Multi-window hits | Temporal hits | Abstention |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Light Q8 | 23/60 (38.3%) | 46/134 (34.3%) | 26/47 (55.3%) | 5/30 (16.7%) | 9/10 |
+| Torch Q8 | 21/60 (35.0%) | 51/134 (38.1%) | 27/47 (57.4%) | 6/30 (20.0%) | 4/10 |
+| Fire Q8 | 27/60 (45.0%) | 52/134 (38.8%) | 28/47 (59.6%) | 6/30 (20.0%) | 10/10 |
+| Restored 27B Q8 incumbent | 28/60 (46.7%) | 58/134 (43.3%) | 29/47 (61.7%) | 11/30 (36.7%) | 10/10 |
+
+This is deliberately a **model-only lexical comparison**. The runner supplies each synthetic,
+closed-world evidence packet directly; it does not exercise recording retrieval, ASR, production
+conversation summaries, or natural dialogue. The deterministic scorer looks for declared strings
+and aliases, so it can miss semantically correct paraphrases; 49-56 answers per model were flagged
+for manual review. Its 134-fact denominator also includes 17 labels in contradiction/unanswerable
+cases, where a correct abstention does not emit those facts. These results can reject an unsupported
+promotion, but cannot establish a semantic winner without blinded review. Incumbent timing from its
+quality pass is also excluded from speed comparison because concurrent artifact download and hash
+I/O contaminated that run.
+
+The result is still directionally useful: Fire improved multi-window lexical recall by only one
+fact over Torch and remained below the incumbent, while every model was weak on temporal ordering
+and speaker/action attribution. Model size alone did not fix shallow conversation understanding.
+
+### Blinded semantic review
+
+After the lexical run was frozen, the 60 cases and 240 verbatim answers were randomized behind
+anonymous model labels. Three Codex review passes judged semantic fact coverage, correct
+abstention, forbidden and unsupported claims, and per-case preference using only the public
+closed-world packet. The private model mapping remained mode `0600`; the review CLI validated all
+60 review IDs and 240 answer judgments before deblinding the aggregate.
+
+| Model | Answerable semantic fact recall | Multi-window | Temporal facts | Speaker/action | Abstention | Preference credit | Unsupported-answer flags |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Light Q8 | 97/117 (82.9%) | 39/47 (83.0%) | 29/30 (96.7%) | 10/20 (50.0%) | 9/10 | 9.417/60 (15.7%) | 10/60 |
+| Torch Q8 | 113/117 (96.6%) | 46/47 (97.9%) | 30/30 (100%) | 17/20 (85.0%) | 9/10 | 23.250/60 (38.8%) | 4/60 |
+| Fire Q8 | 108/117 (92.3%) | 46/47 (97.9%) | 30/30 (100%) | 12/20 (60.0%) | 10/10 | 13.083/60 (21.8%) | 0/60 |
+| Restored 27B Q8 incumbent | 108/117 (92.3%) | 45/47 (95.7%) | 30/30 (100%) | 13/20 (65.0%) | 10/10 | 14.250/60 (23.8%) | 0/60 |
+
+This is a blinded rubric review by Codex agents, not an independent human panel. It shows why the
+lexical table must not select a winner: Torch communicated substantially more of the requested
+facts and was preferred most often despite using different phrasing. Torch did assert one
+forbidden ordering and produced four answers with unsupported material, while Fire and the
+incumbent had no unsupported-answer flags. Torch therefore clears the model-only semantic recall
+gate, but still needs the real retrieval path and a sustained voice soak before production
+promotion.
+
+### Verified Light/Torch text-to-WAV path
+
+Light and Torch each completed five routed text-to-speech rounds with exact LLM route, model file,
+TTS model, and WAV integrity verified. Fire was intentionally excluded after its memory and switch
+failure. The first round included cold-start effects; rounds 2-5 were warm:
+
+| Profile | Cold round: LLM TTFT / full WAV | Warm LLM TTFT range | Warm full-WAV range | Warm TTS RTF range |
+| --- | ---: | ---: | ---: | ---: |
+| Light | 2.196 / 19.346 s | 113-114 ms | 3.401-3.603 s | 0.751-0.766 |
+| Torch | 5.360 / 9.685 s | 213-216 ms | 3.892-4.388 s | 0.750-0.768 |
+
+These measurements begin at the text prompt and end after receipt of a complete WAV; they exclude
+microphone capture, VAD, ASR, and playback. The current TTS HTTP endpoint buffers the entire WAV,
+so its first response body byte is **not** evidence of first playable audio. First-playable latency
+therefore remains unmeasured and the end-to-end voice promotion gate remains open.
+
+### Deployment decision and next benchmark
+
+Keep the original Qwen3.6-27B Q8 production runtime while the retrieval, controller isolation, and
+streaming work below is validated. Light is the latency leader. Torch is the model-only semantic
+winner and the preferred future default voice reader once the production router can own its
+process safely. Fire Q8 must remain offline.
+
+The next runtime experiment should use TensorRT Edge-LLM 0.9 or later with **INT4 AWQ/GPTQ** on
+Orin, then rerun the same hashes, corpus, route verification, and voice-path protocol. NVIDIA's
+published v0.8.0 table is reference evidence only: NVIDIA now documents a uniform v0.8 regression
+fixed in v0.9.0, and Orin supports FP16/INT8/INT4 rather than Thor's NVFP4. A lower-bit Fire could
+reduce the 36.9-GB Q8 residency and switch pressure, but vendor results use different engines,
+quantizers, prompts, and measurement methods and cannot be substituted for Atlas measurements.
 
 ## Evidence boundary
 
@@ -55,7 +192,10 @@ models. The ASR result is one cold synthetic utterance, so it does not character
 noise, overlap, or warm streaming behavior. The retrieval run proves low construction overhead;
 it does not by itself prove that answers capture the full conversation.
 
-### Routing-integrity harness result (not a candidate comparison)
+### Earlier routing-integrity preflight (historical; not a candidate comparison)
+
+This pre-installation run is retained because it proved that requested model names alone are not
+route verification. It is superseded by the artifact-verified routed results above.
 
 The new profile harness is available through:
 
@@ -72,15 +212,15 @@ each request. It produced:
   2,023 ms TTS, and 2,996 ms end to end.
 
 All three responses reported `Qwen3.6-27B-Q8_0.gguf` as the model actually served, so
-`routing_verified=false` for every row. Only that 27B model was installed; the server ignored
-the three requested IDs and reused the same warm process. The similar figures are therefore a
-routing-integrity signal, not Light, Torch, or Fire candidate performance.
+`routing_verified=false` for every row. At that time only the 27B model was installed; the server
+ignored the three requested IDs and reused the same warm process. The similar figures are therefore
+a routing-integrity signal, not Light, Torch, or Fire candidate performance.
 
 The command compares requested and served model identities before routing attribution. Keeping
 `routing_verified` as a hard prerequisite prevents a fast response from being credited to the
 wrong route. A matching router alias does not prove which GGUF revision or hash was loaded, so the
-harness reports `artifact_verified=false` until an operator reconciles the router's model
-properties with the deployment inventory.
+preflight reported `artifact_verified=false`. The audited run above instead binds the router's
+loaded absolute path to the hashed deployment inventory.
 
 ### NVIDIA and upstream figures
 
@@ -92,7 +232,9 @@ The following are separate reference facts and must not be merged with the local
 - NVIDIA's JetPack page identifies JetPack 7.2 with Jetson Linux 39.2, CUDA 13.2.1, and
   TensorRT 10.16.2. This corroborates the local software identity, not application performance.
 - NVIDIA TensorRT Edge-LLM 0.8.0 publishes AGX Orin 64GB, batch-one results under JetPack 7.2.
-  Its table reports these vendor measurements for a 377-token prefill; none is a local result:
+  Its table reports these vendor measurements for a 377-token prefill; none is a local result.
+  NVIDIA now warns that v0.8.0 had a uniform performance regression fixed in v0.9.0, so these
+  v0.8.0 rows are historical reference values, not current expectations:
   - Qwen3.5-2B INT4 AWQ: 161.9 ms prefill, 81.6 generation tok/s, 4,197 MB peak GPU memory.
   - Qwen3.5-4B INT4 AWQ: 307.0 ms prefill, 45.4 generation tok/s, 6,147 MB peak GPU memory.
   - Qwen3.5-9B INT4 AWQ: 437.5 ms prefill, 27.9 generation tok/s, 9,983 MB peak GPU memory.
@@ -123,9 +265,10 @@ necessary to learn whether failures come from the model or the retriever.
 
 ### Torch: Qwen3.5-9B, with Qwen3.5-4B fallback
 
-Torch should be the startup profile and product default. The official 9B card describes a
-post-trained 9B language model with a 262,144-token native context. It is large enough to test a
-meaningful accuracy step over Light while remaining far below the live 27B Q8 footprint.
+Torch remains the proposed startup profile if the candidate router is later activated, not the
+current production default. The official 9B card describes a post-trained 9B language model with a
+262,144-token native context. Its measured footprint is far below the live 27B Q8 runtime, but it
+still needs blinded semantic validation before promotion.
 
 The 4B model is a fallback, not a fourth user-facing profile. Activate it only if 9B misses the
 hard memory or p95 latency gate and 4B stays within five percentage points of 9B on the grounded
@@ -133,11 +276,11 @@ conversation score. This keeps the UI simple while preserving an evidence-based 
 
 ### Fire: Qwen3.6-35B-A3B
 
-Use Fire for ambiguous requests, cross-recording synthesis, contradiction analysis, and turns
-where Torch reports low confidence. The official repository lists Qwen3.6-35B-A3B and explicitly
-documents `llama.cpp` support for Qwen3.6 text and vision models through GGUF artifacts. Active
-parameters, serialized artifact size, and runtime resident memory are different quantities, so no
-memory claim is made before measurement.
+Fire's intended role is ambiguous requests, cross-recording synthesis, contradiction analysis,
+and turns where Torch reports low confidence. The official repository lists Qwen3.6-35B-A3B and
+explicitly documents `llama.cpp` support for Qwen3.6 text and vision models through GGUF artifacts.
+The measured Q8 artifact and router-tree RSS are 36.9 GB and 37.0 GB respectively, and the swap and
+switch failures above keep it offline; active parameter count is not a residency guarantee.
 
 The router points only to an operator-supplied, verified GGUF artifact derived from
 Qwen3.6-35B-A3B. Do not relabel an older Qwen3.5 artifact or its NVIDIA GPTQ benchmark as the Fire
@@ -227,7 +370,16 @@ The measured 40.9 ms evidence-window build is small beside the current LLM and T
 suggests, but does not prove, that richer evidence can be added without dominating latency. The
 proof must be an answer-quality benchmark with timestamped supporting evidence.
 
-Create a fixed 60-question context suite:
+The model-only result above makes the next architecture choice clearer: do not spend the next
+quality cycle only swapping model sizes. Build retrieval as a query-aware evidence service with:
+
+1. question decomposition into entities, events, speakers, time ranges, decisions, and actions;
+2. hybrid semantic and lexical candidate generation over raw transcript turns, not summaries;
+3. coverage-aware reranking that reserves beginning, middle, end, and adjacent timeline windows;
+4. a typed evidence assembler that preserves speaker, timestamp, negation, and contradiction; and
+5. an answer contract that cites turn IDs and abstains when required slots lack evidence.
+
+Keep the frozen 60-question suite:
 
 - 15 local-detail questions whose answer appears in one window;
 - 15 synthesis questions spanning at least three distant windows;
@@ -235,14 +387,16 @@ Create a fixed 60-question context suite:
 - 10 speaker, decision, and action-item questions; and
 - 10 unanswerable or contradictory questions that require abstention.
 
-Score required-fact recall, evidence precision, speaker/timestamp correctness, contradiction
-handling, and unsupported claims. Review failures against the same evidence packet across Light,
-Torch, and Fire so retrieval and reasoning failures are distinguishable.
+Run it first with gold evidence packets to isolate answer synthesis, then through production
+retrieval to measure evidence recall and ranking loss separately. Score required-fact recall,
+evidence precision, speaker/timestamp correctness, contradiction handling, and unsupported claims.
+Review the same packet across models so retrieval and reasoning failures remain distinguishable.
 
 ## One-model-at-a-time router
 
-Run `llama-server --models-preset config/voice-models.example.ini --models-max 1` from the repository
-root. Torch alone has `load-on-startup = true`. A profile request must execute this state transition:
+For benchmark or experimental deployment, run
+`llama-server --models-preset config/voice-models.example.ini --models-max 1` from the repository
+root. Torch alone has `load-on-startup = true`; production currently runs the restored incumbent.
 
 `ready(current) -> drain turn -> unload -> verify memory -> load target -> warm -> ready(target)`
 
@@ -342,6 +496,8 @@ Accessed 2026-07-10 unless the upstream page provides its own date.
   <https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/>
 - NVIDIA TensorRT Edge-LLM performance benchmarks:
   <https://nvidia.github.io/TensorRT-Edge-LLM/user_guide/performance/performance-benchmarks.html>
+- NVIDIA TensorRT Edge-LLM installation and Orin precision support:
+  <https://nvidia.github.io/TensorRT-Edge-LLM/user_guide/getting_started/installation.html>
 - NVIDIA memory-efficiency guidance for Jetson:
   <https://developer.nvidia.com/blog/maximizing-memory-efficiency-to-run-bigger-models-on-nvidia-jetson/>
 - llama.cpp server, router, preset, streaming, and cache documentation:

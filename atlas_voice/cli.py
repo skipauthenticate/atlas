@@ -50,6 +50,8 @@ from .benchmark import (
     _selected_quality_tiers,
     run_quality_benchmark,
     run_voice_stack_benchmark,
+    validate_voice_profiles_benchmark_json_output,
+    write_voice_profiles_benchmark_json,
     run_voice_profiles_benchmark,
 )
 from .storage import is_audio_file
@@ -310,10 +312,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Directory for synthesized benchmark replies",
     )
     voice_profiles_benchmark.add_argument(
+        "--inventory",
+        type=Path,
+        help=(
+            "Pinned voice-model inventory used to hash artifacts and reconcile the "
+            "loaded router path; without it artifact_verified remains false"
+        ),
+    )
+    voice_profiles_benchmark.add_argument(
+        "--router-models-url",
+        help=(
+            "llama.cpp router /models endpoint used for loaded-path verification; "
+            "defaults to /models on each profile's LLM host"
+        ),
+    )
+    voice_profiles_benchmark.add_argument(
+        "--json-output",
+        type=Path,
+        help=(
+            "Atomically create a private 0600 JSON artifact; refuses existing files, "
+            "symlinks, stale temporary files, and benchmark input/model/audio collisions"
+        ),
+    )
+    voice_profiles_benchmark.add_argument(
         "--json", action="store_true", help="Print machine-readable JSON"
     )
     voice_profiles_benchmark.set_defaults(func=cmd_benchmark_voice_profiles)
-
 
     benchmark = subparsers.add_parser("benchmark-asr", help="Benchmark ASR providers")
     benchmark.add_argument("audio", type=Path, nargs="?", help="Audio file to benchmark")
@@ -972,10 +996,21 @@ def cmd_benchmark_voice_stack(args: argparse.Namespace) -> int:
     print_voice_stack_benchmark_results(results, json_output=args.json)
     return 1 if any(result.get("error") for result in results) else 0
 
+
 def cmd_benchmark_voice_profiles(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
+    json_output_path = getattr(args, "json_output", None)
     try:
         assistant_config = load_assistant_config(settings.assistant_config_path)
+        protected_paths: list[Path | str | None] = [
+            assistant_config.path,
+            args.inventory,
+            args.output_dir,
+        ]
+        if json_output_path is not None:
+            validate_voice_profiles_benchmark_json_output(
+                json_output_path, protected_paths=protected_paths
+            )
         results = run_voice_profiles_benchmark(
             settings,
             assistant_config,
@@ -983,13 +1018,25 @@ def cmd_benchmark_voice_profiles(args: argparse.Namespace) -> int:
             rounds=args.rounds,
             text=args.text,
             output_dir=args.output_dir,
+            inventory_path=args.inventory,
+            router_models_url=args.router_models_url,
         )
-    except (AssistantConfigError, ValueError) as exc:
+        if json_output_path is not None:
+            for result in results:
+                artifact = result.get("artifact_provenance")
+                if isinstance(artifact, dict):
+                    protected_paths.append(artifact.get("artifact_path"))
+                protected_paths.append(result.get("tts_audio_path"))
+            write_voice_profiles_benchmark_json(
+                json_output_path,
+                results,
+                protected_paths=protected_paths,
+            )
+    except (AssistantConfigError, OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print_voice_profiles_benchmark_results(results, json_output=args.json)
     return 1 if any(result.get("error") for result in results) else 0
-
 
 
 def cmd_benchmark_asr(args: argparse.Namespace) -> int:

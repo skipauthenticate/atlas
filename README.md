@@ -325,6 +325,10 @@ The installer writes generated unit files to the current user's systemd config
 and enables lingering when the OS permits it, so the services can start before an
 interactive login. Remove them with `scripts/install-autostart.sh --uninstall`.
 
+The one-model-at-a-time llama.cpp router has a separate, device-specific user
+unit. See [Local LLM router service](docs/LOCAL_LLM_ROUTER_SERVICE.md) for its
+validated launcher settings, installation, and rollback procedure.
+
 The dashboard also includes runtime selectors for ASR provider, model id, and
 diarization provider. Saving the form updates local `.env`; if no job is active,
 the worker restarts so new recordings use the selected model immediately.

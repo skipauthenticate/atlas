@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "inventory_version": "voice-q8-candidates-2026-07-10.2",
+  "models": [
+    {
+      "profile": "light",
+      "model_id": "qwen3.5-2b",
+      "path": "../models/llm/voice/Qwen_Qwen3.5-2B-Q8_0.gguf",
+      "size_bytes": 2080140384,
+      "sha256": "be647507ce6cde229b838924d47bfff9763171105563f7f908670dae57c4dbe2",
+      "source_url": "https://huggingface.co/bartowski/Qwen_Qwen3.5-2B-GGUF/blob/7d26695454df6de5fbcce2e58681e62dae06ce43/Qwen_Qwen3.5-2B-Q8_0.gguf",
+      "source_revision": "7d26695454df6de5fbcce2e58681e62dae06ce43",
+      "license": "Apache-2.0 upstream; community GGUF conversion",
+      "provenance": {
+        "artifact_repository": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+        "conversion_kind": "community_gguf_conversion",
+        "upstream_model": "Qwen/Qwen3.5-2B",
+        "upstream_reference_revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+        "exact_upstream_lineage": "undeclared",
+        "lineage_limitation": "The community artifact publisher does not declare which exact upstream commit was used for this conversion; the upstream reference revision is contextual and must not be treated as conversion lineage."
+      }
+    },
+    {
+      "profile": "torch",
+      "model_id": "qwen3.5-9b",
+      "path": "../models/llm/voice/Qwen_Qwen3.5-9B-Q8_0.gguf",
+      "size_bytes": 9804541984,
+      "sha256": "b58fe056b5435070240de259f3f981aa38fee96825bbd78c088d5fd90e46f2b5",
+      "source_url": "https://huggingface.co/bartowski/Qwen_Qwen3.5-9B-GGUF/blob/182be2fd6c7bc44887d88a91cb03ff009cc9f549/Qwen_Qwen3.5-9B-Q8_0.gguf",
+      "source_revision": "182be2fd6c7bc44887d88a91cb03ff009cc9f549",
+      "license": "Apache-2.0 upstream; community GGUF conversion",
+      "provenance": {
+        "artifact_repository": "bartowski/Qwen_Qwen3.5-9B-GGUF",
+        "conversion_kind": "community_gguf_conversion",
+        "upstream_model": "Qwen/Qwen3.5-9B",
+        "upstream_reference_revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+        "exact_upstream_lineage": "undeclared",
+        "lineage_limitation": "The community artifact publisher does not declare which exact upstream commit was used for this conversion; the upstream reference revision is contextual and must not be treated as conversion lineage."
+      }
+    },
+    {
+      "profile": "fire",
+      "model_id": "qwen3.6-35b-a3b",
+      "path": "../models/llm/voice/Qwen3.6-35B-A3B-Q8_0.gguf",
+      "size_bytes": 36903139360,
+      "sha256": "1222a3ee7580c004176fa3a17f12f969e9c441a41e799696dbd25978be9f782c",
+      "source_url": "https://huggingface.co/ggml-org/Qwen3.6-35B-A3B-GGUF/blob/93800d9884ff8b7451997a47d169e5e550e5db92/Qwen3.6-35B-A3B-Q8_0.gguf",
+      "source_revision": "93800d9884ff8b7451997a47d169e5e550e5db92",
+      "license": "Apache-2.0",
+      "provenance": {
+        "artifact_repository": "ggml-org/Qwen3.6-35B-A3B-GGUF",
+        "conversion_kind": "ggml_org_gguf_conversion",
+        "upstream_model": "Qwen/Qwen3.6-35B-A3B",
+        "upstream_reference_revision": "995ad96eacd98c81ed38be0c5b274b04031597b0",
+        "exact_upstream_lineage": "declared",
+        "lineage_limitation": null
+      }
+    }
+  ]
+}
