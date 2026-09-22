@@ -1,6 +1,6 @@
-# Atlas Voice
+# Atlas
 
-Atlas Voice is a private, local-first audio processing app for uploaded or
+Atlas is a private, local-first audio processing app for uploaded or
 inbox-dropped recordings. It normalizes audio, transcribes with WhisperX,
 diarizes with pyannote community-1, merges speakers into the transcript,
 summarizes with a local OpenAI-compatible model endpoint, and exposes a
