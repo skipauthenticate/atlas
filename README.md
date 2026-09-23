@@ -9,6 +9,8 @@ localhost-only web UI.
 The default deployment target is Docker Compose on NVIDIA Jetson AGX Orin, with
 generic Linux support as best effort.
 
+[![Atlas source map with detected imports](docs/architecture.svg)](https://github.com/skipauthenticate/archcard)
+
 ## Quick Start
 
 ```bash

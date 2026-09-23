@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 547" width="960" height="547" role="img" aria-labelledby="title description"><title id="title">Atlas repository map</title>
+<desc id="description">5 source groups, 2 folder links, and 123 source files.</desc>
+<rect width="960" height="547" rx="16" fill="#F6F5F0"></rect>
+<text x="36" y="42" fill="#8F4B34" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700" letter-spacing="2.8">REPOSITORY MAP</text>
+<text x="36" y="91" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="43" font-weight="700">Atlas</text>
+<text x="36" y="122" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16">Source folders and detected imports.</text>
+<line x1="36" y1="151" x2="924" y2="151" stroke="#D9DDD4"></line>
+<text x="36" y="178" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600">123 source files</text>
+<text x="206" y="178" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600">5 groups</text>
+<text x="326" y="178" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600">2 folder links</text>
+<rect x="36" y="210" width="548" height="83" rx="12" fill="#FFFDF8" stroke="#D9DDD4"></rect>
+<rect x="36" y="227" width="3" height="38" rx="1.5" fill="#8F4B34"></rect>
+<text x="56" y="241" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="20" font-weight="650">Atlas Voice</text>
+<text x="566" y="239" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13" text-anchor="end">64 files</text>
+<text x="56" y="263" fill="#5C675F" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="13">atlas_voice</text>
+<text x="56" y="282" fill="#777F76" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13">Python</text>
+<text x="40" y="317" fill="#8F4B34" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="700" letter-spacing="1.7">SUPPORTING CODE</text>
+<text x="40" y="341" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="14">Tests 41  ·  Scripts 16  ·  Benchmarks 1  ·  Root files 1</text>
+<rect x="608" y="210" width="316" height="244" rx="12" fill="#FFFDF8" stroke="#D9DDD4"></rect>
+<text x="628" y="244" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="19" font-weight="650">Detected imports</text>
+<text x="628" y="266" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13">A → B means A imports B.</text>
+<line x1="628" y1="281" x2="904" y2="281" stroke="#D9DDD4"></line>
+<g><title>tests imports atlas_voice</title><text x="628" y="316" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="600">Tests  →  Atlas Voice</text><text x="628" y="338" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13">27 source files</text></g>
+<line x1="628" y1="349" x2="904" y2="349" stroke="#D9DDD4"></line>
+<g><title>scripts imports atlas_voice</title><text x="628" y="386" fill="#202923" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="600">Scripts  →  Atlas Voice</text><text x="628" y="408" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="13">6 source files</text></g>
+<text x="628" y="434" fill="#777F76" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12">Showing 2 of 2 folder links</text>
+<line x1="36" y1="483" x2="924" y2="483" stroke="#D9DDD4"></line>
+<text x="36" y="515" fill="#777F76" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12">Counts use supported source files. Runtime calls are outside this map.</text>
+<a href="https://github.com/skipauthenticate/archcard" target="_blank"><text x="924" y="517" fill="#5C675F" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="12" text-anchor="end">Made with Archcard ↗</text></a></svg>
